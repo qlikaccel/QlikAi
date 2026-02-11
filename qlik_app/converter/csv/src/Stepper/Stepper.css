@@ -1,94 +1,98 @@
+
+
+ 
+/* ===== Container ===== */
 .stepper {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 30px 40px;
+  padding: 14px 32px;
   background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
 }
-
+ 
+/* ===== Each step ===== */
 .step {
   display: flex;
   align-items: center;
-  gap: 12px;
-  cursor: pointer;
+  gap: 14px;
+  min-width: 180px;
 }
-
+ 
+/* ===== Icon circle ===== */
 .circle {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: #e9edf5;
+  background: #f3f4f6;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  flex-shrink: 0;
 }
-
+ 
+/* icon size */
+.circle img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+ 
+/* ===== Active step ===== */
 .circle.active {
-  background: #4c6fff;
-  color: white;
+  background: #208d97; /* blue */
 }
-
+ 
+.circle.active img {
+  /* filter: brightness(0) invert(1); */
+  border-radius: 5px;
+}
+ 
+/* ===== Text block ===== */
+.step-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+ 
 .step-text .title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  color: #2d3a4b;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #111827;
 }
-
+ 
 .step-text .sub {
-  font-size: 12px;
-  color: #8a94a6;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12.5px;
+  color: #6b7280;
+  margin-top: 2px;
 }
-
-@media (max-width: 1024px) {
-  .step-text {
-    display: none;
-  }
-}
-
-@media (max-width: 768px) {
-  .stepper {
-    overflow-x: auto;
-    gap: 20px;
-  }
-}
-
-/* Disabled step visual */
+ 
+/* ===== Disabled state ===== */
 .step.disabled {
   opacity: 0.6;
   pointer-events: none;
 }
-
-.stepper {
-  display: flex;
-  gap: 40px;
-  padding: 10px;
+ 
+ 
+.step:not(.disabled):hover .title {
+  color: #2563eb;
 }
-
-.step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+ 
+/* ===== Active step underline ===== */
+.step.active-step {
+  border-bottom: 3px solid #208d97;
+  padding-bottom: 11px;
 }
-
-.circle {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #e5e7eb;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: 0.3s;
+ 
+/* ===== Responsive (optional safety) ===== */
+@media (max-width: 1200px) {
+  .stepper {
+    overflow-x: auto;
+    gap: 24px;
+  }
+ 
+  .step {
+    min-width: 160px;
+  }
 }
-
-/* BLUE WHEN ACTIVE */
-.circle.active {
-  background: #2563eb;
-  color: white;
-}
-
-.step-text .title {
-  font-weight: bold;
-}
+ 

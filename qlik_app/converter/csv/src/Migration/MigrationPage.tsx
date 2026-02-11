@@ -213,7 +213,7 @@ export default function MigrationPage() {
     await authenticateAndPublish();
   };
 
-  if (!hasCSV) {
+  if (!hasCSV && !hasDAX) {
     return (
       <div className="wrap">
         <h2>🔐 Migration - Power BI Integration</h2>
@@ -323,12 +323,12 @@ export default function MigrationPage() {
       </div>
 
       <div className="page-actions" style={{ marginTop: 24 }}>
-        {!hasCSV && (
+        {!hasCSV && !hasDAX && (
           <button className="go-back-btn" onClick={() => navigate(-1)} style={{ marginRight: "10px", backgroundColor: "#ff9800" }}>
             ⬅️ Go Back to Export
           </button>
         )}
-        <button className="continue-btn" onClick={publishToPowerBI} disabled={publishing || !hasCSV} style={{
+        <button className="continue-btn" onClick={publishToPowerBI} disabled={publishing || (!hasCSV && !hasDAX)} style={{
           padding: "12px 24px",
           backgroundColor: publishing ? "#ccc" : "#28a745",
           color: "white",
