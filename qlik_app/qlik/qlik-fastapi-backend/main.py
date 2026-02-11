@@ -15,6 +15,7 @@ from qlik_client import QlikClient
 from qlik_websocket_client import QlikWebSocketClient
 from login_validation import router as login_router
 from processor import PowerBIProcessor
+from table_tracker import enhance_tables_with_timestamps
 from powerbi_service_delegated import PowerBIService, infer_schema_from_rows
 from powerbi_auth import get_auth_manager
 from pydantic import BaseModel
@@ -520,41 +521,69 @@ async def get_application_full_info(app_id: str, ws_client: QlikWebSocketClient 
         raise HTTPException(status_code=500, detail=f"Failed to get app info: {str(e)}")
 
 # WEBSOCKET ENDPOINTS - DATA ACCESS
+# @app.get("/applications/{app_id}/tables")
+# async def get_app_tables(
+#     app_id: str, 
+#     include_script: bool = Query(default=False, description="Include script analysis"),
+#     ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+# ):
+#     """
+#     Get tables and fields from app using WebSocket.
+#     Returns table structure, field information, and optionally script analysis.
+#     """
+#     try:
+#         result = ws_client.get_app_tables_simple(app_id)
+        
+#         if not result.get("success", False):
+#             raise HTTPException(status_code=500, detail=result.get("error", "Failed to get tables"))
+        
+#         # Format response
+#         response = {
+#             "success": True,
+#             "app_id": result.get("app_id"),
+#             "app_title": result.get("app_title"),
+#             "tables": result.get("tables", []),
+#             "summary": result.get("summary", {})
+#         }
+        
+#         if include_script:
+#             response["script"] = result.get("script", "")
+#             response["script_tables"] = result.get("script_tables", [])
+        
+#         return response
+        
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Failed to get tables: {str(e)}")
+
+
+
+
 @app.get("/applications/{app_id}/tables")
-async def get_app_tables(
-    app_id: str, 
-    include_script: bool = Query(default=False, description="Include script analysis"),
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
-):
-    """
-    Get tables and fields from app using WebSocket.
-    Returns table structure, field information, and optionally script analysis.
-    """
+async def get_app_tables(app_id: str, include_script: bool = Query(default=False), ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
     try:
         result = ws_client.get_app_tables_simple(app_id)
-        
         if not result.get("success", False):
             raise HTTPException(status_code=500, detail=result.get("error", "Failed to get tables"))
-        
-        # Format response
+       
+        # Get tables and enhance with timestamp information
+        tables = result.get("tables", [])
+        enhanced_tables = enhance_tables_with_timestamps(app_id, tables)
+       
         response = {
             "success": True,
             "app_id": result.get("app_id"),
-            "app_title": result.get("app_title"),
-            "tables": result.get("tables", []),
-            "summary": result.get("summary", {})
+            "tables": enhanced_tables
         }
-        
         if include_script:
             response["script"] = result.get("script", "")
-            response["script_tables"] = result.get("script_tables", [])
-        
         return response
-        
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get tables: {str(e)}")
+
 
 @app.get("/applications/{app_id}/script")
 async def get_app_script(app_id: str, ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):

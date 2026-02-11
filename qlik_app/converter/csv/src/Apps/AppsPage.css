@@ -147,7 +147,10 @@
 /* Title left side */
 .qlik-header-left {
   margin-right: auto;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 20px;
+  color: indigo;
+ 
 }
 
 /* Right side text */
@@ -331,3 +334,4 @@ Layout
   font-size: 16px;
   color: #374151;
 }
+

@@ -337,8 +337,8 @@ export default function AppsPage() {
     <div className="wrap">
       {/* HEADER */}
       <div className="qlik-header">
-        <div className="qlik-header-left">
-          Applications to explore
+         <div className="qlik-header-left">
+          {apps.length} - application{apps.length !== 1 ? 's' : ''} to explore
         </div>
 
         <div className="qlik-header-right">
