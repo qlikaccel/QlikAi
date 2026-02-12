@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./PublishPage.css";
 
@@ -68,19 +68,75 @@ export default function PublishPage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [statusBoxes, setStatusBoxes] = useState({ columns: false, powerbi: false, finished: false });
   const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string>("");
+  const [copied, setCopied] = useState(false);
+  const [publishStartTime, setPublishStartTime] = useState<Date | null>(null);
+  const [publishEndTime, setPublishEndTime] = useState<Date | null>(null);
+  const [publishDuration, setPublishDuration] = useState<number>(0);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [publishedTableName, setPublishedTableName] = useState<string>("");
+  const [csvData, setCSVData] = useState<string>("");
+  const [daxData, setDAXData] = useState<string>("");
+
+  // Auto-publish on page load
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      handlePublish();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Format duration as 00m:00s:000ms
+  const formatDuration = (durationMs: number) => {
+    const totalSeconds = Math.floor(durationMs / 1000);
+    const milliseconds = durationMs % 1000;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}m:${String(seconds).padStart(2, '0')}s:${String(milliseconds).padStart(3, '0')}ms`;
+  };
+
+  // Timer for publishing duration
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (publishing && publishStartTime && !result) {
+      interval = setInterval(() => {
+        const now = new Date();
+        const elapsed = now.getTime() - publishStartTime.getTime();
+        setElapsedTime(elapsed);
+      }, 100);
+    }
+    return () => clearInterval(interval);
+  }, [publishing, publishStartTime, result]);
+
+  // Monitor CSV/DAX data updates
+  useEffect(() => {
+    if (csvData) console.log("✅ CSV Data updated:", csvData.length, "characters");
+    if (daxData) console.log("✅ DAX Data updated:", daxData.length, "characters");
+  }, [csvData, daxData]);
 
   const handlePublish = async () => {
     try {
+      const startTime = new Date();
+      setPublishStartTime(startTime);
       setPublishing(true);
-      setError("");
       setCurrentStep(0);
+
+      // Create table name with date and time
+      const dateStr = startTime.toISOString().split('T')[0]; // YYYY-MM-DD
+      const timeStr = startTime.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-MM-SS
+      const tableNameWithDateTime = `${customTableName}_${dateStr}_${timeStr}`;
+      setPublishedTableName(tableNameWithDateTime);
 
       // Step 1: Prepare data
       setCurrentStep(0);
       console.log("📦 Step 1: Preparing data...");
       const csvText = sessionStorage.getItem("migration_csv") || "";
       const daxText = sessionStorage.getItem("migration_dax") || "";
+      
+      // Store CSV/DAX data for PDF report
+      console.log("📊 CSV Data length:", csvText.length);
+      console.log("📊 DAX Data length:", daxText.length);
+      setCSVData(csvText);
+      setDAXData(daxText);
 
       if (!hasCSV && !hasDAX) {
         throw new Error("No formats selected. Please go back to Export page.");
@@ -116,6 +172,7 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between checks
 
         try {
+          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
           const statusRes = await fetch("https://qlik-sense-cloud.onrender.com/powerbi/login/status", {
             method: "POST",
           });
@@ -147,16 +204,18 @@ export default function PublishPage() {
 
       const form = new FormData();
       if (hasCSV && csvText) {
-        form.append("csv_file", new Blob([csvText], { type: "text/csv" }), `${customTableName}.csv`);
+        form.append("csv_file", new Blob([csvText], { type: "text/csv" }), `${tableNameWithDateTime}.csv`);
       }
       if (hasDAX && daxText) {
-        form.append("dax_file", new Blob([daxText], { type: "text/plain" }), `${customTableName}.dax`);
+        form.append("dax_file", new Blob([daxText], { type: "text/plain" }), `${tableNameWithDateTime}.dax`);
       }
       form.append("meta_app_name", appName);
-      form.append("meta_table", customTableName);
+      form.append("meta_table", tableNameWithDateTime);
       form.append("has_csv", hasCSV ? "true" : "false");
       form.append("has_dax", hasDAX ? "true" : "false");
 
+      // https://qlik-sense-cloud.onrender.com
+      // const res = await fetch("http://localhost:8000/powerbi/process", {
       const res = await fetch("https://qlik-sense-cloud.onrender.com/powerbi/process", {
         method: "POST",
         body: form,
@@ -183,6 +242,13 @@ export default function PublishPage() {
       setDatasetURL(realDatasetURL);
 
       setStatusBoxes({ columns: true, powerbi: true, finished: true });
+      setCurrentStep(5); // Show all steps completed (green checkmarks)
+      
+      const endTime = new Date();
+      setPublishEndTime(endTime);
+      const durationMs = endTime.getTime() - startTime.getTime();
+      setPublishDuration(durationMs);
+      
       setResult(data);
       console.log("✅ Dataset published successfully!");
       console.log("📎 Dataset URL:", realDatasetURL);
@@ -191,54 +257,77 @@ export default function PublishPage() {
 
     } catch (err: any) {
       console.error("❌ Publishing error:", err);
-      setError(err.message || "Failed to publish");
       setStatusBoxes({ columns: false, powerbi: false, finished: false });
     } finally {
       setPublishing(false);
     }
   };
 
-  const downloadPDF = () => {
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(datasetURL).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Silently fail if copy fails
+    });
+  };
+
+  const downloadDataset = async () => {
     try {
-      // Create PDF content from table data
-      const pdfContent = `
-POWER BI DATASET REPORT
-====================
+      console.log('📥 Generating PDF with CSV and DAX data...');
+      
+      const element = document.getElementById('report-content');
+      if (!element) {
+        alert('Report content not found. Please try again.');
+        return;
+      }
 
-Application: ${appName}
-Dataset Name: ${customTableName}
-Generated Date: ${new Date().toLocaleString()}
+      // Make element visible for html2pdf
+      const originalStyle = element.getAttribute('style');
+      element.style.position = 'relative';
+      element.style.left = '0';
+      element.style.top = '0';
+      element.style.display = 'block';
+      element.style.visibility = 'visible';
+      
+      // Load html2pdf from CDN
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+      document.head.appendChild(script);
 
-Dataset Details:
-- Total Rows: ${rowCount}
-- Total Columns: ${columns.length}
-- Export Format: ${hasCSV ? "CSV" : ""} ${hasDAX ? "DAX" : ""}
-
-Columns:
-${columns.map((col: string, idx: number) => `${idx + 1}. ${col}`).join("\n")}
-
-Power BI URL: ${datasetURL}
-
-Status:
-- CSV Processed: ${hasCSV ? "✓" : "✗"}
-- DAX Processed: ${hasDAX ? "✓" : "✗"}
-- Dataset Published: ${result ? "✓" : "✗"}
-
-This report was generated from Qlik to Power BI migration tool.
-`;
-
-      // Create blob and download
-      const blob = new Blob([pdfContent], { type: "text/plain" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `${customTableName}_Report_${new Date().getTime()}.txt`;
-      link.click();
-      URL.revokeObjectURL(link.href);
-
-      console.log("📥 PDF downloaded successfully!");
+      script.onload = () => {
+        const win = window as any;
+        if (win.html2pdf) {
+          setTimeout(() => {
+            const opt = {
+              margin: 10,
+              filename: `${publishedTableName}_Report.pdf`,
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: { scale: 2 },
+              jsPDF: { orientation: 'portrait', unit: 'mm', format: 'a4' }
+            };
+            
+            win.html2pdf()
+              .set(opt)
+              .from(element)
+              .save()
+              .then(() => {
+                // Restore original style
+                if (originalStyle) {
+                  element.setAttribute('style', originalStyle);
+                } else {
+                  element.style.position = 'absolute';
+                  element.style.left = '-9999px';
+                  element.style.top = '-9999px';
+                }
+                console.log('✅ PDF generated and downloaded successfully!');
+              });
+          }, 500);
+        }
+      };
     } catch (err) {
-      console.error("❌ PDF download failed:", err);
-      setError("Failed to download PDF");
+      console.error('❌ PDF generation failed:', err);
+      alert('Failed to generate PDF. Please try again.');
     }
   };
 
@@ -252,23 +341,43 @@ This report was generated from Qlik to Power BI migration tool.
     <div className="publish-container">
       <h2 className="publish-header">📤 Publish to Power BI</h2>
 
-      {/* STEPPER */}
-      {publishing && (
+      {/* STEPPER - Show while publishing and after completion */}
+      {(publishing || result) && (
         <Stepper currentStep={currentStep} steps={STEPPER_STEPS} />
       )}
 
-      {/* ERROR ALERT */}
-      {error && !publishing && (
-        <div className="error-alert">
-          <div className="error-alert-title">❌ {error}</div>
-          <div className="error-alert-tip">
-            💡 Tip: Make sure you complete the authentication at microsoft.com/devicelogin before publishing
+      {/* LOADING MESSAGE - Show only while publishing and no result yet */}
+      {publishing && !result && (
+        <div style={{ 
+          textAlign: "center", 
+          padding: "40px 20px",
+          fontSize: "18px",
+          color: "#555"
+        }}>
+          <div style={{ marginBottom: "20px", fontSize: "48px" }}>⏳</div>
+          <div>Publishing your dataset to Power BI...</div>
+          <div style={{ fontSize: "14px", marginTop: "10px", color: "#999" }}>
+            This may take a few moments.
           </div>
+          {publishStartTime && (
+            <div style={{ 
+              marginTop: "20px", 
+              fontSize: "18px", 
+              fontWeight: "bold",
+              color: "#0078d4",
+              padding: "12px 20px",
+              backgroundColor: "#e7f3ff",
+              borderRadius: "5px",
+              display: "inline-block"
+            }}>
+              ⏱️ Publishing time: {formatDuration(elapsedTime)}
+            </div>
+          )}
         </div>
       )}
 
-      {/* FORM SECTION */}
-      {!result && (
+      {/* FORM SECTION - HIDDEN */}
+      {false && (
         <div className="form-section">
           <div className="form-group">
             <label className="form-label">📋 Custom Table Name</label>
@@ -334,35 +443,56 @@ This report was generated from Qlik to Power BI migration tool.
         </div>
       )}
 
-      {/* Publishing Progress */}
-      {publishing && (
-        <div className="progress-section">
-          <div className="progress-title">📊 Publishing Progress...</div>
-          <div className="progress-bars">
-            <div className={`progress-bar ${statusBoxes.columns ? "active" : ""}`} />
-            <div className={`progress-bar ${statusBoxes.powerbi ? "active" : ""}`} />
-            <div className={`progress-bar ${statusBoxes.finished ? "active" : ""}`} />
-          </div>
-        </div>
-      )}
-
       {/* SUCCESS SECTION */}
       {result && (
         <div className="success-section">
-          <div className="success-title">✨ Success!</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+            <div className="success-title">✨ Success!</div>
+            <div style={{ 
+              fontSize: "14px", 
+              color: "#0078d4",
+              fontWeight: "bold",
+              padding: "8px 15px",
+              backgroundColor: "#e7f3ff",
+              borderRadius: "5px"
+            }}>
+              ⏱️ Published in {formatDuration(publishDuration)}
+            </div>
+          </div>
           <div className="success-message">
-            Dataset "{customTableName}" published to Power BI Cloud
+            Dataset "<strong>{publishedTableName}</strong>" published to Power BI Cloud
           </div>
 
           {/* URL BOX - TURNS GREEN AFTER GENERATION */}
           <div className="url-box">
             <div className="url-label">🔗 Dataset URL (GREEN - Ready)</div>
-            <input
-              type="text"
-              value={datasetURL}
-              readOnly
-              className="url-input"
-            />
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+              <input
+                type="text"
+                value={datasetURL}
+                readOnly
+                className="url-input"
+              />
+              <button
+                onClick={copyToClipboard}
+                className="btn btn-small"
+                style={{
+                  padding: "8px 12px",
+                  width:"50px",
+                  height : "50px",
+                  whiteSpace: "nowrap",
+                  backgroundColor: copied ? "#27ae60" : "#3498db",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  transition: "background-color 0.3s"
+                }}
+              >
+                {copied ? "✅ Copied!" : "📋"}
+              </button>
+            </div>
             <div className="url-note">
               ✓ This URL is ready to use. Click "Open in Power BI" to view your dataset.
             </div>
@@ -370,6 +500,18 @@ This report was generated from Qlik to Power BI migration tool.
 
           {/* INFO BOXES */}
           <div className="info-boxes">
+            <div className="info-box">
+              <div className="info-box-label">Table Name (With Date & Time)</div>
+              <div className="info-box-value" style={{ fontSize: "12px", wordBreak: "break-word" }}>{publishedTableName}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Published Date & Time</div>
+              <div className="info-box-value">{publishEndTime ? publishEndTime.toLocaleString() : new Date().toLocaleString()}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Publishing Duration</div>
+              <div className="info-box-value">⏱️ {formatDuration(publishDuration)}</div>
+            </div>
             <div className="info-box">
               <div className="info-box-label">Total Rows</div>
               <div className="info-box-value">{rowCount}</div>
@@ -393,10 +535,10 @@ This report was generated from Qlik to Power BI migration tool.
               ☁️ Open in Power BI
             </button>
             <button
-              onClick={downloadPDF}
+              onClick={downloadDataset}
               className="btn btn-small btn-warning"
             >
-              📥 Download Report
+              📥 Download Dataset
             </button>
           </div>
 
@@ -406,6 +548,139 @@ This report was generated from Qlik to Power BI migration tool.
           </div>
         </div>
       )}
+
+      {/* HIDDEN REPORT CONTENT FOR PDF GENERATION */}
+      <div id="report-content" style={{
+        position: 'absolute',
+        left: '-9999px',
+        top: '-9999px',
+        width: '1000px',
+        backgroundColor: 'white'
+      }}>
+        <div style={{ padding: '40px', fontFamily: 'Arial, sans-serif', color: '#333' }}>
+          <h1 style={{ color: '#0078d4', borderBottom: '3px solid #0078d4', paddingBottom: '15px', marginBottom: '20px', fontSize: '28px' }}>
+            📊 Power BI Dataset Report
+          </h1>
+          
+          <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+            📋 Table Information
+          </h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', margin: '15px 0' }}>
+            <tbody>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Original Table Name:</td>
+                <td style={{ padding: '10px 12px' }}>{customTableName}</td>
+              </tr>
+              <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Published Table Name:</td>
+                <td style={{ padding: '10px 12px', backgroundColor: '#fff3cd', fontWeight: 'bold' }}>{publishedTableName}</td>
+              </tr>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Application:</td>
+                <td style={{ padding: '10px 12px' }}>{appName}</td>
+              </tr>
+              <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Published Date & Time:</td>
+                <td style={{ padding: '10px 12px' }}>{publishEndTime ? publishEndTime.toLocaleString() : new Date().toLocaleString()}</td>
+              </tr>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Publishing Duration:</td>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>{formatDuration(publishDuration)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+            📊 Dataset Details
+          </h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', margin: '15px 0' }}>
+            <tbody>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Total Rows:</td>
+                <td style={{ padding: '10px 12px' }}>{rowCount}</td>
+              </tr>
+              <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Total Columns:</td>
+                <td style={{ padding: '10px 12px' }}>{columns.length}</td>
+              </tr>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Export Format:</td>
+                <td style={{ padding: '10px 12px' }}>{hasCSV ? "✓ CSV" : "✗"} {hasDAX ? "✓ DAX" : "✗"}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+            📑 Columns ({columns.length} total)
+          </h2>
+          <pre style={{ backgroundColor: '#f5f5f5', padding: '15px', borderRadius: '5px', borderLeft: '3px solid #0078d4', fontSize: '12px', overflow: 'auto' }}>
+            {columns.map((col: string, idx: number) => `${idx + 1}. ${col}`).join("\n")}
+          </pre>
+
+          <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+            ☁️ Power BI Information
+          </h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', margin: '15px 0' }}>
+            <tbody>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Dataset URL:</td>
+                <td style={{ padding: '10px 12px', wordBreak: 'break-all', fontSize: '12px' }}>{datasetURL}</td>
+              </tr>
+              <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Status:</td>
+                <td style={{ padding: '10px 12px', color: '#107c10', fontWeight: 'bold' }}>✅ Published to Power BI Cloud</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+            ✅ Export Status
+          </h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', margin: '15px 0' }}>
+            <tbody>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>CSV Processed:</td>
+                <td style={{ padding: '10px 12px' }}>{hasCSV ? "✅ Yes" : "❌ No"}</td>
+              </tr>
+              <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>DAX Processed:</td>
+                <td style={{ padding: '10px 12px' }}>{hasDAX ? "✅ Yes" : "❌ No"}</td>
+              </tr>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Dataset Published to Power BI:</td>
+                <td style={{ padding: '10px 12px', color: '#107c10', fontWeight: 'bold' }}>✅ Successfully Published</td>
+              </tr>
+            </tbody>
+          </table>
+
+          {hasCSV && csvData && (
+            <>
+              <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+                📄 CSV Data
+              </h2>
+              <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '5px', borderLeft: '3px solid #0078d4', fontSize: '11px', overflow: 'visible', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                {csvData}
+              </div>
+            </>
+          )}
+
+          {hasDAX && daxData && (
+            <>
+              <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
+                🔧 DAX Query
+              </h2>
+              <div style={{ backgroundColor: '#ffffff', padding: '15px', borderRadius: '5px', borderLeft: '3px solid #0078d4', fontSize: '11px', overflow: 'visible', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                {daxData}
+              </div>
+            </>
+          )}
+
+          <div style={{ marginTop: '40px', fontSize: '11px', color: '#666', borderTop: '1px solid #ddd', paddingTop: '15px', textAlign: 'center' }}>
+            <p><strong>Qlik to Power BI Migration Tool</strong></p>
+            <p>This report was automatically generated on: {new Date().toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
 
       {/* BACK BUTTON */}
       <div className="publish-footer">
@@ -417,5 +692,6 @@ This report was generated from Qlik to Power BI migration tool.
         </button>
       </div>
     </div>
+  
   );
 }

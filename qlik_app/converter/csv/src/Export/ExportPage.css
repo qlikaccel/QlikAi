@@ -378,10 +378,9 @@
 }
 
 .analysis-time {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 12px;
   color: #0d98e8;
-  background: #e0f2fe;
+  background: rgba(10, 102, 194, 0.06);
   padding: 6px 12px;
   border-radius: 6px;
 }

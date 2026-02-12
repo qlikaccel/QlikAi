@@ -34,12 +34,11 @@ export default function ExportPage() {
 
   const appName = appNameRaw;
 
-  const [options, setOptions] = useState<{ csv: boolean; dax: boolean }>({ csv: false, dax: false });
-  const [selectAll, setSelectAll] = useState(false);
+  const [options, setOptions] = useState<{ combined: boolean }>({ combined: false });
   const [showError, setShowError] = useState(false);
 
-  // Check if at least one option is selected
-  const isAnyOptionSelected = options.csv || options.dax;
+  // Check if combined export is selected
+  const isAnyOptionSelected = options.combined;
 
   if (!selectedTable) {
     // if the summary step completed previously, send user to Summary to pick a table
@@ -66,8 +65,8 @@ export default function ExportPage() {
     sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
     sessionStorage.setItem("migration_row_count", String(rows.length));
 
-    // Save CSV data if selected
-    if (options.csv) {
+    // Save CSV data if combined export is selected
+    if (options.combined) {
       const headers = Object.keys(rows[0]);
       const csv = [
         headers.join(","),
@@ -79,8 +78,8 @@ export default function ExportPage() {
       sessionStorage.setItem("migration_has_csv", "true");
     }
 
-    // Save DAX data if selected
-    if (options.dax) {
+    // Save DAX data if combined export is selected
+    if (options.combined) {
       const cols = Object.keys(rows[0]);
       const daxLines = [] as string[];
       daxLines.push(`-- DAX export skeleton for table: ${selectedTable}`);
@@ -96,54 +95,7 @@ export default function ExportPage() {
     sessionStorage.setItem("exportComplete", "true");
   };
 
-  // Download CSV file
-  const downloadCSV = () => {
-    if (!rows?.length) return;
-
-    const headers = Object.keys(rows[0]);
-    const csv = [
-      headers.join(","),
-      ...rows.map((r: any) =>
-        headers.map((h) => `"${r[h] ?? ""}"`).join(",")
-      ),
-    ].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${selectedTable}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Download DAX file
-  const downloadDAX = () => {
-    if (!rows?.length) return;
-
-    const cols = Object.keys(rows[0]);
-    const daxLines = [] as string[];
-    daxLines.push(`-- DAX export skeleton for table: ${selectedTable}`);
-    daxLines.push(`-- Columns:`);
-    cols.forEach((c) => daxLines.push(`-- ${c}`));
-    daxLines.push(`\n-- Sample measure`);
-    daxLines.push(`[${selectedTable} Count] = COUNTROWS('${selectedTable}')`);
-    const daxContent = daxLines.join("\n");
-
-    const blob = new Blob([daxContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${selectedTable}.dax`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Export Selected: Download files only
-  const handleExportSelected = () => {
-    if (options.csv) downloadCSV();
-    if (options.dax) downloadDAX();
-  };
+  // Download functions (removed - combined export only)
 
   return (
     <div className="export-wrap">
@@ -183,55 +135,14 @@ export default function ExportPage() {
             <label>
               <input
                 type="checkbox"
-                checked={selectAll}
+                checked={options.combined}
                 onChange={() => {
-                  const newVal = !selectAll;
-                  setSelectAll(newVal);
-                  setOptions({ csv: newVal, dax: newVal });
+                  const combined = !options.combined;
+                  setOptions({ combined });
                 }}
               />
-              <strong> Select All</strong>
+              <strong> 📄 Export as CSV & DAX (Combined)</strong>
             </label>
-          </div>
-
-          <div className="checkbox-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={options.csv}
-                onChange={() => {
-                  const csv = !options.csv;
-                  setOptions((s) => ({ ...s, csv }));
-                  setSelectAll(csv && options.dax);
-                }}
-              />
-              📄 Export as CSV
-            </label>
-          </div>
-
-          <div className="checkbox-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={options.dax}
-                onChange={() => {
-                  const dax = !options.dax;
-                  setOptions((s) => ({ ...s, dax }));
-                  setSelectAll(options.csv && dax);
-                }}
-              />
-              📊 Export as DAX (Coming Soon)
-            </label>
-          </div>
-
-          <div className="actions-row">
-            <button
-              className="export-btn"
-              onClick={handleExportSelected}
-              disabled={!options.csv && !options.dax}
-            >
-              ✅ Export Selected
-            </button>
           </div>
         </div>
 
@@ -274,7 +185,7 @@ export default function ExportPage() {
       <div className="page-actions">
         {showError && (
           <div className="error-message">
-            ⚠️ Please select CSV or DAX before continuing
+            ⚠️ Please select CSV & DAX export before continuing
           </div>
         )}
         <button
@@ -285,14 +196,14 @@ export default function ExportPage() {
               setShowError(false);
               // Save data to sessionStorage before navigating
               saveDataToSessionStorage();
-              navigate("/migration", { state: { appId: state?.appId, appName } });
+              navigate("/publish", { state: { appId: state?.appId, appName } });
             } else {
               setShowError(true);
             }
           }}
-          title={!isAnyOptionSelected ? "Select CSV or DAX to continue" : "Continue to Migration"}
+          title={!isAnyOptionSelected ? "Select export to continue" : "Publish to PowerBI"}
         >
-          {!isAnyOptionSelected ? "⚠️ Select Export Option" : "➡️ Continue to Migration"}
+          {!isAnyOptionSelected ? "⚠️ Select Export Option" : "➡️ Publish to PowerBI"}
         </button>
       </div>
     </div>
