@@ -50,7 +50,7 @@ export default function MigrationPage() {
 
   return (
     <div className="wrap" >
-      <h2>📊 Migration</h2>
+      <h2>📊 Review</h2>
 
       {/* 3 INFO BOXES */}
       <div style={{
