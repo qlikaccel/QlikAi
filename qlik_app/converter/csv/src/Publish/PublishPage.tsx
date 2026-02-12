@@ -465,7 +465,7 @@ export default function PublishPage() {
 
           {/* URL BOX - TURNS GREEN AFTER GENERATION */}
           <div className="url-box">
-            <div className="url-label">🔗 Dataset URL (GREEN - Ready)</div>
+            <div className="url-label">🔗 Dataset URL </div>
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
               <input
                 type="text"
@@ -501,7 +501,7 @@ export default function PublishPage() {
           {/* INFO BOXES */}
           <div className="info-boxes">
             <div className="info-box">
-              <div className="info-box-label">Table Name (With Date & Time)</div>
+              <div className="info-box-label">Table Name </div>
               <div className="info-box-value" style={{ fontSize: "12px", wordBreak: "break-word" }}>{publishedTableName}</div>
             </div>
             <div className="info-box">
