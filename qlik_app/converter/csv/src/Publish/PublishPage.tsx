@@ -478,8 +478,8 @@ export default function PublishPage() {
                 className="btn btn-small"
                 style={{
                   padding: "8px 12px",
-                  width:"50px",
-                  height : "50px",
+                  width:"60px",
+                  height : "45px",
                   whiteSpace: "nowrap",
                   backgroundColor: copied ? "#27ae60" : "#3498db",
                   color: "white",
@@ -490,7 +490,7 @@ export default function PublishPage() {
                   transition: "background-color 0.3s"
                 }}
               >
-                {copied ? "✅ Copied!" : "📋"}
+                {copied ? "✅ Copy" : "📋"}
               </button>
             </div>
             <div className="url-note">

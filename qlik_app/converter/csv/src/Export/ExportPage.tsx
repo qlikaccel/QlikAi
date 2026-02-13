@@ -141,7 +141,7 @@ export default function ExportPage() {
                   setOptions({ combined });
                 }}
               />
-              <strong> 📄 Export as CSV & DAX </strong>
+              <strong> 📄 Export as CSV / DAX </strong>
             </label>
           </div>
         </div>
