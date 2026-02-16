@@ -1449,20 +1449,104 @@ class QlikWebSocketClient:
             return {"success": False, "error": str(e)}
     
     def _get_table_data_alternative(self, table_name: str, table_fields: list, limit: int, table_info: dict) -> Dict[str, Any]:
-        """Alternative method to fetch table data when hypercube fails"""
+        """Alternative method to fetch table data when hypercube fails - tries script extraction first"""
         try:
             print(f"\n📊 Using alternative table data retrieval method...")
             
-            # Return what we can from metadata
-            # Build dummy rows from the table metadata if available
-            rows = []
+            # FIRST: Try to get data from the script (for INLINE loads and CSV data)
+            # This is the key fix - we need to extract actual data from the load script
+            try:
+                script_result = self._get_app_script()
+                if script_result.get("success") and script_result.get("script"):
+                    script = script_result.get("script", "")
+                    print(f"📜 Found script, attempting to parse inline/CSV data...")
+                    
+                    # Try to parse the script using the script parser
+                    try:
+                        from qlik_script_parser import QlikScriptParser
+                        table_preview = QlikScriptParser.get_table_preview(script, table_name, limit)
+                        
+                        if table_preview.get("success"):
+                            rows = table_preview.get("rows", [])
+                            columns = table_preview.get("columns", [])
+                            print(f"✅ Successfully extracted {len(rows)} rows from script for table '{table_name}'")
+                            
+                            self.close()
+                            return {
+                                "success": True,
+                                "table_name": table_name,
+                                "columns": columns,
+                                "rows": rows,
+                                "row_count": len(rows),
+                                "source": "script"
+                            }
+                        else:
+                            print(f"⚠️ Script parser could not find table '{table_name}': {table_preview.get('error')}")
+                    except ImportError:
+                        print("⚠️ QlikScriptParser not available")
+                    except Exception as e:
+                        print(f"⚠️ Error parsing script: {str(e)}")
+            except Exception as e:
+                print(f"⚠️ Could not get script: {str(e)}")
             
-            # Try to get available_count or no_of_rows from table info
+            # SECOND: If script extraction failed, try field values as last resort
+            print(f"🔄 Trying to get field values as fallback...")
+            all_field_values = {}
+            
+            for field in table_fields[:5]:  # Limit to 5 fields
+                try:
+                    # Try to get values for each field
+                    field_result = self.send_request("GetField", {
+                        "qFieldName": field
+                    })
+                    
+                    if 'result' in field_result and 'qReturn' in field_result['result']:
+                        field_handle = field_result['result']['qReturn']['qHandle']
+                        
+                        # Get values
+                        values_response = self.send_request("GetValues", {
+                            "qHandle": field_handle,
+                            "qMaxValues": min(limit, 100)
+                        }, handle=-1)
+                        
+                        if 'result' in values_response:
+                            values = []
+                            for item in values_response.get('result', {}).get('qValues', []):
+                                values.append(item.get('qText', ''))
+                            all_field_values[field] = values[:limit]
+                except Exception as e:
+                    print(f"⚠️ Could not get values for field {field}: {str(e)}")
+                    continue
+            
+            # If we got field values, build rows from them
+            if all_field_values and any(all_field_values.values()):
+                print(f"✅ Got field values, building rows...")
+                max_len = max(len(v) for v in all_field_values.values()) if all_field_values else 0
+                rows = []
+                
+                for i in range(min(limit, max_len)):
+                    row = {}
+                    for field, values in all_field_values.items():
+                        row[field] = values[i] if i < len(values) else ""
+                    rows.append(row)
+                
+                self.close()
+                return {
+                    "success": True,
+                    "table_name": table_name,
+                    "columns": list(all_field_values.keys()),
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "source": "field_values"
+                }
+            
+            # LAST RESORT: Only show placeholder if ALL methods fail
+            print(f"⚠️ All alternative methods failed, checking metadata...")
+            rows = []
             row_count = table_info.get("no_of_rows", 0)
             
             if row_count > 0:
                 print(f"Table has {row_count} rows according to metadata")
-                
                 # Create placeholder response showing table structure
                 for i in range(min(limit, row_count)):
                     row = {}

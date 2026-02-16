@@ -807,17 +807,66 @@ async def get_table_data_enhanced(
     """
     Enhanced endpoint to fetch table data with multiple fallback strategies
     Handles CSV-loaded tables, case-insensitive matching, and trimmed names
+    NOW WITH PRIORITY: Script extraction for inline/CSV data
     """
     try:
-        # Strategy 1: Direct fetch with provided name
         print(f"📊 Attempting to fetch table '{table_name}' from app '{app_id}'...")
         
+        # STRATEGY 0: First try script extraction (for INLINE loads and CSV data)
+        # This is the KEY FIX - prioritize script extraction for inline/CSV data
+        if SCRIPT_PARSER_AVAILABLE:
+            print(f"🔍 Trying script extraction first (for inline/CSV data)...")
+            try:
+                # Get script via websocket client
+                script_result = ws_client.get_app_tables_simple(app_id)
+                if script_result.get("success"):
+                    script = script_result.get("script", "")
+                    if script:
+                        table_preview = QlikScriptParser.get_table_preview(script, table_name, limit)
+                        if table_preview.get("success"):
+                            rows = table_preview.get("rows", [])
+                            columns = table_preview.get("columns", [])
+                            print(f"✅ SUCCESS: Extracted {len(rows)} rows from script for table '{table_name}'")
+                            return {
+                                "success": True,
+                                "table_name": table_name,
+                                "columns": columns,
+                                "rows": rows,
+                                "row_count": len(rows),
+                                "source": "script"
+                            }
+                        else:
+                            print(f"⚠️ Script found but table '{table_name}' not in script: {table_preview.get('error')}")
+                    else:
+                        print("⚠️ No script found in app")
+            except Exception as e:
+                print(f"⚠️ Script extraction failed: {str(e)}")
+        else:
+            print("⚠️ Script parser not available, skipping script extraction")
+        
+        # STRATEGY 1: Direct fetch with provided name (hypercupe method)
+        print(f"🔄 Trying hypercube method...")
         result = ws_client.get_table_data(app_id, table_name, limit)
         if result.get("success", False):
-            print(f"✅ Successfully retrieved table data using direct name")
-            return result
+            # Check if it's not just placeholder data
+            rows = result.get("rows", [])
+            if rows and len(rows) > 0:
+                # Check if we got actual data or placeholders
+                first_row = rows[0] if rows else {}
+                has_placeholder = any(
+                    isinstance(v, str) and "not accessible" in v 
+                    for v in first_row.values()
+                ) if first_row else False
+                
+                if not has_placeholder:
+                    print(f"✅ Successfully retrieved table data using direct name")
+                    return result
+                else:
+                    print(f"⚠️ Got placeholder data, trying other strategies...")
+            else:
+                return result
         
-        print(f"⚠️ Direct fetch failed: {result.get('error', 'Unknown error')}")
+        print(f"⚠️ Direct fetch failed or returned placeholders: {result.get('error', 'Unknown error')}")
         
         # Strategy 2: Get list of available tables and try case-insensitive match
         print(f"🔍 Retrieving list of available tables...")
@@ -843,8 +892,37 @@ async def get_table_data_enhanced(
                         
                         result = ws_client.get_table_data(app_id, name, limit)
                         if result.get("success", False):
-                            print(f"✅ Successfully retrieved data using matched name: '{name}'")
-                            return result
+                            # Check again for placeholders
+                            rows = result.get("rows", [])
+                            if rows:
+                                first_row = rows[0]
+                                has_placeholder = any(
+                                    isinstance(v, str) and "not accessible" in v 
+                                    for v in first_row.values()
+                                ) if first_row else False
+                                
+                                if not has_placeholder:
+                                    print(f"✅ Successfully retrieved data using matched name: '{name}'")
+                                    return result
+                        
+                        # If still getting placeholders, try script extraction with matched name
+                        if SCRIPT_PARSER_AVAILABLE:
+                            try:
+                                script = tables_info.get("script", "")
+                                if script:
+                                    table_preview = QlikScriptParser.get_table_preview(script, name, limit)
+                                    if table_preview.get("success"):
+                                        print(f"✅ Found actual data via script with matched name: '{name}'")
+                                        return {
+                                            "success": True,
+                                            "table_name": name,
+                                            "columns": table_preview.get("columns", []),
+                                            "rows": table_preview.get("rows", []),
+                                            "row_count": table_preview.get("total_rows", 0),
+                                            "source": "script"
+                                        }
+                            except Exception as e:
+                                print(f"⚠️ Script extraction with matched name failed: {str(e)}")
             
             print(f"⚠️ No matching table found. Available tables: {[t.get('name', 'unknown') for t in available_tables]}")
         
