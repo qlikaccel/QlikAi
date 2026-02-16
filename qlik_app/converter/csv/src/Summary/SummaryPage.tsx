@@ -1636,11 +1636,24 @@ export default function SummaryPage() {
         // ignore storage errors
       }
  
-      // 2️⃣ SUMMARY DATA
-      const sum = await fetchVehicleSummary(appId, tableName);
-      setSummary(sum);
+      // 2️⃣ SUMMARY DATA - Calculate locally from the fetched data
+      // This avoids backend dependency and works with any data format
+      const { generateSummaryFromData } = await import("../api/qlikApi");
+      const summary = generateSummaryFromData(data, tableName);
+      setSummary(summary);
     } catch (e) {
-      console.error(e);
+      console.error("❌ Error loading table data:", e);
+      
+      // Show helpful error message
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      alert(
+        `Failed to load table "${tableName}".\n\n` +
+        `Error: ${errorMessage}\n\n` +
+        `Suggestions:\n` +
+        `1. Verify the table name is correct\n` +
+        `2. Ensure the app has been reloaded with the latest data in QlikCloud\n` +
+        `3. Check the backend is running (http://127.0.0.1:8000)`
+      );
     } finally {
       setTableLoading(false);
  

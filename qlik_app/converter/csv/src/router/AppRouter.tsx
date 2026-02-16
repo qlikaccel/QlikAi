@@ -10,6 +10,7 @@ export default function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<ConnectPage />} />
+      <Route path="/connect" element={<ConnectPage />} />
       <Route path="/apps" element={<AppsPage />} />
       <Route path="/summary" element={<SummaryPage />} />
       <Route path="/export" element={<ExportPage />} />

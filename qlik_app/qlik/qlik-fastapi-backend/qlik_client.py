@@ -1,15 +1,16 @@
 import os
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 import json
 
 load_dotenv()
 
 class QlikClient:
-    def __init__(self):
-        self.api_key = os.getenv('QLIK_API_KEY')
-        self.tenant_url = os.getenv('QLIK_TENANT_URL')
+    def __init__(self, api_key: Optional[str] = None, tenant_url: Optional[str] = None):
+        # Use provided credentials or fall back to environment variables
+        self.api_key = api_key or os.getenv('QLIK_API_KEY')
+        self.tenant_url = tenant_url or os.getenv('QLIK_TENANT_URL')
         self.api_base_url = os.getenv('QLIK_API_BASE_URL')
         
         # Use tenant-specific API URL

@@ -65,5 +65,136 @@
       "added_at": "2026-02-11T12:50:59.082847",
       "added_timestamp": 1770814259.0828476
     }
+  },
+  "3d6f204b-2ed3-4360-8009-6434b091628d": {
+    "Ford_Dealer_Master": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    },
+    "Ford_Model_Master": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    },
+    "Ford_Service_History": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    },
+    "Ford_Variant_Master": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    },
+    "Ford_Vehicle_Dealer_Junction": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    },
+    "Ford_Vehicle_Fact": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    },
+    "Ford_VIN_Details": {
+      "added_at": "2026-02-16T10:41:32.422185",
+      "added_timestamp": 1771238492.4221852
+    }
+  },
+  "e8b6b244-e736-4b61-9770-dda388ab286d": {
+    "Ford_Model_Master": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    },
+    "Ford_Variant_Master": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    },
+    "Ford_Dealer_Master": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    },
+    "Ford_VIN_Details": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    },
+    "Ford_Service_History": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    },
+    "Ford_Vehicle_Fact": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    },
+    "Final_Combined_Table": {
+      "added_at": "2026-02-16T10:41:36.398381",
+      "added_timestamp": 1771238496.3983812
+    }
+  },
+  "ed92f2f4-7237-4580-9165-fd3a8b37adaf": {
+    "VehicleFact": {
+      "added_at": "2026-02-16T10:41:36.896435",
+      "added_timestamp": 1771238496.896436
+    },
+    "VINDetails": {
+      "added_at": "2026-02-16T10:41:36.896435",
+      "added_timestamp": 1771238496.896436
+    },
+    "DealerMaster": {
+      "added_at": "2026-02-16T10:41:36.896435",
+      "added_timestamp": 1771238496.896436
+    },
+    "ModelMaster": {
+      "added_at": "2026-02-16T10:41:36.896435",
+      "added_timestamp": 1771238496.896436
+    },
+    "ServiceHistory": {
+      "added_at": "2026-02-16T10:41:36.896435",
+      "added_timestamp": 1771238496.896436
+    },
+    "VehicleDealerJunction": {
+      "added_at": "2026-02-16T10:41:36.896435",
+      "added_timestamp": 1771238496.896436
+    }
+  },
+  "f95e0428-729e-49f0-9b78-e83a67df461c": {},
+  "fe3b7783-71b0-443c-977c-57c5ea062b09": {
+    "Trucks": {
+      "added_at": "2026-02-16T10:41:38.561888",
+      "added_timestamp": 1771238498.5618885
+    },
+    "Drivers": {
+      "added_at": "2026-02-16T10:41:38.561888",
+      "added_timestamp": 1771238498.5618885
+    },
+    "Trips": {
+      "added_at": "2026-02-16T10:41:38.561888",
+      "added_timestamp": 1771238498.5618885
+    },
+    "Combined_Table": {
+      "added_at": "2026-02-16T10:41:38.561888",
+      "added_timestamp": 1771238498.5618885
+    }
+  },
+  "939abdac-8f0d-42b8-a879-51f8285aab75": {
+    "Ford_Model_Master": {
+      "added_at": "2026-02-16T13:18:15.572367",
+      "added_timestamp": 1771247895.5723674
+    },
+    "Ford_Variant_Master": {
+      "added_at": "2026-02-16T13:18:15.572367",
+      "added_timestamp": 1771247895.5723674
+    },
+    "Ford_Dealer_Master": {
+      "added_at": "2026-02-16T13:18:15.572367",
+      "added_timestamp": 1771247895.5723674
+    },
+    "Ford_VIN_Details": {
+      "added_at": "2026-02-16T13:18:15.572367",
+      "added_timestamp": 1771247895.5723674
+    },
+    "Ford_Service_History": {
+      "added_at": "2026-02-16T13:18:15.572367",
+      "added_timestamp": 1771247895.5723674
+    },
+    "Ford_Vehicle_Fact": {
+      "added_at": "2026-02-16T13:18:15.572367",
+      "added_timestamp": 1771247895.5723674
+    }
   }
 }

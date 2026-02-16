@@ -60,6 +60,7 @@ app.add_middleware(
 )
 
 def get_qlik_client():
+    """Get Qlik client using environment variables"""
     try:
         return QlikClient()
     except ValueError as e:
@@ -482,7 +483,9 @@ async def test_connection(client: QlikClient = Depends(get_qlik_client)):
         raise HTTPException(status_code=500, detail=f"Connection test failed: {str(e)}")
 
 @app.get("/spaces")
-async def list_spaces(client: QlikClient = Depends(get_qlik_client)):
+async def list_spaces(
+    client: QlikClient = Depends(get_qlik_client)
+):
     """List all available spaces"""
     try:
         spaces = client.get_spaces()
@@ -495,7 +498,9 @@ async def list_spaces(client: QlikClient = Depends(get_qlik_client)):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve spaces: {str(e)}")
 
 @app.get("/applications", response_model=List[Dict[str, Any]])
-async def list_applications(client: QlikClient = Depends(get_qlik_client)):
+async def list_applications(
+    client: QlikClient = Depends(get_qlik_client)
+):
     """List all available applications"""
     try:
         apps = client.get_applications()
@@ -743,6 +748,118 @@ async def find_apps_with_data(client: QlikClient = Depends(get_qlik_client)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to find apps with data: {str(e)}")
 
+@app.get("/applications/{app_id}/table/{table_name}/data/simple")
+async def get_table_data_simple(
+    app_id: str,
+    table_name: str,
+    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+):
+    """
+    Simple endpoint that returns table structure and metadata without complex hypercube creation
+    Great for showing table summaries/previews
+    """
+    try:
+        # Get tables from data model
+        result = ws_client.get_app_tables_simple(app_id)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error"))
+        
+        tables = result.get("tables", [])
+        requested = table_name.strip().lower()
+        matching_table = None
+        
+        for table in tables:
+            if table.get("name", "").strip().lower() == requested:
+                matching_table = table
+                break
+        
+        if not matching_table:
+            raise HTTPException(status_code=404, detail=f"Table '{table_name}' not found")
+        
+        # Return table metadata
+        columns = [f["name"] for f in matching_table.get("fields", []) if not f.get("is_system")]
+        
+        return {
+            "success": True,
+            "table_name": matching_table.get("name"),
+            "columns": columns,
+            "column_count": len(columns),
+            "row_count": matching_table.get("no_of_rows", 0),
+            "is_synthetic": matching_table.get("is_synthetic", False),
+            "fields_info": matching_table.get("fields", [])[:10],  # First 10 fields for preview
+            "note": "This returns table structure. For actual table data, use the /table/{table_name}/data endpoint"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving table info: {str(e)}")
+
+
+# Enhanced table data endpoint with better error handling for CSV-loaded tables
+@app.get("/applications/{app_id}/table/{table_name}/data/enhanced")
+async def get_table_data_enhanced(
+    app_id: str,
+    table_name: str,
+    limit: int = Query(default=100, le=10000, description="Maximum number of rows to return"),
+    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+):
+    """
+    Enhanced endpoint to fetch table data with multiple fallback strategies
+    Handles CSV-loaded tables, case-insensitive matching, and trimmed names
+    """
+    try:
+        # Strategy 1: Direct fetch with provided name
+        print(f"📊 Attempting to fetch table '{table_name}' from app '{app_id}'...")
+        
+        result = ws_client.get_table_data(app_id, table_name, limit)
+        if result.get("success", False):
+            print(f"✅ Successfully retrieved table data using direct name")
+            return result
+        
+        print(f"⚠️ Direct fetch failed: {result.get('error', 'Unknown error')}")
+        
+        # Strategy 2: Get list of available tables and try case-insensitive match
+        print(f"🔍 Retrieving list of available tables...")
+        tables_info = ws_client.get_app_tables_simple(app_id)
+        
+        if tables_info.get("success", False):
+            available_tables = tables_info.get("tables", [])
+            print(f"📋 Found {len(available_tables)} tables in app")
+            
+            # Try case-insensitive and whitespace-trimmed match
+            requested_lower = (table_name or "").strip().lower()
+            
+            for table_info in available_tables:
+                table_names_to_try = [
+                    table_info.get("name"),
+                    table_info.get("table"),
+                    table_info.get("table_name")
+                ]
+                
+                for name in table_names_to_try:
+                    if name and name.strip().lower() == requested_lower:
+                        print(f"✅ Found matching table name: '{name}'")
+                        
+                        result = ws_client.get_table_data(app_id, name, limit)
+                        if result.get("success", False):
+                            print(f"✅ Successfully retrieved data using matched name: '{name}'")
+                            return result
+            
+            print(f"⚠️ No matching table found. Available tables: {[t.get('name', 'unknown') for t in available_tables]}")
+        
+        # If all strategies fail
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Table '{table_name}' not found. Please check the table name and ensure the app has been reloaded with data."
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in enhanced table fetch: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get table data: {str(e)}")
+
 # ==================== SCRIPT DATA EXTRACTION ENDPOINTS ====================
 # These endpoints require qlik_script_parser.py
 
@@ -958,86 +1075,260 @@ else:
     
     # 🔽🔽🔽 PASTE HERE 🔽🔽🔽
 
+@app.get("/applications/{app_id}/table/{table_name}/export/csv", response_class=PlainTextResponse)
+async def export_table_as_csv(
+    app_id: str,
+    table_name: str,
+    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+):
+    """
+    Export table data as CSV file
+    Returns CSV format ready for download
+    """
+    try:
+        # Try to fetch actual table data first
+        table_data_result = ws_client.get_table_data(app_id, table_name, limit=10000)
+        
+        if table_data_result.get("success"):
+            # Build CSV from actual table data
+            rows = table_data_result.get("rows", [])
+            columns = table_data_result.get("columns", [])
+            
+            if not rows or not columns:
+                return "No data available for export"
+            
+            # Build CSV header
+            csv_lines = [",".join(f'"{col}"' for col in columns)]
+            
+            # Build CSV rows
+            for row in rows:
+                values = []
+                for col in columns:
+                    val = str(row.get(col, ""))
+                    # Escape quotes in values
+                    val = val.replace('"', '""')
+                    values.append(f'"{val}"')
+                csv_lines.append(",".join(values))
+            
+            return "\n".join(csv_lines)
+        
+        else:
+            # Fallback: Get table structure from metadata
+            tables_result = ws_client.get_app_tables_simple(app_id)
+            if not tables_result.get("success"):
+                raise HTTPException(status_code=500, detail="Could not fetch table information")
+            
+            tables = tables_result.get("tables", [])
+            requested = table_name.strip().lower()
+            matching_table = None
+            
+            for table in tables:
+                if table.get("name", "").strip().lower() == requested:
+                    matching_table = table
+                    break
+            
+            if not matching_table:
+                raise HTTPException(status_code=404, detail=f"Table '{table_name}' not found")
+            
+            columns = [f["name"] for f in matching_table.get("fields", []) if not f.get("is_system")]
+            row_count = matching_table.get("no_of_rows", 0)
+            
+            # Create CSV with structure and metadata
+            csv_lines = [
+                f"Table,{table_name}",
+                f"Rows,{row_count}",
+                f"Columns,{len(columns)}",
+                f"Export Date,{time.strftime('%Y-%m-%d %H:%M:%S')}",
+                ""
+            ]
+            
+            csv_lines.append(",".join(f'"{col}"' for col in columns))
+            csv_lines.append("# " + ",".join(["[Data not accessible - metadata only]"] * len(columns)))
+            
+            return "\n".join(csv_lines)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error exporting table: {str(e)}")
+
 @app.get("/vehicle-summary")
 async def vehicle_summary(
     app_id: str,
     table_name: str,
     ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
 ):
-    print("\n==== VEHICLE SUMMARY FINAL FIX ====")
+    """
+    Generate a summary of table data
+    Works with both INLINE script data and CSV-loaded tables
+    """
+    print(f"\n==== VEHICLE SUMMARY ENDPOINT ====")
+    print(f"App ID: {app_id}, Table: {table_name}")
 
     try:
-        # 1️⃣ GET SCRIPT (SAME AS YOUR WORKING ENDPOINT)
+        # Step 1: Try to get actual table data first
+        print(f"Step 1: Attempting to fetch table data...")
+        table_data_result = ws_client.get_table_data(app_id, table_name, limit=1000)
+        
+        if table_data_result.get("success"):
+            print(f"✅ Got actual table data")
+            rows = table_data_result.get("rows", [])
+            
+            if rows:
+                return {"success": True, "summary": _generate_summary_from_rows(rows, table_name)}
+        
+        # Step 2: Fallback - get from script/INLINE data
+        print(f"Step 2: Trying script parsing...")
+        
+        if not SCRIPT_PARSER_AVAILABLE:
+            print(f"⚠️ Script parser not available, returning metadata summary")
+            # Get table metadata as fallback
+            tables_result = ws_client.get_app_tables_simple(app_id)
+            if tables_result.get("success"):
+                for table in tables_result.get("tables", []):
+                    if table.get("name", "").strip().lower() == table_name.strip().lower():
+                        return {
+                            "success": True,
+                            "summary": {
+                                "Table": table_name,
+                                "Total Rows": table.get("no_of_rows", 0),
+                                "Columns": len([f for f in table.get("fields", []) if not f.get("is_system")]),
+                                "Fields": [f["name"] for f in table.get("fields", [])[:10]],
+                                "Note": "Summary from table metadata (actual data not accessible)"
+                            }
+                        }
+        
+        # Try script-based summary
         result = ws_client.get_app_tables_simple(app_id)
-
+        
         if not result.get("success", False):
-            raise HTTPException(status_code=500, detail="Failed to get script")
+            print(f"⚠️ Script parsing failed, returning basic summary")
+            return {
+                "success": True,
+                "summary": {
+                    "Table": table_name,
+                    "Note": "Could not load data - check that app has been reloaded in QlikCloud"
+                }
+            }
 
         script = result.get("script", "")
 
-        # 2️⃣ USE SAME PARSER
-        table_data = QlikScriptParser.get_table_preview(
-            script,
-            table_name,
-            500
-        )
+        if not script:
+            print(f"⚠️ No script found, returning basic summary")
+            return {
+                "success": True,
+                "summary": {
+                    "Table": table_name,
+                    "Tables Available": [t["name"] for t in result.get("tables", [])],
+                    "Note": "No script data found"
+                }
+            }
+
+        # Parse script for INLINE data
+        table_data = QlikScriptParser.get_table_preview(script, table_name, 1000)
 
         if not table_data.get("success", False):
-            raise HTTPException(status_code=404, detail="Table not found")
+            print(f"⚠️ Table not found in script")
+            return {
+                "success": True,
+                "summary": {
+                    "Table": table_name,
+                    "Available Tables": [t["name"] for t in result.get("tables", [])]
+                }
+            }
 
         rows = table_data.get("rows", [])
 
         if not rows:
-            return {"success": True, "summary": {"message": "No rows"}}
-
-        first = rows[0]
-
-        summary = {
-            "Total Rows": len(rows),
-            "Columns": list(first.keys()),
-            "Numeric Analysis": {},
-            "Category Counts": {}
-        }
-
-        # -------- NUMERIC --------
-        for key in first.keys():
-            values = []
-
-            for r in rows:
-                v = r.get(key)
-
-                try:
-                    if isinstance(v, str) and v.replace('.', '').isdigit():
-                        values.append(float(v))
-                    elif isinstance(v, (int, float)):
-                        values.append(float(v))
-                except:
-                    pass
-
-            if values:
-                summary["Numeric Analysis"][key] = {
-                    "min": min(values),
-                    "max": max(values),
-                    "avg": round(sum(values)/len(values), 2)
+            return {
+                "success": True,
+                "summary": {
+                    "Table": table_name,
+                    "Message": "No data rows found"
                 }
+            }
 
-        # -------- CATEGORY --------
-        from collections import Counter
-
-        for key in first.keys():
-            vals = [str(r.get(key)) for r in rows]
-
-            if len(set(vals)) < 20:
-                summary["Category Counts"][key] = dict(Counter(vals))
-
+        return {"success": True, "summary": _generate_summary_from_rows(rows, table_name)}
+        
+    except Exception as e:
+        print(f"❌ Error in vehicle_summary: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return a basic message instead of crashing
         return {
             "success": True,
-            "summary": summary
+            "summary": {
+                "Table": table_name,
+                "Status": "Summary generation failed, but table data may still be available",
+                "Error": str(e)
+            }
         }
 
-    except Exception as e:
-        print("SUMMARY ERROR:", e)
-        raise HTTPException(status_code=500, detail=str(e))
+def _generate_summary_from_rows(rows: list, table_name: str) -> dict:
+    """Generate summary statistics from table rows"""
+    if not rows:
+        return {"Table": table_name, "Total Rows": 0}
+    
+    first_row = rows[0]
+    summary = {
+        "Table": table_name,
+        "Total Rows": len(rows),
+        "Columns": list(first_row.keys()),
+        "Column Count": len(first_row.keys()),
+        "Numeric Analysis": {},
+        "Category Counts": {}
+    }
+    
+    # Analyze each column
+    from collections import Counter
+    
+    for key in first_row.keys():
+        values = []
+        text_values = []
+        
+        for row in rows:
+            val = row.get(key, "")
+            
+            # Try to parse as number
+            if val and val not in ["[Row", "[data"]:  # Skip placeholder values
+                try:
+                    if isinstance(val, str):
+                        clean_val = val.replace(',', '').strip()
+                        if clean_val and (clean_val.replace('.', '').replace('-', '', 1).isdigit()):
+                            values.append(float(clean_val))
+                        else:
+                            text_values.append(val)
+                    else:
+                        values.append(float(val))
+                except:
+                    text_values.append(str(val))
+            else:
+                text_values.append(str(val))
+        
+        # Numeric analysis
+        if values:
+            summary["Numeric Analysis"][key] = {
+                "min": round(min(values), 2),
+                "max": round(max(values), 2),
+                "avg": round(sum(values) / len(values), 2),
+                "count": len(values)
+            }
+        
+        # Category analysis
+        if text_values and len(set(text_values)) <= 20:  # Only for reasonable cardinality
+            counter = Counter(text_values)
+            summary["Category Counts"][key] = dict(counter.most_common(5))
+    
+    return summary
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "ok",
+        "message": "Qlik FastAPI Backend is running"
+    }
 
 
 # ==================== SUMMARY GENERATION ENDPOINTS ====================
@@ -1190,29 +1481,6 @@ async def check_data_quality(request: TableDataRequest):
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to check data quality: {str(e)}")
-
-
-# ==================== VEHICLE SUMMARY ENDPOINT ====================
-
-@app.get("/vehicle-summary")
-async def get_vehicle_summary(app_id: str, table_name: str, ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
-    """
-    Get summary data for a specific table using WebSocket data path.
-    Safe replacement to avoid AttributeError from QlikClient.
-    """
-    try:
-        result = ws_client.get_table_data(app_id, table_name, 500)
-        if not result.get("success", False):
-            raise HTTPException(status_code=500, detail=result.get("error", "Failed to get table data"))
-
-        rows = result.get("rows", [])
-        from summary_utils import generate_summary
-        summary = generate_summary(rows, table_name)
-        return {"success": True, "summary": summary, "table_name": table_name}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to get summary: {str(e)}")
 
 
 # ==================== HUGGING FACE CHAT ENDPOINTS ====================
