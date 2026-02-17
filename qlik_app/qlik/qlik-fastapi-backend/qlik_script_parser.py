@@ -8,10 +8,13 @@ class QlikScriptParser:
     @staticmethod
     def parse_inline_data(script: str) -> Dict[str, Any]:
         """
-        Parse INLINE data from Qlik script
+        Parse INLINE and CSV data from Qlik script
         Returns tables with their data
         """
         tables = {}
+        
+        # Normalize line endings
+        script = script.replace('\r\n', '\n').replace('\r', '\n')
         
         # Split script into sections
         sections = script.split('///$tab')
@@ -35,36 +38,32 @@ class QlikScriptParser:
     
     @staticmethod
     def _parse_section(section: str) -> Dict[str, Dict[str, Any]]:
-        """Parse a single script section"""
+        """Parse a single script section - handles INLINE and CSV LOAD statements"""
         tables = {}
         
-        # Find all LOAD ... INLINE patterns
-        # Pattern: TableName: LOAD ... INLINE [ ... ];
-        
-        # First, find table name (word followed by colon)
+        # Find all LOAD patterns (both INLINE and FROM file)
         lines = section.split('\n')
         current_table = None
         
         for i, line in enumerate(lines):
             line_stripped = line.strip()
             
-            # Skip comments
-            if line_stripped.startswith('//'):
+            # Skip empty lines and comments
+            if not line_stripped or line_stripped.startswith('//'):
                 continue
             
-            # Check for table name (ends with colon)
-            if ':' in line and not line_stripped.startswith('LOAD'):
+            # Check for table name (ends with colon, not a LOAD statement)
+            if ':' in line and not line_stripped.startswith('LOAD') and not line_stripped.startswith('FROM'):
                 parts = line.split(':')
                 if len(parts) >= 2:
                     potential_table = parts[0].strip()
                     # Check if next lines contain LOAD
-                    next_lines = '\n'.join(lines[i:i+5])
+                    next_lines = '\n'.join(lines[i:i+10])
                     if 'LOAD' in next_lines.upper():
                         current_table = potential_table
             
             # Check for INLINE block
             if current_table and 'INLINE' in line_stripped.upper():
-                # Extract the INLINE block
                 inline_data = QlikScriptParser._extract_inline_block(
                     '\n'.join(lines[i:]), 
                     current_table
@@ -72,8 +71,94 @@ class QlikScriptParser:
                 if inline_data:
                     tables[current_table] = inline_data
                     current_table = None
+            
+            # Check for CSV FROM file
+            elif current_table and 'FROM' in line_stripped.upper():
+                # Extract file path from FROM [path]
+                match = re.search(r'FROM\s*\[([^\]]+)\]', line_stripped, re.IGNORECASE)
+                if match:
+                    filepath = match.group(1).strip()
+                    csv_data = QlikScriptParser._extract_csv_file(filepath, current_table)
+                    if csv_data:
+                        tables[current_table] = csv_data
+                    current_table = None
         
         return tables
+    
+    @staticmethod
+    def _extract_csv_file(filepath: str, table_name: str) -> Dict[str, Any]:
+        """Extract data from CSV file referenced in LOAD statement"""
+        try:
+            import os
+            
+            # Convert Qlik lib path to actual file path
+            # lib://DataFiles/Ford_Model_Master.csv -> D:\fordvehicledetails\Ford_Model_Master.csv
+            if 'lib://' in filepath:
+                filename = filepath.split('/')[-1]  # Get filename
+                # Try common data directories
+                possible_paths = [
+                    os.path.join('d:\\fordvehicledetails', filename),
+                    os.path.join('d:\\data', filename),
+                    os.path.join(os.getcwd(), filename),
+                    os.path.join(os.path.dirname(__file__), filename),
+                ]
+            else:
+                possible_paths = [
+                    filepath,
+                    os.path.join(os.getcwd(), filepath),
+                    os.path.join(os.path.dirname(__file__), filepath),
+                ]
+            
+            csv_content = None
+            for path in possible_paths:
+                try:
+                    if os.path.exists(path):
+                        with open(path, 'r', encoding='utf-8') as f:
+                            csv_content = f.read()
+                        break
+                except Exception:
+                    continue
+            
+            if not csv_content:
+                return None
+            
+            # Parse CSV content
+            lines = csv_content.strip().split('\n')
+            if len(lines) < 2:
+                return None
+            
+            # First line is headers
+            headers = [h.strip() for h in lines[0].split(',')]
+            
+            # Rest are data rows
+            rows = []
+            for line in lines[1:]:
+                if not line.strip():
+                    continue
+                values = QlikScriptParser._parse_csv_line(line)
+                if len(values) >= len(headers):
+                    row_dict = {}
+                    for i, header in enumerate(headers):
+                        if i < len(values):
+                            row_dict[header] = values[i]
+                        else:
+                            row_dict[header] = ''
+                    rows.append(row_dict)
+            
+            if not rows:
+                return None
+            
+            return {
+                "table_name": table_name,
+                "columns": headers,
+                "rows": rows,
+                "row_count": len(rows),
+                "column_count": len(headers),
+                "source": "csv_file"
+            }
+        except Exception as e:
+            print(f"Error parsing CSV file for {table_name}: {e}")
+            return None
     
     @staticmethod
     def _extract_inline_block(text: str, table_name: str) -> Dict[str, Any]:
