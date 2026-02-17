@@ -200,5 +200,35 @@
       "added_at": "2026-02-16T13:18:15.572367",
       "added_timestamp": 1771247895.5723674
     }
+  },
+  "a6bf470e-3622-4929-8eee-461a231fc17e": {
+    "Ford_Dealer_Master": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    },
+    "Ford_Model_Master": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    },
+    "Ford_Service_History": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    },
+    "Ford_Variant_Master": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    },
+    "Ford_Vehicle_Dealer_Junction": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    },
+    "Ford_Vehicle_Fact": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    },
+    "Ford_VIN_Details": {
+      "added_at": "2026-02-17T08:13:19.480600",
+      "added_timestamp": 1771315999.4806006
+    }
   }
 }

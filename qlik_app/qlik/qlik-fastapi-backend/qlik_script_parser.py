@@ -44,6 +44,7 @@ class QlikScriptParser:
         # Find all LOAD patterns (both INLINE and FROM file)
         lines = section.split('\n')
         current_table = None
+        load_block = []  # Accumulate lines for multi-line LOAD statements
         
         for i, line in enumerate(lines):
             line_stripped = line.strip()
@@ -57,31 +58,57 @@ class QlikScriptParser:
                 parts = line.split(':')
                 if len(parts) >= 2:
                     potential_table = parts[0].strip()
+                    potential_table = potential_table.replace('[', '').replace(']', '')  # Clean brackets
                     # Check if next lines contain LOAD
-                    next_lines = '\n'.join(lines[i:i+10])
+                    next_lines = '\n'.join(lines[i:i+15])
                     if 'LOAD' in next_lines.upper():
                         current_table = potential_table
+                        load_block = []
             
-            # Check for INLINE block
-            if current_table and 'INLINE' in line_stripped.upper():
-                inline_data = QlikScriptParser._extract_inline_block(
-                    '\n'.join(lines[i:]), 
-                    current_table
-                )
-                if inline_data:
-                    tables[current_table] = inline_data
+            # Build up the LOAD block
+            if current_table:
+                load_block.append(line_stripped)
+                full_block = ' '.join(load_block)
+                
+                # Check for INLINE block
+                if 'INLINE' in full_block.upper():
+                    inline_data = QlikScriptParser._extract_inline_block(
+                        '\n'.join(lines[i:]), 
+                        current_table
+                    )
+                    if inline_data:
+                        tables[current_table] = inline_data
                     current_table = None
-            
-            # Check for CSV FROM file
-            elif current_table and 'FROM' in line_stripped.upper():
-                # Extract file path from FROM [path]
-                match = re.search(r'FROM\s*\[([^\]]+)\]', line_stripped, re.IGNORECASE)
-                if match:
-                    filepath = match.group(1).strip()
-                    csv_data = QlikScriptParser._extract_csv_file(filepath, current_table)
-                    if csv_data:
-                        tables[current_table] = csv_data
-                    current_table = None
+                    load_block = []
+                
+                # Check for CSV FROM file (improved regex to catch all patterns)
+                elif 'FROM' in full_block.upper():
+                    # Try multiple FROM patterns
+                    filepath = None
+                    
+                    # Pattern 1: FROM [lib://...]
+                    match = re.search(r'FROM\s*\[([^\]]+)\]', full_block, re.IGNORECASE)
+                    if match:
+                        filepath = match.group(1).strip()
+                    
+                    # Pattern 2: FROM "..."
+                    if not filepath:
+                        match = re.search(r'FROM\s*["\(]([^"\)]+)["\)]', full_block, re.IGNORECASE)
+                        if match:
+                            filepath = match.group(1).strip()
+                    
+                    # Pattern 3: FROM (without quotes)
+                    if not filepath:
+                        match = re.search(r'FROM\s+([^\s;]+)', full_block, re.IGNORECASE)
+                        if match:
+                            filepath = match.group(1).strip()
+                    
+                    if filepath:
+                        csv_data = QlikScriptParser._extract_csv_file(filepath, current_table)
+                        if csv_data:
+                            tables[current_table] = csv_data
+                        current_table = None
+                        load_block = []
         
         return tables
     
@@ -90,36 +117,69 @@ class QlikScriptParser:
         """Extract data from CSV file referenced in LOAD statement"""
         try:
             import os
+            import glob
             
             # Convert Qlik lib path to actual file path
             # lib://DataFiles/Ford_Model_Master.csv -> D:\fordvehicledetails\Ford_Model_Master.csv
             if 'lib://' in filepath:
+                # Extract filename and handle case sensitivity
                 filename = filepath.split('/')[-1]  # Get filename
-                # Try common data directories
-                possible_paths = [
-                    os.path.join('d:\\fordvehicledetails', filename),
-                    os.path.join('d:\\data', filename),
-                    os.path.join(os.getcwd(), filename),
-                    os.path.join(os.path.dirname(__file__), filename),
+                filename_lower = filename.lower()
+                
+                # Try common data directories with case-insensitive matching
+                search_dirs = [
+                    'd:\\fordvehicledetails',
+                    'd:\\data',
+                    'd:\\qlik_data',
+                    os.getcwd(),
+                    os.path.join(os.path.dirname(__file__), '..', '..', 'fordvehicledetails'),
                 ]
             else:
-                possible_paths = [
-                    filepath,
-                    os.path.join(os.getcwd(), filepath),
-                    os.path.join(os.path.dirname(__file__), filepath),
+                filename = os.path.basename(filepath)
+                search_dirs = [
+                    os.path.dirname(filepath) or os.getcwd(),
+                    os.getcwd(),
+                    os.path.dirname(__file__),
                 ]
             
             csv_content = None
-            for path in possible_paths:
-                try:
-                    if os.path.exists(path):
-                        with open(path, 'r', encoding='utf-8') as f:
+            actual_path = None
+            
+            # Search for the file with case-insensitive matching
+            for search_dir in search_dirs:
+                if not os.path.exists(search_dir):
+                    continue
+                
+                # Try exact match first
+                exact_path = os.path.join(search_dir, filename)
+                if os.path.exists(exact_path):
+                    try:
+                        with open(exact_path, 'r', encoding='utf-8') as f:
                             csv_content = f.read()
+                        actual_path = exact_path
+                        break
+                    except Exception:
+                        pass
+                
+                # Try case-insensitive match
+                try:
+                    for file in os.listdir(search_dir):
+                        if file.lower() == filename.lower() and file.lower().endswith(('.csv', '.txt', '.tsv')):
+                            file_path = os.path.join(search_dir, file)
+                            try:
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    csv_content = f.read()
+                                actual_path = file_path
+                                break
+                            except Exception:
+                                pass
+                    if csv_content:
                         break
                 except Exception:
-                    continue
+                    pass
             
             if not csv_content:
+                print(f"⚠️ CSV file not found: {filepath} (table: {table_name})")
                 return None
             
             # Parse CSV content
@@ -140,7 +200,7 @@ class QlikScriptParser:
                     row_dict = {}
                     for i, header in enumerate(headers):
                         if i < len(values):
-                            row_dict[header] = values[i]
+                            row_dict[header] = values[i].strip()  # Strip whitespace
                         else:
                             row_dict[header] = ''
                     rows.append(row_dict)
@@ -148,6 +208,7 @@ class QlikScriptParser:
             if not rows:
                 return None
             
+            print(f"✅ Loaded {len(rows)} rows from CSV: {table_name}")
             return {
                 "table_name": table_name,
                 "columns": headers,
@@ -157,7 +218,9 @@ class QlikScriptParser:
                 "source": "csv_file"
             }
         except Exception as e:
-            print(f"Error parsing CSV file for {table_name}: {e}")
+            print(f"❌ Error parsing CSV file for {table_name}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     @staticmethod

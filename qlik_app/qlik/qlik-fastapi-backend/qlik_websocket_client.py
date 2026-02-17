@@ -643,7 +643,39 @@ class QlikWebSocketClient:
             print(f"Getting data from table: {table_name}")
             print(f"{'='*60}")
             
-            # First, get fields for this table (SAFE MATCHING VERSION)
+            # FIRST: Try script parsing (for CSV and INLINE data) - fastest approach
+            print(f"📜 Attempting script-based extraction first...")
+            try:
+                script_result = self._get_app_script()
+                if script_result.get("success") and script_result.get("script"):
+                    script = script_result.get("script", "")
+                    try:
+                        from qlik_script_parser import QlikScriptParser
+                        table_preview = QlikScriptParser.get_table_preview(script, table_name, limit)
+                        
+                        if table_preview.get("success"):
+                            rows = table_preview.get("rows", [])
+                            columns = table_preview.get("columns", [])
+                            print(f"✅ Successfully extracted {len(rows)} rows from script")
+                            
+                            self.close()
+                            return {
+                                "success": True,
+                                "table_name": table_name,
+                                "columns": columns,
+                                "rows": rows,
+                                "row_count": len(rows),
+                                "source": "script"
+                            }
+                    except Exception as e:
+                        print(f"⚠️ Script parsing attempt failed: {str(e)}")
+            except Exception as e:
+                print(f"⚠️ Could not attempt script parsing: {str(e)}")
+            
+            # SECOND: Fall back to hypercube for data model tables
+            print(f"🔄 Falling back to hypercube method...")
+            
+            # Get fields for this table (SAFE MATCHING VERSION)
             tables_info = self._get_tables_from_data_model()
 
             requested = table_name.strip().lower()
@@ -833,51 +865,12 @@ class QlikWebSocketClient:
             return {"success": False, "error": str(e)}
     
     def _get_table_data_alternative(self, table_name: str, table_fields: list, limit: int, table_info: dict) -> Dict[str, Any]:
-        """Alternative method to fetch table data when hypercube fails - tries script extraction first"""
+        """Alternative method when hypercube fails - tries field values extraction"""
         try:
-            print(f"\n📊 Using alternative table data retrieval method...")
-            
-            # FIRST: Try to get data from the script (for INLINE loads and CSV data)
-            # This is the key fix - we need to extract actual data from the load script
-            try:
-                script_result = self._get_app_script()
-                if script_result.get("success") and script_result.get("script"):
-                    script = script_result.get("script", "")
-                    print(f"📜 Found script, attempting to parse inline/CSV data...")
-                    
-                    # Try to parse the script using the script parser
-                    try:
-                        from qlik_script_parser import QlikScriptParser
-                        table_preview = QlikScriptParser.get_table_preview(script, table_name, limit)
-                        
-                        if table_preview.get("success"):
-                            rows = table_preview.get("rows", [])
-                            columns = table_preview.get("columns", [])
-                            print(f"✅ Successfully extracted {len(rows)} rows from script for table '{table_name}'")
-                            
-                            self.close()
-                            return {
-                                "success": True,
-                                "table_name": table_name,
-                                "columns": columns,
-                                "rows": rows,
-                                "row_count": len(rows),
-                                "source": "script"
-                            }
-                        else:
-                            print(f"⚠️ Script parser could not find table '{table_name}': {table_preview.get('error')}")
-                    except ImportError:
-                        print("⚠️ QlikScriptParser not available")
-                    except Exception as e:
-                        print(f"⚠️ Error parsing script: {str(e)}")
-            except Exception as e:
-                print(f"⚠️ Could not get script: {str(e)}")
-            
-            # SECOND: If script extraction failed, try field values as last resort
-            print(f"🔄 Trying to get field values as fallback...")
+            print(f"\n📊 Hypercube failed, trying field values extraction...")
             all_field_values = {}
             
-            for field in table_fields[:5]:  # Limit to 5 fields
+            for field in table_fields[:min(5, len(table_fields))]:  # Limit to 5 fields
                 try:
                     # Try to get values for each field
                     field_result = self.send_request("GetField", {
@@ -924,17 +917,16 @@ class QlikWebSocketClient:
                     "source": "field_values"
                 }
             
-            # LAST RESORT: Only show placeholder if ALL methods fail
-            print(f"⚠️ All alternative methods failed, checking metadata...")
+            # LAST RESORT: Show structure with row count from metadata
+            print(f"⚠️ All extraction methods failed, showing metadata only...")
             rows = []
             row_count = table_info.get("no_of_rows", 0)
             
             if row_count > 0:
                 print(f"Table has {row_count} rows according to metadata")
-                # Create placeholder response showing table structure
                 for i in range(min(limit, row_count)):
                     row = {}
-                    for field in table_fields[:10]:  # Limit fields to 10
+                    for field in table_fields[:10]:
                         row[field] = f"[Row {i+1} data not accessible - check QlikCloud load]"
                     rows.append(row)
             
@@ -946,7 +938,7 @@ class QlikWebSocketClient:
                 "columns": table_fields[:10],
                 "rows": rows if rows else [],
                 "row_count": row_count,
-                "note": "Data structure from metadata - full data access limited by QlikCloud API restrictions"
+                "note": "Data structure from metadata - full data access limited"
             }
         except Exception as e:
             self.close()
