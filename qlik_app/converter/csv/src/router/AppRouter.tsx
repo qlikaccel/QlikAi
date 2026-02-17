@@ -3,6 +3,7 @@ import ConnectPage from "../pages/Connect/ConnectPage";
 import AppsPage from "../Apps/AppsPage";
 import SummaryPage from "../Summary/SummaryPage";
 import ExportPage from "../Export/ExportPage";
+import MultiMigrationPage from "../MultiMigration/MultiMigrationPage";
 // import MigrationPage from "../Migration/MigrationPage"; // Commented out - now going directly to Publish
 import PublishPage from "../Publish/PublishPage";
 
@@ -14,8 +15,10 @@ export default function AppRoutes() {
       <Route path="/apps" element={<AppsPage />} />
       <Route path="/summary" element={<SummaryPage />} />
       <Route path="/export" element={<ExportPage />} />
+      <Route path="/multi-migrate" element={<MultiMigrationPage />} />
       {/* <Route path="/migration" element={<MigrationPage />} /> */}
       <Route path="/publish" element={<PublishPage />} />
     </Routes>
   );
 }
+

@@ -1424,6 +1424,13 @@ import exportImg from "../assets/export2.png";
  
 type TableInfo = string | { name: string; [key: string]: any };
 type Row = Record<string, any>;
+
+// Type for storing table data for multi-migration
+interface SelectedTableData {
+  name: string;
+  rows: Row[];
+  summary: any;
+}
  
 export default function SummaryPage() {
   const location = useLocation();
@@ -1439,6 +1446,11 @@ export default function SummaryPage() {
   const [tableLoading, setTableLoading] = useState(false);
   const [summary, setSummary] = useState<any>(null);
   const [pageLoadTime, setPageLoadTime] = useState<string | null>(null);
+
+  // Multi-select state
+  const [checkedTables, setCheckedTables] = useState<Set<string>>(new Set());
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [tableDataCache, setTableDataCache] = useState<Record<string, SelectedTableData>>({});
  
   // Track page load start time
   useEffect(() => {
@@ -1675,6 +1687,33 @@ export default function SummaryPage() {
       }
     }
   };
+
+  // Load data for multi-select (caches data without changing selected table view)
+  const loadDataForCache = async (tableName: string) => {
+    if (!tableName || tableDataCache[tableName]) return; // Skip if already cached
+
+    try {
+      const data = await fetchTableData(appId, tableName);
+      const { generateSummaryFromData } = await import("../api/qlikApi");
+      const summary = generateSummaryFromData(data, tableName);
+      
+      setTableDataCache((prev) => ({
+        ...prev,
+        [tableName]: {
+          name: tableName,
+          rows: data || [],
+          summary,
+        },
+      }));
+    } catch (e) {
+      console.error(`Error loading ${tableName} for cache:`, e);
+      alert(`Failed to load table "${tableName}". Please try again.`);
+      // Remove from checked set if loading failed
+      const newSet = new Set(checkedTables);
+      newSet.delete(tableName);
+      setCheckedTables(newSet);
+    }
+  };
  
   // CSV DOWNLOAD
   const downloadCSV = () => {
@@ -1709,6 +1748,47 @@ export default function SummaryPage() {
       <div className="left-panel">
         <div className="panel-header">
           <h3 className="title">Tables {`(${tables.length})`}</h3>
+          {/* Multi-select mode toggle */}
+          <div className="multi-select-controls">
+            <button
+              className={`toggle-btn ${multiSelectMode ? "active" : ""}`}
+              onClick={() => {
+                setMultiSelectMode(!multiSelectMode);
+                if (multiSelectMode) {
+                  // Reset when toggling off
+                  setCheckedTables(new Set());
+                  setTableDataCache({});
+                }
+              }}
+              title={multiSelectMode ? "Exit multi-select mode" : "Enter multi-select mode to migrate multiple tables"}
+            >
+              {multiSelectMode ? "✓ Multi-Select ON" : "Select Multiple"}
+            </button>
+            {multiSelectMode && checkedTables.size > 0 && (
+              <>
+                <button
+                  className="clear-btn"
+                  onClick={() => {
+                    setCheckedTables(new Set());
+                    setTableDataCache({});
+                  }}
+                >
+                  🗑️ Clear ({checkedTables.size})
+                </button>
+                <button
+                  className="select-all-btn"
+                  onClick={() => {
+                    const allTableNames = (tables || []).map((t) =>
+                      typeof t === "string" ? t : t?.name
+                    ).filter(Boolean) as string[];
+                    setCheckedTables(new Set(allTableNames));
+                  }}
+                >
+                  ✔️ All ({tables.length})
+                </button>
+              </>
+            )}
+          </div>
         </div>
  
         {/* Table list search (searches the list of table names) */}
@@ -1732,24 +1812,67 @@ export default function SummaryPage() {
           const tableName = typeof t === "string" ? t : t?.name;
           const isNew = typeof t === "string" ? false : t?.is_new;
           if (!tableName) return null;
+
+          const isChecked = checkedTables.has(tableName);
  
           return (
             <div
               key={i}
               className={
-                tableName === selectedTable
+                tableName === selectedTable && !multiSelectMode
                   ? "table-item active"
                   : "table-item"
               }
-              onClick={() => loadData(tableName)}
+              onClick={() => {
+                if (multiSelectMode) {
+                  // Toggle checkbox
+                  const newSet = new Set(checkedTables);
+                  if (newSet.has(tableName)) {
+                    newSet.delete(tableName);
+                    // Also remove from cache
+                    const newCache = { ...tableDataCache };
+                    delete newCache[tableName];
+                    setTableDataCache(newCache);
+                  } else {
+                    newSet.add(tableName);
+                    // Load data for this table
+                    loadDataForCache(tableName);
+                  }
+                  setCheckedTables(newSet);
+                } else {
+                  // Single select mode
+                  loadData(tableName);
+                }
+              }}
             >
+              {multiSelectMode && (
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    const newSet = new Set(checkedTables);
+                    if (newSet.has(tableName)) {
+                      newSet.delete(tableName);
+                      const newCache = { ...tableDataCache };
+                      delete newCache[tableName];
+                      setTableDataCache(newCache);
+                    } else {
+                      newSet.add(tableName);
+                      loadDataForCache(tableName);
+                    }
+                    setCheckedTables(newSet);
+                  }}
+                  className="table-checkbox"
+                />
+              )}
               <span>{tableName}</span>
               {isNew && <span className="new-badge">NEW</span>}
             </div>
           );
         })}
       </div>
- 
+
       {/* RIGHT – SUMMARY + DATA */}
       <div className="right-panel">
         {!selectedTable && (
@@ -1884,31 +2007,63 @@ export default function SummaryPage() {
                     </button>
                   </div>
  
-                  {/* BOTTOM RIGHT BUTTON */}
+                  {/* BOTTOM RIGHT BUTTON - Single or Multi Export */}
                   <div className="bottom-actions">
-                    <button
-                      className="export-btn"
-                      onClick={() => {
-                        stopTimer?.("/summary");
-                        // Mark summary completed to enable export step
-                        sessionStorage.setItem("summaryComplete", "true");
- 
-                        // Start timer for export page load
-                        startTimer?.("/export");
- 
-                        navigate("/export", {
-                          state: {
-                            appId,
-                            appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
-                            selectedTable,
-                            rows,
-                          },
-                        });
-                      }}
-                      title="Navigate to Export tab"
-                    >
-                      <img src={exportImg} alt="Export" />Continue to Export
-                    </button>
+                    {!multiSelectMode ? (
+                      // Single table export
+                      <button
+                        className="export-btn"
+                        onClick={() => {
+                          stopTimer?.("/summary");
+                          sessionStorage.setItem("summaryComplete", "true");
+                          startTimer?.("/export");
+                          navigate("/export", {
+                            state: {
+                              appId,
+                              appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
+                              selectedTable,
+                              rows,
+                            },
+                          });
+                        }}
+                        title="Navigate to Export tab"
+                      >
+                        <img src={exportImg} alt="Export" />Continue to Export
+                      </button>
+                    ) : (
+                      // Multi-select mode
+                      <>
+                        <button
+                          className="export-btn"
+                          disabled={checkedTables.size === 0}
+                          onClick={() => {
+                            if (checkedTables.size === 0) {
+                              alert("Please select at least one table");
+                              return;
+                            }
+                            stopTimer?.("/summary");
+                            startTimer?.("/export");
+                            
+                            // Prepare data for multi-export
+                            const selectedData = Array.from(checkedTables).map(tableName => ({
+                              name: tableName,
+                              data: tableDataCache[tableName],
+                            }));
+                            
+                            navigate("/export", {
+                              state: {
+                                appId,
+                                appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
+                                selectedTables: selectedData,
+                              },
+                            });
+                          }}
+                          title={checkedTables.size === 0 ? "Select at least one table" : "Export selected tables"}
+                        >
+                          📤 Export {checkedTables.size} Tables
+                        </button>
+                      </>
+                    )}
                   </div>
                 </>
               )}
@@ -1921,7 +2076,7 @@ export default function SummaryPage() {
     </div>
   );
 }
- 
+
 // ================= SUMMARY REPORT COMPONENT =================
 import React from "react";
  

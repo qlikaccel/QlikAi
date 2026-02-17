@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import "./PublishPage.css";
 
 // Stepper Component
@@ -53,6 +53,7 @@ const STEPPER_STEPS = [
 
 export default function PublishPage() {
   const navigate = useNavigate();
+  const { state } = useLocation() as any;
 
   // Get data from sessionStorage
   const tableName = sessionStorage.getItem("migration_selected_table") || "";
@@ -61,6 +62,15 @@ export default function PublishPage() {
   const hasDAX = sessionStorage.getItem("migration_has_dax") === "true";
   const rowCount = Number(sessionStorage.getItem("migration_row_count") || "0");
   const columns = JSON.parse(sessionStorage.getItem("migration_columns") || "[]");
+  
+  // Check if multi-table mode
+  const tableCount = Number(sessionStorage.getItem("migration_table_count") || "0");
+  const isMultiTableMode = tableCount > 0;
+  
+  // Get export options from navigation state
+  const exportOptions = state?.exportOptions || { combined: true, separate: false };
+  const isSeparateMode = exportOptions.separate;
+  const selectedTablesToPublish = state?.selectedTables || [];
 
   const [customTableName, setCustomTableName] = useState(tableName);
   const [datasetURL, setDatasetURL] = useState("");
@@ -68,6 +78,7 @@ export default function PublishPage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [statusBoxes, setStatusBoxes] = useState({ columns: false, powerbi: false, finished: false });
   const [result, setResult] = useState<any>(null);
+  const [results, setResults] = useState<any[]>([]); // For separate table results
   const [copied, setCopied] = useState(false);
   const [publishStartTime, setPublishStartTime] = useState<Date | null>(null);
   const [publishEndTime, setPublishEndTime] = useState<Date | null>(null);
@@ -113,6 +124,56 @@ export default function PublishPage() {
     if (daxData) console.log("✅ DAX Data updated:", daxData.length, "characters");
   }, [csvData, daxData]);
 
+  // Helper function to publish a single table
+  const publishSingleTable = async (
+    csvText: string,
+    daxText: string,
+    tableNameToPublish: string,
+    rowCount: number
+  ) => {
+    const startTime = new Date();
+    const dateStr = startTime.toISOString().split('T')[0];
+    const timeStr = startTime.toTimeString().split(' ')[0].replace(/:/g, '-');
+    const tableNameWithDateTime = `${tableNameToPublish}_${dateStr}_${timeStr}`;
+
+    const form = new FormData();
+    if (hasCSV && csvText) {
+      form.append("csv_file", new Blob([csvText], { type: "text/csv" }), `${tableNameWithDateTime}.csv`);
+    }
+    if (hasDAX && daxText) {
+      form.append("dax_file", new Blob([daxText], { type: "text/plain" }), `${tableNameWithDateTime}.dax`);
+    }
+    form.append("meta_app_name", appName);
+    form.append("meta_table", tableNameWithDateTime);
+    form.append("has_csv", hasCSV ? "true" : "false");
+    form.append("has_dax", hasDAX ? "true" : "false");
+
+    const res = await fetch("http://localhost:8000/powerbi/process", {
+      method: "POST",
+      body: form,
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.detail || "Publishing failed");
+    }
+
+    const realDatasetURL = data?.dataset?.urls?.dataset || 
+                          data?.dataset?.urls?.report ||
+                          (data?.dataset?.id ? `https://app.powerbi.com/groups/${data.dataset.workspace_id}/datasets/${data.dataset.id}` : "");
+
+    return {
+      tableName: tableNameToPublish,
+      nameWithTime: tableNameWithDateTime,
+      rowCount,
+      url: realDatasetURL,
+      workspaceId: data?.dataset?.workspace_id,
+      datasetId: data?.dataset?.id,
+      publishTime: new Date(),
+    };
+  };
+
   const handlePublish = async () => {
     try {
       const startTime = new Date();
@@ -120,35 +181,12 @@ export default function PublishPage() {
       setPublishing(true);
       setCurrentStep(0);
 
-      // Create table name with date and time
-      const dateStr = startTime.toISOString().split('T')[0]; // YYYY-MM-DD
-      const timeStr = startTime.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-MM-SS
-      const tableNameWithDateTime = `${customTableName}_${dateStr}_${timeStr}`;
-      setPublishedTableName(tableNameWithDateTime);
-
-      // Step 1: Prepare data
-      setCurrentStep(0);
-      console.log("📦 Step 1: Preparing data...");
-      const csvText = sessionStorage.getItem("migration_csv") || "";
-      const daxText = sessionStorage.getItem("migration_dax") || "";
-      
-      // Store CSV/DAX data for PDF report
-      console.log("📊 CSV Data length:", csvText.length);
-      console.log("📊 DAX Data length:", daxText.length);
-      setCSVData(csvText);
-      setDAXData(daxText);
-
-      if (!hasCSV && !hasDAX) {
-        throw new Error("No formats selected. Please go back to Export page.");
-      }
-
-      // Step 2: Initiate authentication (Device Code Flow)
+      // Step 2: Initiate authentication (Device Code Flow) - Do this once
       setCurrentStep(1);
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
       const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
-      // const authRes = await fetch("https://qlik-sense-cloud.onrender.com/powerbi/login/acquire-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -165,15 +203,14 @@ export default function PublishPage() {
 
       // Step 3: Wait for user to complete authentication (up to 30 seconds)
       let authAttempts = 0;
-      const maxAttempts = 30; // 30 seconds total
+      const maxAttempts = 30;
       let isAuthenticated = false;
 
       while (authAttempts < maxAttempts && !isAuthenticated) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between checks
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
           const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
-          // const statusRes = await fetch("https://qlik-sense-cloud.onrender.com/powerbi/login/status", {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -197,63 +234,99 @@ export default function PublishPage() {
         throw new Error("Authentication timeout. Please login at microsoft.com/devicelogin and try again.");
       }
 
-      // Step 4: Publish dataset
       setCurrentStep(2);
       setStatusBoxes({ columns: true, powerbi: true, finished: false });
       console.log("📤 Step 3: Publishing to Power BI...");
 
-      const form = new FormData();
-      if (hasCSV && csvText) {
-        form.append("csv_file", new Blob([csvText], { type: "text/csv" }), `${tableNameWithDateTime}.csv`);
+      // Check if separate table mode
+      if (isSeparateMode && isMultiTableMode && selectedTablesToPublish.length > 0) {
+        // Publish each table separately
+        const publishedResults = [];
+
+        for (let i = 0; i < tableCount; i++) {
+          const csvText = sessionStorage.getItem(`migration_csv_${i}`) || "";
+          const tableName = selectedTablesToPublish[i]?.name || `Table_${i + 1}`;
+          const tableRows = selectedTablesToPublish[i]?.data?.rows || [];
+
+          if (csvText) {
+            console.log(`📤 Publishing table ${i + 1}/${tableCount}: ${tableName}...`);
+            const publishResult = await publishSingleTable(csvText, `-- ${tableName} data`, tableName, tableRows.length);
+            publishedResults.push(publishResult);
+          }
+        }
+
+        setResults(publishedResults);
+        setResult({ published_tables: publishedResults });
+      } else {
+        // Combined mode or single table - use original logic
+        setCurrentStep(0);
+        console.log("📦 Step 1: Preparing data...");
+        
+        let csvText = "";
+        let daxText = "";
+        let tableNameForPublish = customTableName || "Data";
+
+        if (isMultiTableMode) {
+          csvText = sessionStorage.getItem("migration_csv_0") || "";
+          let selectedTableNames: string[] = [];
+          try {
+            const selectedTablesJson = sessionStorage.getItem("migration_selected_tables");
+            if (selectedTablesJson) {
+              const tables = JSON.parse(selectedTablesJson);
+              selectedTableNames = tables.map((t: any) => t.name);
+            }
+          } catch (e) {
+            //
+          }
+          
+          daxText = `-- Multi-Table Export\n-- Primary Table: ${selectedTableNames[0] || 'Table 1'}\n`;
+          daxText += `-- All Selected Tables: ${selectedTableNames.join(', ')}\n`;
+          daxText += `-- Generated: ${new Date().toISOString()}\n\n`;
+          daxText += selectedTableNames.map((name, idx) => {
+            const tableSize = sessionStorage.getItem(`migration_csv_${idx}`)?.split('\n').length || 0;
+            return `-- ${name}: ${tableSize - 1} rows`;
+          }).join('\n');
+
+          tableNameForPublish = selectedTableNames[0] || "Combined_Data";
+        } else {
+          csvText = sessionStorage.getItem("migration_csv") || "";
+          daxText = sessionStorage.getItem("migration_dax") || "";
+        }
+
+        console.log("📊 CSV Data length:", csvText.length);
+        console.log("📊 DAX Data length:", daxText.length);
+        setCSVData(csvText);
+        setDAXData(daxText);
+
+        if (!hasCSV && !hasDAX) {
+          throw new Error("No formats selected. Please go back to Export page.");
+        }
+
+        if (hasCSV && !csvText) {
+          throw new Error("CSV was selected but file not provided");
+        }
+
+        if (hasDAX && !daxText) {
+          throw new Error("DAX was selected but file not provided");
+        }
+
+        const publishResult = await publishSingleTable(csvText, daxText, tableNameForPublish, rowCount);
+        const dateStr = startTime.toISOString().split('T')[0];
+        const timeStr = startTime.toTimeString().split(' ')[0].replace(/:/g, '-');
+        setPublishedTableName(`${tableNameForPublish}_${dateStr}_${timeStr}`);
+        setDatasetURL(publishResult.url);
+        setResult({ dataset: publishResult });
       }
-      if (hasDAX && daxText) {
-        form.append("dax_file", new Blob([daxText], { type: "text/plain" }), `${tableNameWithDateTime}.dax`);
-      }
-      form.append("meta_app_name", appName);
-      form.append("meta_table", tableNameWithDateTime);
-      form.append("has_csv", hasCSV ? "true" : "false");
-      form.append("has_dax", hasDAX ? "true" : "false");
-
-      // https://qlik-sense-cloud.onrender.com
-      const res = await fetch("http://localhost:8000/powerbi/process", {
-      // const res = await fetch("https://qlik-sense-cloud.onrender.com/powerbi/process", {
-        method: "POST",
-        body: form,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.detail || "Publishing failed");
-      }
-
-      // Step 5: Generate URL
-      setCurrentStep(3);
-      console.log("🔗 Step 4: Generating dataset URL...");
-      
-      const realDatasetURL = data?.dataset?.urls?.dataset || 
-                            data?.dataset?.urls?.report ||
-                            (data?.dataset?.id ? `https://app.powerbi.com/groups/${data.dataset.workspace_id}/datasets/${data.dataset.id}` : "");
-      
-      if (!realDatasetURL) {
-        throw new Error("No dataset URL returned from Power BI. Please check backend response.");
-      }
-
-      setDatasetURL(realDatasetURL);
 
       setStatusBoxes({ columns: true, powerbi: true, finished: true });
-      setCurrentStep(5); // Show all steps completed (green checkmarks)
+      setCurrentStep(5);
       
       const endTime = new Date();
       setPublishEndTime(endTime);
       const durationMs = endTime.getTime() - startTime.getTime();
       setPublishDuration(durationMs);
       
-      setResult(data);
       console.log("✅ Dataset published successfully!");
-      console.log("📎 Dataset URL:", realDatasetURL);
-      console.log("🏢 Workspace ID:", data?.dataset?.workspace_id);
-      console.log("📊 Dataset ID:", data?.dataset?.id);
 
     } catch (err: any) {
       console.error("❌ Publishing error:", err);
@@ -446,85 +519,193 @@ export default function PublishPage() {
       {/* SUCCESS SECTION */}
       {result && (
         <div className="success-section">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-            <div className="success-title">✨ Success!</div>
-            <div style={{ 
-              fontSize: "14px", 
-              color: "#0078d4",
-              fontWeight: "bold",
-              padding: "8px 15px",
-              backgroundColor: "#e7f3ff",
-              borderRadius: "5px"
-            }}>
-              ⏱️ Published in {formatDuration(publishDuration)}
-            </div>
-          </div>
-          <div className="success-message">
-            Dataset "<strong>{publishedTableName}</strong>" published to Power BI Cloud
-          </div>
+          {/* Single Table Result */}
+          {!isSeparateMode || results.length === 0 ? (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <div className="success-title">✨ Success!</div>
+                <div style={{ 
+                  fontSize: "14px", 
+                  color: "#0078d4",
+                  fontWeight: "bold",
+                  padding: "8px 15px",
+                  backgroundColor: "#e7f3ff",
+                  borderRadius: "5px"
+                }}>
+                  ⏱️ Published in {formatDuration(publishDuration)}
+                </div>
+              </div>
+              <div className="success-message">
+                Dataset "<strong>{publishedTableName}</strong>" published to Power BI Cloud
+              </div>
 
-          {/* URL BOX - TURNS GREEN AFTER GENERATION */}
-          <div className="url-box">
-            <div className="url-label">🔗 Dataset URL </div>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
-              <input
-                type="text"
-                value={datasetURL}
-                readOnly
-                className="url-input"
-              />
-              <button
-                onClick={copyToClipboard}
-                className="btn btn-small"
-                style={{
-                  padding: "8px 12px",
-                  width:"60px",
-                  height : "45px",
-                  whiteSpace: "nowrap",
-                  backgroundColor: copied ? "#27ae60" : "#3498db",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  transition: "background-color 0.3s"
-                }}
-              >
-                {copied ? "✅ Copy" : "📋"}
-              </button>
-            </div>
-            <div className="url-note">
-              ✓ This URL is ready to use. Click "Open in Power BI" to view your dataset.
-            </div>
-          </div>
+              {/* URL BOX */}
+              <div className="url-box">
+                <div className="url-label">🔗 Dataset URL </div>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+                  <input
+                    type="text"
+                    value={datasetURL}
+                    readOnly
+                    className="url-input"
+                  />
+                  <button
+                    onClick={copyToClipboard}
+                    className="btn btn-small"
+                    style={{
+                      padding: "8px 12px",
+                      width:"60px",
+                      height : "45px",
+                      whiteSpace: "nowrap",
+                      backgroundColor: copied ? "#27ae60" : "#3498db",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "14px",
+                      transition: "background-color 0.3s"
+                    }}
+                  >
+                    {copied ? "✅ Copy" : "📋"}
+                  </button>
+                </div>
+                <div className="url-note">
+                  ✓ This URL is ready to use. Click "Open in Power BI" to view your dataset.
+                </div>
+              </div>
 
-          {/* INFO BOXES */}
-          <div className="info-boxes">
-            <div className="info-box">
-              <div className="info-box-label">Table Name </div>
-              <div className="info-box-value" style={{ fontSize: "12px", wordBreak: "break-word" }}>{publishedTableName}</div>
-            </div>
-            <div className="info-box">
-              <div className="info-box-label">Published Date & Time</div>
-              <div className="info-box-value">{publishEndTime ? publishEndTime.toLocaleString() : new Date().toLocaleString()}</div>
-            </div>
-            <div className="info-box">
-              <div className="info-box-label">Publishing Duration</div>
-              <div className="info-box-value">⏱️ {formatDuration(publishDuration)}</div>
-            </div>
-            <div className="info-box">
-              <div className="info-box-label">Total Rows</div>
-              <div className="info-box-value">{rowCount}</div>
-            </div>
-            <div className="info-box">
-              <div className="info-box-label">Total Columns</div>
-              <div className="info-box-value">{columns.length}</div>
-            </div>
-            <div className="info-box">
-              <div className="info-box-label">Status</div>
-              <div className="info-box-value">✅ Published</div>
-            </div>
-          </div>
+              {/* COMBINED FORMAT INFO */}
+              {hasCSV && hasDAX && (
+                <div style={{ 
+                  backgroundColor: "#dbeafe", 
+                  border: "2px solid #0078d4", 
+                  borderRadius: "10px", 
+                  padding: "16px", 
+                  marginBottom: "20px",
+                  textAlign: "center"
+                }}>
+                  <strong style={{ color: "#0078d4", fontSize: "16px" }}>
+                    📊 Combined Format: CSV + DAX
+                  </strong>
+                  <div style={{ fontSize: "13px", color: "#0369a1", marginTop: "8px" }}>
+                    ✅ CSV Data: Complete dataset with all rows and columns<br/>
+                    ✅ DAX Metadata: Query definitions and table structure
+                  </div>
+                </div>
+              )}
+
+              {/* INFO BOXES */}
+              <div className="info-boxes">
+                <div className="info-box">
+                  <div className="info-box-label">Table Name </div>
+                  <div className="info-box-value" style={{ fontSize: "12px", wordBreak: "break-word" }}>{publishedTableName}</div>
+                </div>
+                <div className="info-box">
+                  <div className="info-box-label">Published Date & Time</div>
+                  <div className="info-box-value">{publishEndTime ? publishEndTime.toLocaleString() : new Date().toLocaleString()}</div>
+                </div>
+                <div className="info-box">
+                  <div className="info-box-label">Publishing Duration</div>
+                  <div className="info-box-value">⏱️ {formatDuration(publishDuration)}</div>
+                </div>
+                <div className="info-box">
+                  <div className="info-box-label">Total Rows</div>
+                  <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{rowCount}</div>
+                </div>
+                <div className="info-box">
+                  <div className="info-box-label">Total Columns</div>
+                  <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{columns.length}</div>
+                </div>
+                <div className="info-box">
+                  <div className="info-box-label">Status</div>
+                  <div className="info-box-value">✅ Published</div>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* Separate Tables Result */
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                <div className="success-title">✨ Success! {results.length} Tables Published</div>
+                <div style={{ 
+                  fontSize: "14px", 
+                  color: "#0078d4",
+                  fontWeight: "bold",
+                  padding: "8px 15px",
+                  backgroundColor: "#e7f3ff",
+                  borderRadius: "5px"
+                }}>
+                  ⏱️ Published in {formatDuration(publishDuration)}
+                </div>
+              </div>
+
+              {/* Separate Table Results */}
+              <div style={{ display: "grid", gap: "16px" }}>
+                {results.map((tableResult, idx) => (
+                  <div key={idx} className="url-box" style={{ backgroundColor: "#f0f9ff", borderLeft: "4px solid #0078d4" }}>
+                    <div style={{ marginBottom: "12px" }}>
+                      <div className="url-label">📊 Table {idx + 1}: {tableResult.tableName}</div>
+                      <div style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
+                        Published: {tableResult.publishTime.toLocaleString()} | Rows: {tableResult.rowCount}
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+                      <input
+                        type="text"
+                        value={tableResult.url}
+                        readOnly
+                        className="url-input"
+                        style={{ fontSize: "12px" }}
+                      />
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(tableResult.url);
+                          alert("URL copied!");
+                        }}
+                        className="btn btn-small"
+                        style={{
+                          padding: "8px 12px",
+                          width:"60px",
+                          height : "45px",
+                          whiteSpace: "nowrap",
+                          backgroundColor: "#3498db",
+                          color: "white",
+                          border: "none",
+                          borderRadius: "4px",
+                          cursor: "pointer",
+                          fontSize: "14px",
+                        }}
+                      >
+                        📋 Copy
+                      </button>
+                    </div>
+                    
+                    <button
+                      onClick={() => window.open(tableResult.url, "_blank")}
+                      style={{
+                        width: "100%",
+                        padding: "10px",
+                        backgroundColor: "#27ae60",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        fontWeight: "bold"
+                      }}
+                    >
+                      🔗 Open in Power BI
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginTop: "20px", padding: "12px", backgroundColor: "#e8f5e9", borderRadius: "6px", borderLeft: "4px solid #27ae60" }}>
+                <strong>✅ All tables have been published successfully!</strong> You can now access each dataset individually in Power BI.
+              </div>
+            </>
+          )}
 
           {/* ACTION BUTTONS */}
           <div className="btn-group">
@@ -548,6 +729,7 @@ export default function PublishPage() {
           </div>
         </div>
       )}
+      
 
       {/* HIDDEN REPORT CONTENT FOR PDF GENERATION */}
       <div id="report-content" style={{
@@ -692,6 +874,6 @@ export default function PublishPage() {
         </button>
       </div>
     </div>
-  
   );
-}
+
+};
