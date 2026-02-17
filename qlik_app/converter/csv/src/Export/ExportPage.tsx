@@ -226,7 +226,7 @@ export default function ExportPage() {
 
 
       {/* 🔹 HOW COMBINING WORKS */}
-      {isMultiSelect && options.combined && (
+      {/* {isMultiSelect && options.combined && (
         <div className="combining-info-section">
           <h3>🔄 How Tables Will Be Combined</h3>
           <div className="info-card">
@@ -242,7 +242,7 @@ export default function ExportPage() {
             </p>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* 🔹 TWO-COLUMN EXPORT OPTIONS */}
       <div className="export-options-grid">
@@ -261,7 +261,7 @@ export default function ExportPage() {
                   setOptions({ ...options, combined: !options.combined });
                 }}
               />
-              <strong> 📄 Export as CSV / DAX (Combined) </strong>
+              <strong> 📄 Export as CSV / DAX </strong>
             </label>
           </div>
 

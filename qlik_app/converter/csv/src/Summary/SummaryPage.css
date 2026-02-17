@@ -288,8 +288,7 @@ PAGE WRAP
 }
  
 .summary-report td.value {
-  /* text-align: right; */
- 
+  text-align: right;
 }
  
 /* Optional: format numbers nicely (for JS/TS values) */
@@ -451,7 +450,7 @@ PAGE WRAP
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
-  justify-content: space-between;
+ justify-content: space-between;
   align-items: center;
 }
  
@@ -460,12 +459,29 @@ PAGE WRAP
   background-color: rgb(183 183 183);
   border-radius: 10px;
   font-weight: 600;
-      font-family: "Source Sans Pro", HelveticaNeue, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: "Source Sans Pro", HelveticaNeue, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-.table-item:hover {
-  background-color: rgb(215, 215, 215);;
+
+/* Master-row visual highlight (no text badge in the list) */
+.table-item.master-row {
+  border-left: 4px solid #2563eb;
+  background-color: rgba(37,99,235,0.06);
+  font-weight: 700;
 }
- 
+
+/* Small master chip shown in the detail header when a master is selected */
+.master-indicator {
+  background: #e6f0ff;
+  color: #0b3a66;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+
 .new-badge {
   display: inline-block;
   background-color: #ff6b6b;
@@ -613,7 +629,7 @@ PAGE WRAP
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, opacity 0.15s ease;
   margin-right: 8px;
   display: flex;
   align-items: center;
@@ -627,6 +643,19 @@ PAGE WRAP
 /* .export-btn:hover {
   background: #a7917c;
 } */
+ 
+.export-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: #7b93c6; /* muted blue when disabled */
+}
+
+.export-hint {
+  color: #6b7280;
+  font-size: 13px;
+  margin-left: 12px;
+  align-self: center;
+}
  
 .export-btn:active {
   background: #e65100;

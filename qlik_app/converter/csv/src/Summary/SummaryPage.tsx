@@ -1409,7 +1409,7 @@
 import "./SummaryPage.css";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchTables, fetchTableData, fetchVehicleSummary } from "../api/qlikApi";
+import { fetchTables, fetchTableData } from "../api/qlikApi";
 import Csvicon from "../assets/Csvicon.png";
 import { useWizard } from "../context/WizardContext";
 import Paper from "@mui/material/Paper";
@@ -1425,12 +1425,7 @@ import exportImg from "../assets/export2.png";
 type TableInfo = string | { name: string; [key: string]: any };
 type Row = Record<string, any>;
 
-// Type for storing table data for multi-migration
-interface SelectedTableData {
-  name: string;
-  rows: Row[];
-  summary: any;
-}
+
  
 export default function SummaryPage() {
   const location = useLocation();
@@ -1584,22 +1579,53 @@ export default function SummaryPage() {
      
       fetchTables(appId)
       .then((data) => {
-        // Sort table list by added_timestamp (newest first)
-        const sorted = (data || []).slice().sort((x: any, y: any) => {
-          const xTime = typeof x === "string" ? 0 : (x?.added_timestamp || 0);
-          const yTime = typeof y === "string" ? 0 : (y?.added_timestamp || 0);
-          // Sort by timestamp descending (newest first)
-          return yTime - xTime;
+        // Remove Qlik Cloud "@syn" system tables from the UI (user requested)
+        const cleaned = (data || []).filter((t: any) => {
+          const name = typeof t === 'string' ? t : t?.name || '';
+          if (!name) return false;
+          return !name.toLowerCase().startsWith('@syn');
         });
- 
+
+        // Sort table list by creation/added timestamp (newest first).
+        const getTimestamp = (t: any) => {
+          if (!t || typeof t === 'string') return 0;
+          const candidates = ['added_timestamp','created','createdAt','created_at','createdDate','modifiedDate','lastModifiedDate','lastReloadTime','lastReload'];
+          for (const k of candidates) {
+            const v = t[k];
+            if (v) {
+              const asNum = typeof v === 'number' ? v : Number(v);
+              if (!isNaN(asNum) && asNum > 0) return asNum;
+              const parsed = Date.parse(String(v));
+              if (!isNaN(parsed)) return parsed;
+            }
+          }
+          return 0;
+        };
+
+        const sorted = (cleaned || []).slice().sort((x: any, y: any) => {
+          const tx = getTimestamp(x);
+          const ty = getTimestamp(y);
+          if (tx !== ty) return ty - tx; // newest first
+
+          // Prefer explicitly flagged 'is_new' items
+          const xi = (typeof x === 'string') ? false : !!x.is_new;
+          const yi = (typeof y === 'string') ? false : !!y.is_new;
+          if (xi && !yi) return -1;
+          if (!xi && yi) return 1;
+
+          // fallback to case-insensitive alphabetical order
+          const nx = typeof x === 'string' ? x : x?.name || '';
+          const ny = typeof y === 'string' ? y : y?.name || '';
+          return String(nx).localeCompare(String(ny), undefined, { sensitivity: 'base' });
+        });
+
         setTables(sorted);
         // Display list already sorted by recency, no need to reverse
         setFilteredTables(sorted);
-        console.log("All tables fetched (sorted by recency):", sorted);
- 
+        console.log("All tables fetched (sorted by recency, @syn filtered):", sorted);
+
         // AUTO-LOAD FIRST TABLE (most recently added)
         if (sorted && sorted.length > 0) {
-          // Pick the first table which is already sorted by recency (newest first)
           const firstTable = sorted[0];
           const firstTableName = typeof firstTable === "string" ? firstTable : firstTable?.name;
           if (firstTableName) loadData(firstTableName);
@@ -1711,6 +1737,87 @@ export default function SummaryPage() {
     window.URL.revokeObjectURL(url);
   };
  
+  // Compute master table per-prefix (heuristic: prefer name containing "fact/master/main", else use largest field count)
+  const masterMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const groups: Record<string, any[]> = {};
+    (tables || []).forEach((t) => {
+      const name = typeof t === "string" ? t : t?.name || "";
+      if (!name) return;
+      const prefix = name.includes("_") ? name.split("_")[0] : "__noprefix__";
+      groups[prefix] = groups[prefix] || [];
+      groups[prefix].push(t);
+    });
+
+    Object.keys(groups).forEach((prefix) => {
+      const group = groups[prefix];
+      if (!group || group.length <= 1) return;
+
+      const candidates = group.map((g: any) => {
+        const name = typeof g === "string" ? g : g?.name || "";
+        const fields = typeof g === "string" ? 0 : (g?.fields || []).length || 0;
+        return { name, fields };
+      });
+
+      // explicit override: if a table named exactly 'Ford_Vehicle_Fact' exists use it as the master
+      const fordExplicit = candidates.find((c: any) => c.name.toLowerCase() === 'ford_vehicle_fact');
+      if (fordExplicit) {
+        map.set(prefix, fordExplicit.name);
+        return;
+      }
+
+      // prefer explicit names (Fact / Master / Main)
+      const explicit = candidates.find((c: any) => /fact|master|main/i.test(c.name));
+      if (explicit) {
+        map.set(prefix, explicit.name);
+        return;
+      }
+
+      // fallback to table with most fields
+      candidates.sort((a: any, b: any) => (b.fields || 0) - (a.fields || 0));
+      map.set(prefix, candidates[0].name);
+    });
+
+    return map;
+  }, [tables]);
+
+  const isMasterTable = (name: string) => {
+    if (!name) return false;
+    const lower = name.toLowerCase();
+    // Explicit override: treat Ford_Vehicle_Fact as master (case-insensitive)
+    if (lower === "ford_vehicle_fact") return true;
+    const prefix = name.includes("_") ? name.split("_")[0] : null;
+    if (!prefix) return false;
+    return masterMap.get(prefix) === name;
+  };
+
+  const isRelatedTable = (name: string) => {
+    if (!name) return false;
+    const prefix = name.includes("_") ? name.split("_")[0] : null;
+    if (!prefix) return false;
+    const master = masterMap.get(prefix);
+    return Boolean(master && master !== name && (tables || []).some(t => (typeof t === 'string' ? t : t?.name) === master));
+  };
+
+  const sortedFilteredTables = useMemo(() => {
+    const arr = (filteredTables || []).slice();
+    arr.sort((a, b) => {
+      const an = typeof a === 'string' ? a : a?.name || '';
+      const bn = typeof b === 'string' ? b : b?.name || '';
+      const aMaster = isMasterTable(an);
+      const bMaster = isMasterTable(bn);
+      if (aMaster && !bMaster) return -1;
+      if (!aMaster && bMaster) return 1;
+      return an.localeCompare(bn);
+    });
+    return arr;
+  }, [filteredTables, masterMap]);
+
+  const isSelectionMaster = !!(selectedTable && isMasterTable(selectedTable));
+  // Export allowed when either master is selected or the selected table has no related tables
+  const exportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
+
+
   if (loading) {
     return <div className="wrap">Loading…</div>;
   }
@@ -1741,19 +1848,25 @@ export default function SummaryPage() {
           <p className="no-tables">No tables found</p>
         )}
  
-        {filteredTables.map((t, i) => {
+        {sortedFilteredTables.map((t, i) => {
           const tableName = typeof t === "string" ? t : t?.name;
           const isNew = typeof t === "string" ? false : t?.is_new;
           if (!tableName) return null;
 
+          const master = isMasterTable(tableName);
+          const related = isRelatedTable(tableName);
+          const cls = `${tableName === selectedTable ? "table-item active" : "table-item"}${master ? " master-row" : ""}`;
+
           return (
             <div
               key={i}
-              className={tableName === selectedTable ? "table-item active" : "table-item"}
+              className={cls}
               onClick={() => loadData(tableName)}
+              title={master ? "Master table — click to export master + its related tables" : related ? "Related table — preview only — export disabled (select master to export)" : "Click to preview table"}
             >
-
-              <span>{tableName}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tableName}</span>
+              </span>
               {isNew && <span className="new-badge">NEW</span>}
             </div>
           );
@@ -1774,7 +1887,10 @@ export default function SummaryPage() {
               {/* HEADER ONLY TITLE */}
             <div className="header">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",width: "100%" }}>
-                <h2>{selectedTable}</h2>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span>{selectedTable}</span>
+                  {isSelectionMaster && <span className="master-indicator">master</span>}
+                </h2>
                 {pageLoadTime && (
                   <div className="timer-badge">Analysis Time: {pageLoadTime}</div>
                 )}
@@ -1788,124 +1904,156 @@ export default function SummaryPage() {
              
  
               {tableLoading && <p>Loading data…</p>}
- 
-              {!tableLoading && rows.length > 0 && (
+
+              {!tableLoading && (
                 <>
-                  {/* Top controls: page length + search */}
-                  <div className="data-controls">
-                    <div className="length">
-                      <label>
-                        <select
-                          value={pageSize}
-                          onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
-                        >
-                          <option value={10}>10</option>
-                          <option value={25}>25</option>
-                          <option value={50}>50</option>
-                          <option value={100}>100</option>
-                        </select>
-                        records per page
-                      </label>
-                    </div>
-                    <div className="searchfilter">
-                      <label className="lable-search">
-                        Search:
-                        <input
-                          type="search"
-                          value={tableQuery}
-                          onChange={(e) => setTableQuery(e.target.value)}
-                          placeholder="Search..."
-                        />
-                      </label>
-                      <button
-                      className="csv-btn"
-                      disabled={!rows.length}
-                      onClick={downloadCSV}
-                    >
-                      <img src={Csvicon} alt="csv " className="btn-icon" />
-                    </button>
-                    </div>
-                  </div>
- 
-                  <div className="table-wrapper">
-                    <TableContainer component={Paper}>
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            {rows[0] && Object.keys(rows[0]).map((k) => (
-                              <TableCell key={k} sortDirection={orderBy === k ? order : false}>
-                                <TableSortLabel
-                                  active={orderBy === k}
-                                  direction={orderBy === k ? order : 'asc'}
-                                  onClick={() => handleRequestSort(k)}
-                                >
-                                  {k}
-                                </TableSortLabel>
-                              </TableCell>
-                            ))}
-                          </TableRow>
-                        </TableHead>
- 
-                        <TableBody>
-                          {visibleRows.map((r, i) => (
-                            <TableRow key={i} hover>
-                              {Object.keys(rows[0]).map((k, j) => (
-                                <TableCell key={j}>{String(r[k] ?? "")}</TableCell>
+                  {rows.length > 0 ? (
+                    <>
+                      {/* Top controls: page length + search */}
+                      <div className="data-controls">
+                        <div className="length">
+                          <label>
+                            <select
+                              value={pageSize}
+                              onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
+                            >
+                              <option value={10}>10</option>
+                              <option value={25}>25</option>
+                              <option value={50}>50</option>
+                              <option value={100}>100</option>
+                            </select>
+                            records per page
+                          </label>
+                        </div>
+                        <div className="searchfilter">
+                          <label className="lable-search">
+                            Search:
+                            <input
+                              type="search"
+                              value={tableQuery}
+                              onChange={(e) => setTableQuery(e.target.value)}
+                              placeholder="Search..."
+                            />
+                          </label>
+                          <button
+                            className="csv-btn"
+                            disabled={!rows.length}
+                            onClick={downloadCSV}
+                          >
+                            <img src={Csvicon} alt="csv " className="btn-icon" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="table-wrapper">
+                        <TableContainer component={Paper}>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                {rows[0] && Object.keys(rows[0]).map((k) => (
+                                  <TableCell key={k} sortDirection={orderBy === k ? order : false}>
+                                    <TableSortLabel
+                                      active={orderBy === k}
+                                      direction={orderBy === k ? order : 'asc'}
+                                      onClick={() => handleRequestSort(k)}
+                                    >
+                                      {k}
+                                    </TableSortLabel>
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            </TableHead>
+
+                            <TableBody>
+                              {visibleRows.map((r, i) => (
+                                <TableRow key={i} hover>
+                                  {Object.keys(rows[0]).map((k, j) => (
+                                    <TableCell key={j}>{String(r[k] ?? "")}</TableCell>
+                                  ))}
+                                </TableRow>
                               ))}
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
- 
-                    <div className="table-footer">
-                      {`Showing ${totalEntries ? startIndex + 1 : 0} to ${endIndex} of ${totalEntries} entries`}
-                    </div>
-                  </div>
- 
-                  {/* Pagination */}
-                  <div className="pagination-bar">
-                    <button
-                      className="page-btn"
-                      disabled={current === 1}
-                      onClick={() => setCurrentPage(current - 1)}
-                    >
-                      Previous
-                    </button>
-                    {pageNumbers.map((p, idx) =>
-                      typeof p === "number" ? (
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+
+                        <div className="table-footer">
+                          {`Showing ${totalEntries ? startIndex + 1 : 0} to ${endIndex} of ${totalEntries} entries`}
+                        </div>
+                      </div>
+
+                      {/* Pagination */}
+                      <div className="pagination-bar">
                         <button
-                          key={idx}
-                          className={`page-btn ${p === current ? "active" : ""}`}
-                          onClick={() => setCurrentPage(p)}
+                          className="page-btn"
+                          disabled={current === 1}
+                          onClick={() => setCurrentPage(current - 1)}
                         >
-                          {p}
+                          Previous
                         </button>
-                      ) : (
-                        <span key={idx} className="ellipsis">…</span>
-                      )
-                    )}
-                    <button
-                      className="page-btn"
-                      disabled={current === totalPages}
-                      onClick={() => setCurrentPage(current + 1)}
-                    >
-                      Next
-                    </button>
-                  </div>
- 
+                        {pageNumbers.map((p, idx) =>
+                          typeof p === "number" ? (
+                            <button
+                              key={idx}
+                              className={`page-btn ${p === current ? "active" : ""}`}
+                              onClick={() => setCurrentPage(p)}
+                            >
+                              {p}
+                            </button>
+                          ) : (
+                            <span key={idx} className="ellipsis">…</span>
+                          )
+                        )}
+                        <button
+                          className="page-btn"
+                          disabled={current === totalPages}
+                          onClick={() => setCurrentPage(current + 1)}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="no-data-placeholder" style={{ padding: 20 }}>
+                      <p style={{ margin: 0, color: '#444' }}>No rows available for this table — preview not available.</p>
+                      <p style={{ marginTop: 8, color: '#666' }}>You can still export this table; clicking <strong>Continue to Export</strong> will attempt to load the table data.</p>
+                    </div>
+                  )}
+
                   {/* BOTTOM RIGHT BUTTON - Export (single table or auto-include related tables for master) */}
                   <div className="bottom-actions">
                     <button
                       className="export-btn"
+                      disabled={!exportAllowed || tableLoading}
+                      title={!exportAllowed ? "Export disabled: select the master table (or a standalone table) to export" : "Continue to export selected table(s)"}
                       onClick={async () => {
                         try {
                           stopTimer?.("/summary");
                           sessionStorage.setItem("summaryComplete", "true");
                           startTimer?.("/export");
 
-                          // Detect related tables by prefix (e.g. "Ford_") — treat the selected table as master
                           const sel = selectedTable || sessionStorage.getItem("selectedTable") || "";
+
+                          // If we don't have rows for the selected table yet, try to fetch them now
+                          let masterRows = rows;
+                          if ((!masterRows || masterRows.length === 0) && sel) {
+                            try {
+                              setTableLoading(true);
+                              const loaded = await fetchTableData(appId, sel);
+                              masterRows = loaded || [];
+                              setRows(masterRows);
+                              // regenerate summary for the newly loaded data
+                              const { generateSummaryFromData } = await import("../api/qlikApi");
+                              setSummary(generateSummaryFromData(masterRows, sel));
+                            } catch (e) {
+                              console.warn("Failed to load selected table prior to export:", e);
+                              alert("Failed to load table data for export. See console for details.");
+                              setTableLoading(false);
+                              return;
+                            } finally {
+                              setTableLoading(false);
+                            }
+                          }
+
                           const prefix = sel && sel.includes("_") ? sel.split("_")[0] : null;
                           const candidateNames = (tables || []).map((t) => (typeof t === "string" ? t : t?.name)).filter(Boolean) as string[];
                           const related = prefix ? candidateNames.filter(n => n.startsWith(prefix + "_") && n !== sel) : [];
@@ -1917,7 +2065,7 @@ export default function SummaryPage() {
                                 appId,
                                 appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
                                 selectedTable: sel,
-                                rows,
+                                rows: masterRows || [],
                               },
                             });
                             return;
@@ -1926,7 +2074,7 @@ export default function SummaryPage() {
                           // Prefetch related tables (master first)
                           setTableLoading(true);
                           const selectedData: any[] = [];
-                          selectedData.push({ name: sel, data: { name: sel, rows, summary } });
+                          selectedData.push({ name: sel, data: { name: sel, rows: masterRows || [], summary } });
 
                           for (const relName of related) {
                             try {
@@ -1957,6 +2105,11 @@ export default function SummaryPage() {
                     >
                       <img src={exportImg} alt="Export" />Continue to Export
                     </button>
+
+                    {/* Hint shown when export is disabled because a related table is selected */}
+                    {!exportAllowed && selectedTable && isRelatedTable(selectedTable) && (
+                      <div className="export-hint">Export disabled for related tables — select the master table to export all related tables together.</div>
+                    )}
                   </div>
                 </>
               )}
