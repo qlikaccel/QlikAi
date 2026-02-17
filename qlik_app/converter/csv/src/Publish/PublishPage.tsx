@@ -78,7 +78,7 @@ export default function PublishPage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [statusBoxes, setStatusBoxes] = useState({ columns: false, powerbi: false, finished: false });
   const [result, setResult] = useState<any>(null);
-  const [results, setResults] = useState<any[]>([]); // For separate table results
+
   const [copied, setCopied] = useState(false);
   const [publishStartTime, setPublishStartTime] = useState<Date | null>(null);
   const [publishEndTime, setPublishEndTime] = useState<Date | null>(null);
@@ -241,7 +241,7 @@ export default function PublishPage() {
       // Check if separate table mode
       if (isSeparateMode && isMultiTableMode && selectedTablesToPublish.length > 0) {
         // Publish each table separately
-        const publishedResults = [];
+        const publishedResults: any[] = [];
 
         for (let i = 0; i < tableCount; i++) {
           const csvText = sessionStorage.getItem(`migration_csv_${i}`) || "";
@@ -255,7 +255,12 @@ export default function PublishPage() {
           }
         }
 
-        setResults(publishedResults);
+        // Use the first published table as the primary dataset for the unified success UI
+        if (publishedResults.length > 0) {
+          setPublishedTableName(publishedResults[0].nameWithTime || publishedResults[0].tableName || "");
+          setDatasetURL(publishedResults[0].url || "");
+        }
+
         setResult({ published_tables: publishedResults });
       } else {
         // Combined mode or single table - use original logic
@@ -519,193 +524,106 @@ export default function PublishPage() {
       {/* SUCCESS SECTION */}
       {result && (
         <div className="success-section">
-          {/* Single Table Result */}
-          {!isSeparateMode || results.length === 0 ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <div className="success-title">✨ Success!</div>
-                <div style={{ 
-                  fontSize: "14px", 
-                  color: "#0078d4",
-                  fontWeight: "bold",
-                  padding: "8px 15px",
-                  backgroundColor: "#e7f3ff",
-                  borderRadius: "5px"
-                }}>
-                  ⏱️ Published in {formatDuration(publishDuration)}
-                </div>
-              </div>
-              <div className="success-message">
-                Dataset "<strong>{publishedTableName}</strong>" published to Power BI Cloud
-              </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+            <div className="success-title">✨ Success!</div>
+            <div style={{ 
+              fontSize: "14px", 
+              color: "#0078d4",
+              fontWeight: "bold",
+              padding: "8px 15px",
+              backgroundColor: "#e7f3ff",
+              borderRadius: "5px"
+            }}>
+              ⏱️ Published in {formatDuration(publishDuration)}
+            </div>
+          </div>
 
-              {/* URL BOX */}
-              <div className="url-box">
-                <div className="url-label">🔗 Dataset URL </div>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
-                  <input
-                    type="text"
-                    value={datasetURL}
-                    readOnly
-                    className="url-input"
-                  />
-                  <button
-                    onClick={copyToClipboard}
-                    className="btn btn-small"
-                    style={{
-                      padding: "8px 12px",
-                      width:"60px",
-                      height : "45px",
-                      whiteSpace: "nowrap",
-                      backgroundColor: copied ? "#27ae60" : "#3498db",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      fontSize: "14px",
-                      transition: "background-color 0.3s"
-                    }}
-                  >
-                    {copied ? "✅ Copy" : "📋"}
-                  </button>
-                </div>
-                <div className="url-note">
-                  ✓ This URL is ready to use. Click "Open in Power BI" to view your dataset.
-                </div>
-              </div>
+          <div className="success-message">
+            Dataset "<strong>{publishedTableName}</strong>" published to Power BI Cloud
+          </div>
 
-              {/* COMBINED FORMAT INFO */}
-              {hasCSV && hasDAX && (
-                <div style={{ 
-                  backgroundColor: "#dbeafe", 
-                  border: "2px solid #0078d4", 
-                  borderRadius: "10px", 
-                  padding: "16px", 
-                  marginBottom: "20px",
-                  textAlign: "center"
-                }}>
-                  <strong style={{ color: "#0078d4", fontSize: "16px" }}>
-                    📊 Combined Format: CSV + DAX
-                  </strong>
-                  <div style={{ fontSize: "13px", color: "#0369a1", marginTop: "8px" }}>
-                    ✅ CSV Data: Complete dataset with all rows and columns<br/>
-                    ✅ DAX Metadata: Query definitions and table structure
-                  </div>
-                </div>
-              )}
+          {/* URL BOX */}
+          <div className="url-box">
+            <div className="url-label">🔗 Dataset URL </div>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+              <input
+                type="text"
+                value={datasetURL}
+                readOnly
+                className="url-input"
+              />
+              <button
+                onClick={copyToClipboard}
+                className="btn btn-small"
+                style={{
+                  padding: "8px 12px",
+                  width:"60px",
+                  height : "45px",
+                  whiteSpace: "nowrap",
+                  backgroundColor: copied ? "#27ae60" : "#3498db",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  transition: "background-color 0.3s"
+                }}
+              >
+                {copied ? "✅ Copy" : "📋"}
+              </button>
+            </div>
+            <div className="url-note">
+              ✓ This URL is ready to use. Click "Open in Power BI" to view your dataset.
+            </div>
+          </div>
 
-              {/* INFO BOXES */}
-              <div className="info-boxes">
-                <div className="info-box">
-                  <div className="info-box-label">Table Name </div>
-                  <div className="info-box-value" style={{ fontSize: "12px", wordBreak: "break-word" }}>{publishedTableName}</div>
-                </div>
-                <div className="info-box">
-                  <div className="info-box-label">Published Date & Time</div>
-                  <div className="info-box-value">{publishEndTime ? publishEndTime.toLocaleString() : new Date().toLocaleString()}</div>
-                </div>
-                <div className="info-box">
-                  <div className="info-box-label">Publishing Duration</div>
-                  <div className="info-box-value">⏱️ {formatDuration(publishDuration)}</div>
-                </div>
-                <div className="info-box">
-                  <div className="info-box-label">Total Rows</div>
-                  <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{rowCount}</div>
-                </div>
-                <div className="info-box">
-                  <div className="info-box-label">Total Columns</div>
-                  <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{columns.length}</div>
-                </div>
-                <div className="info-box">
-                  <div className="info-box-label">Status</div>
-                  <div className="info-box-value">✅ Published</div>
-                </div>
+          {/* COMBINED FORMAT INFO */}
+          {hasCSV && hasDAX && (
+            <div style={{ 
+              backgroundColor: "#dbeafe", 
+              border: "2px solid #0078d4", 
+              borderRadius: "10px", 
+              padding: "16px", 
+              marginBottom: "20px",
+              textAlign: "center"
+            }}>
+              <strong style={{ color: "#0078d4", fontSize: "16px" }}>
+                📊 Combined Format: CSV + DAX
+              </strong>
+              <div style={{ fontSize: "13px", color: "#0369a1", marginTop: "8px" }}>
+                ✅ CSV Data: Complete dataset with all rows and columns<br/>
+                ✅ DAX Metadata: Query definitions and table structure
               </div>
-            </>
-          ) : (
-            /* Separate Tables Result */
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <div className="success-title">✨ Success! {results.length} Tables Published</div>
-                <div style={{ 
-                  fontSize: "14px", 
-                  color: "#0078d4",
-                  fontWeight: "bold",
-                  padding: "8px 15px",
-                  backgroundColor: "#e7f3ff",
-                  borderRadius: "5px"
-                }}>
-                  ⏱️ Published in {formatDuration(publishDuration)}
-                </div>
-              </div>
-
-              {/* Separate Table Results */}
-              <div style={{ display: "grid", gap: "16px" }}>
-                {results.map((tableResult, idx) => (
-                  <div key={idx} className="url-box" style={{ backgroundColor: "#f0f9ff", borderLeft: "4px solid #0078d4" }}>
-                    <div style={{ marginBottom: "12px" }}>
-                      <div className="url-label">📊 Table {idx + 1}: {tableResult.tableName}</div>
-                      <div style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
-                        Published: {tableResult.publishTime.toLocaleString()} | Rows: {tableResult.rowCount}
-                      </div>
-                    </div>
-                    
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
-                      <input
-                        type="text"
-                        value={tableResult.url}
-                        readOnly
-                        className="url-input"
-                        style={{ fontSize: "12px" }}
-                      />
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(tableResult.url);
-                          alert("URL copied!");
-                        }}
-                        className="btn btn-small"
-                        style={{
-                          padding: "8px 12px",
-                          width:"60px",
-                          height : "45px",
-                          whiteSpace: "nowrap",
-                          backgroundColor: "#3498db",
-                          color: "white",
-                          border: "none",
-                          borderRadius: "4px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                        }}
-                      >
-                        📋 Copy
-                      </button>
-                    </div>
-                    
-                    <button
-                      onClick={() => window.open(tableResult.url, "_blank")}
-                      style={{
-                        width: "100%",
-                        padding: "10px",
-                        backgroundColor: "#27ae60",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        fontWeight: "bold"
-                      }}
-                    >
-                      🔗 Open in Power BI
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ marginTop: "20px", padding: "12px", backgroundColor: "#e8f5e9", borderRadius: "6px", borderLeft: "4px solid #27ae60" }}>
-                <strong>✅ All tables have been published successfully!</strong> You can now access each dataset individually in Power BI.
-              </div>
-            </>
+            </div>
           )}
+
+          {/* INFO BOXES (show master table details) */}
+          <div className="info-boxes">
+            <div className="info-box">
+              <div className="info-box-label">Table Name </div>
+              <div className="info-box-value" style={{ fontSize: "12px", wordBreak: "break-word" }}>{publishedTableName}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Published Date & Time</div>
+              <div className="info-box-value">{publishEndTime ? publishEndTime.toLocaleString() : new Date().toLocaleString()}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Publishing Duration</div>
+              <div className="info-box-value">⏱️ {formatDuration(publishDuration)}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Total Rows</div>
+              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{rowCount}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Total Columns</div>
+              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{columns.length}</div>
+            </div>
+            <div className="info-box">
+              <div className="info-box-label">Status</div>
+              <div className="info-box-value">✅ Published</div>
+            </div>
+          </div>
 
           {/* ACTION BUTTONS */}
           <div className="btn-group">

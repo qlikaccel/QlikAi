@@ -54,11 +54,11 @@ export default function ExportPage() {
 
   const appName = appNameRaw;
 
-  const [options, setOptions] = useState<{ combined: boolean; separate: boolean }>({ combined: false, separate: false });
+  const [options, setOptions] = useState<{ combined: boolean }>({ combined: false });
   const [showError, setShowError] = useState(false);
 
-  // Check if any export option is selected
-  const isAnyOptionSelected = options.combined || options.separate;
+  // Check if any export option is selected (only combined remains)
+  const isAnyOptionSelected = options.combined;
 
   // 🔹 SAVE METADATA IMMEDIATELY ON LOAD
   useEffect(() => {
@@ -118,7 +118,7 @@ export default function ExportPage() {
     sessionStorage.setItem("migration_row_count", String(rows.length));
 
     // Save CSV data if export is selected
-    if (options.combined || options.separate) {
+    if (options.combined) {
       const headers = Object.keys(rows[0]);
       const csv = [
         headers.join(","),
@@ -144,10 +144,7 @@ export default function ExportPage() {
       sessionStorage.setItem("migration_has_dax", "true");
     }
 
-    // Save separation flag if separate tables selected
-    if (options.separate) {
-      sessionStorage.setItem("migration_separate_tables", "true");
-    }
+
 
     sessionStorage.setItem("exportComplete", "true");
   };
@@ -161,7 +158,7 @@ export default function ExportPage() {
       sessionStorage.setItem("migration_table_count", String(selectedTables.length));
 
       // Save CSV data if export is selected
-      if (options.combined || options.separate) {
+      if (options.combined) {
         selectedTables.forEach((table, idx) => {
           const tableRows = table.data?.rows || [];
           if (tableRows.length > 0) {
@@ -180,10 +177,7 @@ export default function ExportPage() {
         sessionStorage.setItem("migration_has_dax", "true");
       }
 
-      // Save separation flag if separate tables selected
-      if (options.separate) {
-        sessionStorage.setItem("migration_separate_tables", "true");
-      }
+
 
       sessionStorage.setItem("exportComplete", "true");
     } catch (e) {
@@ -208,155 +202,28 @@ export default function ExportPage() {
           <span className="value">{appName}</span>
         </div>
 
-        {!isMultiSelect ? (
-          <>
-            <div className="info-box">
-              <span className="label">Table Name</span>
-              <span className="value">{selectedTable}</span>
-            </div>
-
-            <div className="info-box">
-              <span className="label">Total Rows</span>
-              <span className="value">{rows?.length || 0}</span>
-            </div>
-
-            <div className="info-box">
-              <span className="label">Total Columns</span>
-              <span className="value">{rows && rows.length > 0 ? Object.keys(rows[0]).length : 0}</span>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="info-box">
-              <span className="label">Selected Tables</span>
-              <span className="value">{selectedTables.length}</span>
-            </div>
-
-            <div className="info-box">
-              <span className="label">Total Rows</span>
-              <span className="value">{selectedTables.reduce((sum, t) => sum + (t.data?.rows?.length || 0), 0)}</span>
-            </div>
-
-            <div className="info-box">
-              <span className="label">Total Columns</span>
-              <span className="value">{selectedTables.length > 0 && selectedTables[0].data?.rows?.length ? Object.keys(selectedTables[0].data.rows[0]).length : 0}</span>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Display table list for multi-select */}
-      {isMultiSelect && (
-        <div className="tables-list-container">
-          <h3>Selected Tables:</h3>
-          <div className="tables-list">
-            {selectedTables.map((table, idx) => (
-              <div key={idx} className="table-item-chip">
-                <span>{table.name}</span>
-                <span className="row-count">({table.data?.rows?.length || 0} rows)</span>
-              </div>
-            ))}
+        {/* Always show master table details. When multiple tables are provided, the first table is treated as the master */}
+        <>
+          <div className="info-box">
+            <span className="label">Table Name</span>
+            <span className="value">{isMultiSelect ? (selectedTables[0]?.name || "") : selectedTable}</span>
           </div>
-        </div>
-      )}
 
-      {/* 🔹 TABLE STRUCTURE & PREVIEW */}
-      <div className="table-structure-section">
-        <h3>📊 Table Structure & Data Preview</h3>
-        {isMultiSelect ? (
-          // Multi-select: Show all tables with their columns
-          selectedTables.map((table, tableIdx) => (
-            <div key={tableIdx} className="table-structure-card">
-              <div className="table-header">
-                <h4>{table.name}</h4>
-                <span className="row-info">📈 {table.data?.rows?.length || 0} rows</span>
-              </div>
-              
-              {table.data?.rows && table.data.rows.length > 0 && (
-                <>
-                  <div className="columns-section">
-                    <strong>📋 Columns ({Object.keys(table.data.rows[0] || {}).length}):</strong>
-                    <div className="columns-list">
-                      {Object.keys(table.data.rows[0] || {}).map((col, colIdx) => (
-                        <span key={colIdx} className="column-chip">{col}</span>
-                      ))}
-                    </div>
-                  </div>
+          <div className="info-box">
+            <span className="label">Total Rows</span>
+            <span className="value">{isMultiSelect ? (selectedTables[0]?.data?.rows?.length || 0) : (rows?.length || 0)}</span>
+          </div>
 
-                  {/* Show sample data */}
-                  <div className="sample-data-section">
-                    <strong>📝 Sample Data (first 2 rows):</strong>
-                    <table className="preview-table">
-                      <thead>
-                        <tr>
-                          {Object.keys(table.data.rows[0] || {}).slice(0, 5).map((col, idx) => (
-                            <th key={idx}>{col}</th>
-                          ))}
-                          {Object.keys(table.data.rows[0] || {}).length > 5 && <th>...</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {table.data.rows.slice(0, 2).map((row, rowIdx) => (
-                          <tr key={rowIdx}>
-                            {Object.keys(table.data.rows[0] || {}).slice(0, 5).map((col, colIdx) => (
-                              <td key={colIdx}>{String(row[col] || '-').substring(0, 30)}</td>
-                            ))}
-                            {Object.keys(table.data.rows[0] || {}).length > 5 && <td>...</td>}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </div>
-          ))
-        ) : (
-          // Single select: Show selected table with columns
-          rows && rows.length > 0 && (
-            <div className="table-structure-card">
-              <div className="table-header">
-                <h4>{selectedTable}</h4>
-                <span className="row-info">📈 {rows.length} rows</span>
-              </div>
-
-              <div className="columns-section">
-                <strong>📋 Columns ({Object.keys(rows[0] || {}).length}):</strong>
-                <div className="columns-list">
-                  {Object.keys(rows[0] || {}).map((col, idx) => (
-                    <span key={idx} className="column-chip">{col}</span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Show sample data */}
-              <div className="sample-data-section">
-                <strong>📝 Sample Data (first 2 rows):</strong>
-                <table className="preview-table">
-                  <thead>
-                    <tr>
-                      {Object.keys(rows[0] || {}).slice(0, 5).map((col, idx) => (
-                        <th key={idx}>{col}</th>
-                      ))}
-                      {Object.keys(rows[0] || {}).length > 5 && <th>...</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.slice(0, 2).map((row, rowIdx) => (
-                      <tr key={rowIdx}>
-                        {Object.keys(rows[0] || {}).slice(0, 5).map((col, colIdx) => (
-                          <td key={colIdx}>{String(row[col] || '-').substring(0, 30)}</td>
-                        ))}
-                        {Object.keys(rows[0] || {}).length > 5 && <td>...</td>}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )
-        )}
+          <div className="info-box">
+            <span className="label">Total Columns</span>
+            <span className="value">{isMultiSelect ? (selectedTables[0]?.data?.rows?.length ? Object.keys(selectedTables[0].data.rows[0]).length : 0) : (rows && rows.length > 0 ? Object.keys(rows[0]).length : 0)}</span>
+          </div>
+        </>
       </div>
+
+
+
+
 
       {/* 🔹 HOW COMBINING WORKS */}
       {isMultiSelect && options.combined && (
@@ -398,18 +265,7 @@ export default function ExportPage() {
             </label>
           </div>
 
-          <div className="checkbox-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={options.separate}
-                onChange={() => {
-                  setOptions({ ...options, separate: !options.separate });
-                }}
-              />
-              <strong> 📊 Export as Separate Tables </strong>
-            </label>
-          </div>
+  
         </div>
 
         {/* RIGHT: SSRS Export (Disabled) */}
@@ -459,24 +315,28 @@ export default function ExportPage() {
           disabled={!isAnyOptionSelected}
           onClick={() => {
             if (isAnyOptionSelected) {
-              setShowError(false);
-              // Save data to sessionStorage before navigating
-              if (isMultiSelect) {
-                saveDataToSessionStorageMulti();
+                setShowError(false);
+                // Save data to sessionStorage before navigating
+                if (isMultiSelect) {
+                  saveDataToSessionStorageMulti();
+                } else {
+                  saveDataToSessionStorageSingle();
+                }
+
+                // When multiple tables are provided, we want the publish step to process all related tables.
+                const exportOptions = { combined: options.combined, separate: isMultiSelect };
+
+                navigate("/publish", { 
+                  state: { 
+                    appId: state?.appId, 
+                    appName,
+                    exportOptions,
+                    selectedTables: isMultiSelect ? selectedTables : null
+                  } 
+                });
               } else {
-                saveDataToSessionStorageSingle();
+                setShowError(true);
               }
-              navigate("/publish", { 
-                state: { 
-                  appId: state?.appId, 
-                  appName,
-                  exportOptions: options,
-                  selectedTables: isMultiSelect ? selectedTables : null
-                } 
-              });
-            } else {
-              setShowError(true);
-            }
           }}
           title={!isAnyOptionSelected ? "Select an export option to continue" : "Publish to PowerBI"}
         >
