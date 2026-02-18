@@ -741,10 +741,10 @@ class QlikWebSocketClient:
             try:
                 create_response = self.send_request("CreateSessionObject", [hypercube_def])
 
-                print(f"CreateSessionObject response: {json.dumps(create_response, indent=2)[:500]}")
+                print(f"CreateSessionObject response: {json.dumps(create_response, indent=2)[:800]}")
 
                 if 'result' not in create_response:
-                    print("⚠️ CreateSessionObject failed, trying alternative approach...")
+                    print("⚠️ CreateSessionObject failed (no result), trying alternative...")
                     return self._get_table_data_alternative(table_name, table_fields, limit, matched_table)
 
                 result = create_response.get('result', {})
@@ -760,7 +760,9 @@ class QlikWebSocketClient:
                 print(f"✓ Created hypercube with handle: {object_handle}")
 
                 # Get layout
+                print(f"Getting layout for hypercube...")
                 layout_response = self.send_request("GetLayout", {}, handle=object_handle)
+                print(f"GetLayout response keys: {layout_response.keys() if isinstance(layout_response, dict) else 'N/A'}")
 
                 rows = []
                 column_names = table_fields
@@ -768,10 +770,12 @@ class QlikWebSocketClient:
                 if 'result' in layout_response and 'qLayout' in layout_response['result']:
                     hypercube = layout_response['result']['qLayout'].get('qHyperCube', {})
                     data_pages = hypercube.get('qDataPages', [])
+                    print(f"✓ Found {len(data_pages)} data pages")
 
                 for page in data_pages:
                     matrix = page.get('qMatrix', [])
-                    for row_data in matrix:
+                    print(f"  Processing page with {len(matrix)} rows")
+                    for row_idx, row_data in enumerate(matrix):
                         row_values = {}
 
                         for i, cell in enumerate(row_data):
@@ -794,6 +798,8 @@ class QlikWebSocketClient:
                         rows.append(row_values)
 
                 print(f"✓ Retrieved {len(rows)} rows from hypercube")
+                if rows and len(rows) > 0:
+                    print(f"  First row sample: {list(rows[0].items())[:2]}")
                 
                 # Destroy session object
                 self.send_request("DestroySessionObject", {"qId": str(object_handle)}, handle=-1)
@@ -873,8 +879,61 @@ class QlikWebSocketClient:
                     "source": "field_values"
                 }
             
-            # LAST RESORT: Show structure with row count from metadata
-            print(f"⚠️ All extraction methods failed, showing metadata only...")
+            # LAST RESORT: Try one more time with simpler query
+            print(f"⚠️ Attempt 1 failed, trying simpler hypercube approach...")
+            try:
+                # Try with just first field as dimension
+                if table_fields:
+                    simple_hc = {
+                        "qInfo": {"qType": "HyperCube"},
+                        "qHyperCubeDef": {
+                            "qMode": "P",  # Try pivot mode
+                            "qDimensions": [{"qDef": {"qFieldDefs": [table_fields[0]]}}],
+                            "qMeasures": [{"qDef": {"qDef": f"Count()"}}],
+                            "qInitialDataFetch": [{"qTop": 0, "qLeft": 0, "qWidth": len(table_fields), "qHeight": min(limit, 100)}],
+                        }
+                    }
+                    
+                    simple_create = self.send_request("CreateSessionObject", [simple_hc])
+                    if 'result' in simple_create and 'qReturn' in simple_create['result']:
+                        simple_handle = simple_create['result']['qReturn']['qHandle']
+                        simple_layout = self.send_request("GetLayout", {}, handle=simple_handle)
+                        
+                        if 'result' in simple_layout:
+                            hc = simple_layout['result']['qLayout'].get('qHyperCube', {})
+                            data_pages = hc.get('qDataPages', [])
+                            rows = []
+                            
+                            for page in data_pages:
+                                matrix = page.get('qMatrix', [])
+                                for row_data in matrix:
+                                    row = {}
+                                    for idx, cell in enumerate(row_data):
+                                        if idx < len(table_fields):
+                                            text_val = cell.get('qText', '')
+                                            num_val = cell.get('qNum')
+                                            row[table_fields[idx]] = text_val if text_val else (num_val if num_val is not None else '')
+                                    rows.append(row)
+                            
+                            if rows:
+                                print(f"✅ Got {len(rows)} rows from simple hypercube")
+                                self.send_request("DestroySessionObject", {"qId": str(simple_handle)}, handle=-1)
+                                self.close()
+                                return {
+                                    "success": True,
+                                    "table_name": table_name,
+                                    "columns": table_fields,
+                                    "rows": rows,
+                                    "row_count": len(rows),
+                                    "source": "simple_hypercube"
+                                }
+                        
+                        self.send_request("DestroySessionObject", {"qId": str(simple_handle)}, handle=-1)
+            except Exception as e:
+                print(f"⚠️ Simple hypercube also failed: {str(e)}")
+            
+            # EXTREME FALLBACK: Show structure with row count from metadata
+            print(f"⚠️ All extraction methods failed, showing metadata structure...")
             rows = []
             row_count = table_info.get("no_of_rows", 0)
             
