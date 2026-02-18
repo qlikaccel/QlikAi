@@ -1624,11 +1624,27 @@ export default function SummaryPage() {
         setFilteredTables(sorted);
         console.log("All tables fetched (sorted by recency, @syn filtered):", sorted);
 
-        // AUTO-LOAD FIRST TABLE (most recently added)
+        // AUTO-LOAD: prefer a detected *master* table, otherwise fall back to most-recent
         if (sorted && sorted.length > 0) {
-          const firstTable = sorted[0];
-          const firstTableName = typeof firstTable === "string" ? firstTable : firstTable?.name;
-          if (firstTableName) loadData(firstTableName);
+          // 1) explicit master-like names (priority)
+          const masterLike = sorted.find((t: any) => {
+            const n = typeof t === 'string' ? t : t?.name || '';
+            return /\b(master|fact|main)\b/i.test(n);
+          });
+
+          // 2) if none, pick table with highest field count in any prefix group (best-effort master)
+          let fieldiest: any = null;
+          if (!masterLike) {
+            for (const t of sorted) {
+              const name = typeof t === 'string' ? t : t?.name || '';
+              const fields = typeof t === 'string' ? 0 : (t?.fields || []).length || 0;
+              if (!fieldiest || fields > (fieldiest.fields || 0)) fieldiest = { name, fields };
+            }
+          }
+
+          const chosen = masterLike ? (typeof masterLike === 'string' ? masterLike : masterLike?.name) : (fieldiest ? fieldiest.name : (typeof sorted[0] === 'string' ? sorted[0] : sorted[0]?.name));
+
+          if (chosen) loadData(chosen);
         }
       })
       .catch(() => {})
