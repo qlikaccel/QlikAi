@@ -357,7 +357,7 @@ class QlikWebSocketClient:
         """Get all fields from the app"""
         try:
             # Create a proper FieldList session object
-            field_list_response = self.send_request("CreateSessionObject", {
+            field_list_response = self.send_request("CreateSessionObject", [{
                 "qInfo": {
                     "qType": "FieldList"
                 },
@@ -367,7 +367,7 @@ class QlikWebSocketClient:
                     "qShowSemantic": True,
                     "qShowSrcTables": True
                 }
-            })
+            }])
             
             fields = []
             
@@ -478,7 +478,7 @@ class QlikWebSocketClient:
     def _get_sheets(self) -> Dict[str, Any]:
         """Get sheets from the app"""
         try:
-            response = self.send_request("CreateSessionObject", {
+            response = self.send_request("CreateSessionObject", [{
                 "qInfo": {
                     "qType": "SheetList"
                 },
@@ -494,7 +494,7 @@ class QlikWebSocketClient:
                         "rows": "/rows"
                     }
                 }
-            })
+            }])
             
             sheets = []
             
@@ -576,7 +576,7 @@ class QlikWebSocketClient:
             }
             
             # Create session object
-            create_response = self.send_request("CreateSessionObject", hypercube_def)
+            create_response = self.send_request("CreateSessionObject", [hypercube_def])
             
             if 'result' in create_response and 'qReturn' in create_response['result']:
                 object_handle = create_response['result']['qReturn']['qHandle']
@@ -711,102 +711,64 @@ class QlikWebSocketClient:
                 return {"success": False, "error": f"Table '{table_name}' has no usable fields"}
 
             print(f"Found {len(table_fields)} fields in table: {table_fields}")
-            
-            # Create a simpler hypercube - limit dimensions to avoid issues
-            max_dimensions = min(len(table_fields), 5)  # Reduce from 10 to 5
-            dimensions = []
-            
-            for i, field in enumerate(table_fields[:max_dimensions]):
-                dimensions.append({
-                    "qDef": {
-                        "qFieldDefs": [field]
-                    },
-                    "qNullSuppression": False
-                })
-            
-            # Add remaining fields as measures (if any)
-            measures = []
-            for field in table_fields[max_dimensions:]:
-                measures.append({
-                    "qDef": {
-                        "qDef": f"Sum([{field}])",
-                        "qLabel": field
-                    }
-                })
-            
-            # Always add Count measure to ensure hypercube is valid
-            if not measures:
-                measures.append({
-                    "qDef": {
-                        "qDef": "Count()",
-                        "qLabel": "Count"
-                    }
-                })
-            
+
+            # Build a STRAIGHT-TABLE hypercube using ALL fields as dimensions.
+            # Using dimensions-only (qMode="S") avoids invalid Sum() measures on text
+            # columns and reliably returns row-level values for CSV / DB / INLINE loads.
             hypercube_def = {
-                "qInfo": {
-                    "qType": "HyperCube"
-                },
+                "qInfo": {"qType": "HyperCube"},
                 "qHyperCubeDef": {
-                    "qDimensions": dimensions,
-                    "qMeasures": measures,
+                    "qMode": "S",
+                    "qDimensions": [
+                        {"qDef": {"qFieldDefs": [f], "qFieldLabels": [f]}, "qNullSuppression": False}
+                        for f in table_fields
+                    ],
+                    "qMeasures": [],
                     "qInitialDataFetch": [{
                         "qTop": 0,
                         "qLeft": 0,
-                        "qWidth": max(len(dimensions) + len(measures), 2),
+                        "qWidth": max(len(table_fields), 1),
                         "qHeight": min(limit, 1000)
                     }],
                     "qSuppressZero": False,
                     "qSuppressMissing": False
                 }
             }
-            
-            print(f"Creating hypercube with {len(dimensions)} dimensions and {len(measures)} measures...")
-            
+
+            print(f"Creating straight-table hypercube with {len(table_fields)} dimensions (all fields) ...")
+
             # Create session object
             try:
-                create_response = self.send_request("CreateSessionObject", hypercube_def)
-                
-                print(f"CreateSessionObject response: {json.dumps(create_response, indent=2)[:500]}")  # Log first 500 chars
-                
+                create_response = self.send_request("CreateSessionObject", [hypercube_def])
+
+                print(f"CreateSessionObject response: {json.dumps(create_response, indent=2)[:500]}")
+
                 if 'result' not in create_response:
-                    # Try alternative approach - use GetObject to read native table
                     print("⚠️ CreateSessionObject failed, trying alternative approach...")
                     return self._get_table_data_alternative(table_name, table_fields, limit, matched_table)
-                
+
                 result = create_response.get('result', {})
                 if 'error' in result:
                     print(f"❌ Hypercube creation error: {result['error']}")
                     return self._get_table_data_alternative(table_name, table_fields, limit, matched_table)
-                
+
                 if 'qReturn' not in result:
                     print(f"❌ No qReturn in response: {result}")
                     return self._get_table_data_alternative(table_name, table_fields, limit, matched_table)
-                
+
                 object_handle = result['qReturn']['qHandle']
                 print(f"✓ Created hypercube with handle: {object_handle}")
-                
+
                 # Get layout
                 layout_response = self.send_request("GetLayout", {}, handle=object_handle)
-                
+
                 rows = []
-                column_names = table_fields[:max_dimensions + len(measures)]
-                
+                column_names = table_fields
+
                 if 'result' in layout_response and 'qLayout' in layout_response['result']:
                     hypercube = layout_response['result']['qLayout'].get('qHyperCube', {})
                     data_pages = hypercube.get('qDataPages', [])
-                    
-                    # for page in data_pages:
-                    #     matrix = page.get('qMatrix', [])
-                    #     for row_data in matrix:
-                    #         row_values = {}
-                    #         for i, cell in enumerate(row_data):
-                    #             if i < len(column_names):
-                    #                 row_values[column_names[i]] = cell.get('qText', '')
-                    #         rows.append(row_values)
 
-
-                    
                 for page in data_pages:
                     matrix = page.get('qMatrix', [])
                     for row_data in matrix:
@@ -831,12 +793,6 @@ class QlikWebSocketClient:
 
                         rows.append(row_values)
 
-
-
-
-
-                    
-                
                 print(f"✓ Retrieved {len(rows)} rows from hypercube")
                 
                 # Destroy session object

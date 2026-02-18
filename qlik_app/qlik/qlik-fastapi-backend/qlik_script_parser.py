@@ -114,18 +114,31 @@ class QlikScriptParser:
     
     @staticmethod
     def _extract_csv_file(filepath: str, table_name: str) -> Dict[str, Any]:
-        """Extract data from CSV file referenced in LOAD statement"""
+        """Extract data from CSV file referenced in LOAD statement.
+
+        IMPORTANT: By default this function WILL NOT read files from the backend
+        filesystem for security and portability. To allow local-file access set
+        the environment variable `QLIK_ALLOW_LOCAL_CSV=true` (NOT recommended
+        for production).
+        """
         try:
             import os
             import glob
-            
+
+            # Guard: do not access server filesystem unless explicitly allowed
+            allow_local = os.getenv("QLIK_ALLOW_LOCAL_CSV", "false").lower() == "true"
+            if not allow_local:
+                # Skip local-file reads — caller should fetch data via the Qlik Engine
+                print(f"⚠️ Skipping local CSV access for {filepath} (table: {table_name}) — local reads are disabled by QLIK_ALLOW_LOCAL_CSV")
+                return None
+
             # Convert Qlik lib path to actual file path
             # lib://DataFiles/Ford_Model_Master.csv -> D:\fordvehicledetails\Ford_Model_Master.csv
             if 'lib://' in filepath:
                 # Extract filename and handle case sensitivity
                 filename = filepath.split('/')[-1]  # Get filename
                 filename_lower = filename.lower()
-                
+
                 # Try common data directories with case-insensitive matching
                 search_dirs = [
                     'd:\\fordvehicledetails',
@@ -141,15 +154,15 @@ class QlikScriptParser:
                     os.getcwd(),
                     os.path.dirname(__file__),
                 ]
-            
+
             csv_content = None
             actual_path = None
-            
+
             # Search for the file with case-insensitive matching
             for search_dir in search_dirs:
                 if not os.path.exists(search_dir):
                     continue
-                
+
                 # Try exact match first
                 exact_path = os.path.join(search_dir, filename)
                 if os.path.exists(exact_path):
@@ -160,7 +173,7 @@ class QlikScriptParser:
                         break
                     except Exception:
                         pass
-                
+
                 # Try case-insensitive match
                 try:
                     for file in os.listdir(search_dir):
@@ -177,19 +190,19 @@ class QlikScriptParser:
                         break
                 except Exception:
                     pass
-            
+
             if not csv_content:
                 print(f"⚠️ CSV file not found: {filepath} (table: {table_name})")
                 return None
-            
+
             # Parse CSV content
             lines = csv_content.strip().split('\n')
             if len(lines) < 2:
                 return None
-            
+
             # First line is headers
             headers = [h.strip() for h in lines[0].split(',')]
-            
+
             # Rest are data rows
             rows = []
             for line in lines[1:]:
@@ -204,10 +217,10 @@ class QlikScriptParser:
                         else:
                             row_dict[header] = ''
                     rows.append(row_dict)
-            
+
             if not rows:
                 return None
-            
+
             print(f"✅ Loaded {len(rows)} rows from CSV: {table_name}")
             return {
                 "table_name": table_name,

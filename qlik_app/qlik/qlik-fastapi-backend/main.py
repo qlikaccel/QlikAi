@@ -1087,13 +1087,31 @@ if SCRIPT_PARSER_AVAILABLE:
             if not script:
                 return "Error: No script found in app"
             
-            # Convert to CSV
+            # First try: Convert script INLINE data to CSV (only INLINE is safe)
             csv_content = QlikScriptParser.convert_to_csv(script, table_name)
-            
-            if not csv_content:
-                return f"Error: Table '{table_name}' not found in script"
-            
-            return csv_content
+
+            if csv_content:
+                return csv_content
+
+            # If script-based conversion failed (e.g. LOAD FROM <lib://...>),
+            # do NOT read files from the backend filesystem — instead fetch
+            # the table data via the Qlik Engine (hypercube / session-object).
+            print(f"⚠️ Script CSV not available for '{table_name}', falling back to Engine API")
+
+            try:
+                engine_result = ws_client.get_table_data(app_id, table_name, limit=1000)
+                if engine_result.get("success") and engine_result.get("rows"):
+                    cols = engine_result.get("columns") or (list(engine_result.get("rows")[0].keys()) if engine_result.get("rows") else [])
+                    lines = [','.join(f'"{c}"' for c in cols)]
+                    for r in engine_result.get("rows"):
+                        lines.append(','.join(f'"{str(r.get(c, ""))}"' for c in cols))
+                    return '\n'.join(lines)
+
+                # If engine also failed, return meaningful message
+                return f"Error: Table '{table_name}' not found in script and not accessible via Engine"
+            except Exception as e:
+                print(f"❌ Engine fallback failed for table '{table_name}': {e}")
+                return f"Error: Failed to retrieve table '{table_name}' via Engine: {str(e)}"
             
         except Exception as e:
             return f"Error: {str(e)}"
