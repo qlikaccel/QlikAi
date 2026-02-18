@@ -128,6 +128,10 @@
     "Ford_Vehicle_Dealer_Junction": {
       "added_at": "2026-02-17T07:34:54.376543",
       "added_timestamp": 1771313694.3765433
+    },
+    "Ford_Vehicle_ALL": {
+      "added_at": "2026-02-18T05:30:14.281881",
+      "added_timestamp": 1771392614.2818813
     }
   },
   "ed92f2f4-7237-4580-9165-fd3a8b37adaf": {
@@ -229,6 +233,24 @@
     "Ford_VIN_Details": {
       "added_at": "2026-02-17T08:13:19.480600",
       "added_timestamp": 1771315999.4806006
+    }
+  },
+  "1c405073-6397-470c-b474-f687e8861d72": {
+    "Salary_Details": {
+      "added_at": "2026-02-18T04:30:04.852383",
+      "added_timestamp": 1771389004.852384
+    },
+    "Office_Details": {
+      "added_at": "2026-02-18T04:30:04.852383",
+      "added_timestamp": 1771389004.852384
+    },
+    "Personnel_Details": {
+      "added_at": "2026-02-18T04:30:04.852383",
+      "added_timestamp": 1771389004.852384
+    },
+    "Employee_Master": {
+      "added_at": "2026-02-18T04:30:04.852383",
+      "added_timestamp": 1771389004.852384
     }
   }
 }
