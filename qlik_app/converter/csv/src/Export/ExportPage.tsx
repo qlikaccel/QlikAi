@@ -50,7 +50,6 @@ export default function ExportPage() {
 
   // Multi-select variables
   const selectedTables: SelectedTable[] = state?.selectedTables || [];
-  const appId = state?.appId || sessionStorage.getItem("appSelected");
 
   const appName = appNameRaw;
 

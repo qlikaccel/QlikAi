@@ -1,6 +1,6 @@
 import "./MultiMigrationPage.css";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useWizard } from "../context/WizardContext";
 
 interface SelectedTableData {
