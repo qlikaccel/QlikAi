@@ -96,51 +96,6 @@ export default function PublishPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Format duration as 00m:00s:000ms
-  // Handle Download Dataset with PDF Report
-  const handleDownloadDataset = async () => {
-    try {
-      console.log("📥 Downloading dataset with PDF report...");
-      
-      // Prepare payload for PDF generation
-      const payload = {
-        table_name: publishedTableName || tableName,
-        row_count: rowCount,
-        column_count: columns.length,
-        columns: columns,
-        app_name: appName
-      };
-
-      // Download PDF
-      const response = await fetch('http://localhost:8000/report/download-pdf', {
-        method: 'POST',
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error?.detail || 'Failed to generate PDF');
-      }
-
-      // Get blob and trigger download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `Validation_Report_${publishedTableName || tableName}_${new Date().toISOString().split('T')[0]}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      console.log('✅ PDF report downloaded successfully');
-    } catch (error) {
-      console.error('❌ Error downloading PDF:', error);
-      alert('Failed to download report PDF: ' + (error instanceof Error ? error.message : String(error)));
-    }
-  };
-
   const formatDuration = (durationMs: number) => {
     const totalSeconds = Math.floor(durationMs / 1000);
     const milliseconds = durationMs % 1000;
@@ -192,7 +147,8 @@ export default function PublishPage() {
     form.append("has_csv", hasCSV ? "true" : "false");
     form.append("has_dax", hasDAX ? "true" : "false");
 
-    const res = await fetch("http://localhost:8000/powerbi/process", {
+    // const res = await fetch("http://localhost:8000/powerbi/process", {
+    const res = await fetch("https://qliksense-xd7f.onrender.com/powerbi/process", {
       method: "POST",
       body: form,
     });
@@ -231,7 +187,8 @@ export default function PublishPage() {
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
-      const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      // const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      const authRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/acquire-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -255,7 +212,8 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
-          const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          const statusRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/status", {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -466,7 +424,8 @@ export default function PublishPage() {
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
 
       // Download PDF
-      const response = await fetch('http://localhost:8000/report/download-pdf', {
+      // const response = await fetch('http://localhost:8000/report/download-pdf', {
+      const response = await fetch('https://qliksense-xd7f.onrender.com/report/download-pdf', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
