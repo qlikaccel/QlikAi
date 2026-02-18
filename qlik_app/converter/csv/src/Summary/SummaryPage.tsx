@@ -2353,7 +2353,7 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
         {/* Left: Chart Section */}
         {Object.keys(allCategoricalCounts).length > 0 && (
           <div className="chart-section">
-            <h4>Top Cities by Sales Value</h4>
+            {/* <h4>Top Cities by Sales Value</h4> */}
             <PieChart data={allCategoricalCounts} title="" />
           </div>
         )}
