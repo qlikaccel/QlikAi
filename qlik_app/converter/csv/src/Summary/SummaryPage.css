@@ -1305,3 +1305,18 @@ PAGE WRAP
   font-weight: 600;
   flex-shrink: 0;
 } 
+
+/* Inline export icon/button shown beside table names for standalone/master tables */
+.inline-export {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.inline-export img { width: 16px; height: 16px; }
+.inline-export:hover { background: rgba(0,0,0,0.04); }

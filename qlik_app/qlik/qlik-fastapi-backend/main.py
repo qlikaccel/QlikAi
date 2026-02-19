@@ -2278,6 +2278,14 @@ import time
 import requests
 import json
 import re
+import base64
+import io
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+import numpy as np
 from qlik_client import QlikClient
 from qlik_websocket_client import QlikWebSocketClient
 from login_validation import router as login_router
@@ -2338,6 +2346,212 @@ def get_qlik_websocket_client():
         return QlikWebSocketClient()
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============= ER DIAGRAM GENERATION =============
+
+def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> bytes:
+    """
+    Generate an ER diagram showing relationships between tables.
+    Master table (star center) is highlighted in gold.
+    """
+    try:
+        fig, ax = plt.subplots(figsize=(11, 8), facecolor='white')
+        ax.set_facecolor('white')
+        ax.set_xlim(-7.5, 7.5)
+        ax.set_ylim(-7.5, 7.5)
+        ax.axis('off')
+        
+        # Normalize tables
+        table_list = []
+        for t in tables:
+            if isinstance(t, str):
+                table_list.append({'name': t, 'fields': []})
+            elif isinstance(t, dict):
+                table_list.append(t)
+        
+        if not table_list:
+            # Empty diagram
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', facecolor='white', bbox_inches='tight', dpi=100)
+            plt.close(fig)
+            buf.seek(0)
+            return buf.getvalue()
+        
+        # Identify master table (if provided) or largest table
+        center_table = master_table
+        if not center_table:
+            # Find table with most fields
+            center_table = max(table_list, key=lambda t: len(t.get('fields', []))).get('name') or table_list[0]['name']
+        
+        # Position: master in center, others in circle
+        positions = {}
+        positions[center_table] = (0, 0)
+        
+        related_tables = [t['name'] for t in table_list if t['name'] != center_table]
+        num_related = len(related_tables)
+        
+        if num_related > 0:
+            radius = 5.5
+            for i, table_name in enumerate(related_tables):
+                angle = (2 * np.pi * i) / num_related
+                x = radius * np.cos(angle)
+                y = radius * np.sin(angle)
+                positions[table_name] = (x, y)
+        
+        # Draw connections first
+        for i, table1 in enumerate(table_list):
+            for table2 in table_list[i+1:]:
+                name1, name2 = table1['name'], table2['name']
+                if name1 in positions and name2 in positions:
+                    # Check if they share fields (common key pattern)
+                    fields1 = set(str(f).lower() if isinstance(f, str) else f.get('name', '').lower() 
+                                 for f in table1.get('fields', []))
+                    fields2 = set(str(f).lower() if isinstance(f, str) else f.get('name', '').lower() 
+                                 for f in table2.get('fields', []))
+                    
+                    if fields1 & fields2:  # Share at least one field
+                        x1, y1 = positions[name1]
+                        x2, y2 = positions[name2]
+                        
+                        # Draw arrow
+                        arrow = FancyArrowPatch(
+                            (x1, y1), (x2, y2),
+                            arrowstyle='<->', mutation_scale=20, linewidth=2,
+                            color='#9ca3af', alpha=0.7, zorder=1
+                        )
+                        ax.add_patch(arrow)
+        
+        # Draw table boxes
+        for table in table_list:
+            name = table['name']
+            x, y = positions.get(name, (0, 0))
+            
+            # Color: gold for master, white for others
+            is_master = (name == center_table)
+            bg_color = '#f59e0b' if is_master else '#ffffff'
+            border_color = '#d97706' if is_master else '#9ca3af'
+            border_width = 3 if is_master else 2
+            
+            # Get fields for sizing
+            fields = table.get('fields', [])
+            field_names = []
+            for f in fields[:4]:
+                if isinstance(f, str):
+                    field_names.append(f)
+                elif isinstance(f, dict):
+                    field_names.append(f.get('name', ''))
+            
+            # Dynamic box sizing based on content
+            # Calculate required height based on number of fields
+            num_fields = len(field_names)
+            field_height = 0.3 * num_fields if num_fields > 0 else 0
+            
+            # Calculate box dimensions with proper padding
+            box_width = 3.2 if is_master else 3.0
+            box_height = max(2.8, 1.2 + field_height + 0.5)  # Min height + table name + fields + padding
+            
+            fancy_box = FancyBboxPatch(
+                (x - box_width/2, y - box_height/2), box_width, box_height,
+                boxstyle="round,pad=0.1",
+                edgecolor=border_color, facecolor=bg_color, 
+                linewidth=border_width, zorder=2
+            )
+            ax.add_patch(fancy_box)
+            
+            # Table name - with word wrapping for long names
+            label_color = 'white' if is_master else '#1f2937'
+            name_fontsize = 12 if is_master else 10
+            
+            # Wrap long table names
+            if len(name) > 20:
+                wrapped_name = '\n'.join([name[i:i+15] for i in range(0, len(name), 15)])
+            else:
+                wrapped_name = name
+                
+            ax.text(x, y + box_height/2 - 0.35, wrapped_name, ha='center', va='top',
+                   fontsize=name_fontsize, fontweight='bold',
+                   color=label_color, zorder=3, wrap=True)
+            
+            # Fields - wrapped text that fits in box
+            if field_names:
+                # Wrap field names if too long
+                wrapped_fields = []
+                for field in field_names:
+                    if len(field) > 18:
+                        wrapped_fields.append(field[:15] + '...')
+                    else:
+                        wrapped_fields.append(field)
+                
+                field_text = '\n'.join(wrapped_fields)
+                field_fontsize = 8 if is_master else 7.5
+                
+                # Position fields below table name
+                field_y_pos = y - 0.2
+                ax.text(x, field_y_pos, field_text, ha='center', va='center',
+                       fontsize=field_fontsize, color=label_color, alpha=0.85, 
+                       zorder=3, wrap=True)
+        
+        # Title
+        ax.text(0, 7.5, 'Entity Relationship Diagram (ER)', 
+               ha='center', va='center',
+               fontsize=14, fontweight='bold', color='#1f2937')
+        
+        # Legend
+        legend_elements = [
+            mpatches.Patch(facecolor='#f59e0b', edgecolor='#d97706', label='Master Table'),
+            mpatches.Patch(facecolor='#ffffff', edgecolor='#9ca3af', label='Related Tables'),
+            mpatches.Patch(facecolor='none', edgecolor='#9ca3af', label='Relationships'),
+        ]
+        ax.legend(handles=legend_elements, loc='lower right', fontsize=10,
+                 framealpha=0.95, edgecolor='#d1d5db')
+        
+        # Save to bytes
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', facecolor='white', bbox_inches='tight', dpi=100)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue()
+        
+    except Exception as e:
+        print(f"Error generating ER diagram: {str(e)}")
+        # Return a simple error diagram
+        fig, ax = plt.subplots(figsize=(10, 6), facecolor='white')
+        ax.text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center',
+               fontsize=12, color='red', transform=ax.transAxes)
+        ax.axis('off')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', facecolor='white', bbox_inches='tight', dpi=100)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue()
+
+
+class ERDiagramRequest(BaseModel):
+    """Request body for ER diagram generation"""
+    tables: List[Dict[str, Any]] = []
+    master_table: Optional[str] = None
+
+
+@app.post("/api/app/{app_id}/schema/base64")
+async def get_er_diagram_base64(app_id: str, request: ERDiagramRequest):
+    """Generate ER diagram and return as base64 PNG"""
+    try:
+        tables = request.tables or []
+        master_table = request.master_table
+        
+        png_bytes = build_er_diagram(tables, master_table)
+        base64_str = base64.b64encode(png_bytes).decode('utf-8')
+        
+        return {
+            "image": base64_str,
+            "format": "png",
+            "app_id": app_id,
+            "tables_count": len(tables),
+            "master_table": master_table
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate ER diagram: {str(e)}")
 
 
 # ============= DAX PARSING & POWER BI HELPERS =============
