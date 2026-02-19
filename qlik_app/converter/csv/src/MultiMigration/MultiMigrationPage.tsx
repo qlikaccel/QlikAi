@@ -2,6 +2,7 @@ import "./MultiMigrationPage.css";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useWizard } from "../context/WizardContext";
+import { API_ENDPOINTS } from "../api/config";
 
 interface SelectedTableData {
   name: string;

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./PublishPage.css";
-import { API_ENDPOINTS } from "../api/config";
 
 // Stepper Component
 interface StepperProps {
