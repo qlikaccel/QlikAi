@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import "./SchemaModal.css";
+import { API_ENDPOINTS } from "../../api/config";
 
 interface SchemaModalProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export default function SchemaModal({
       setError(null);
       try {
         const response = await fetch(
-          `http://127.0.0.1:8000/api/app/${appId}/schema/base64`,
+          API_ENDPOINTS.schemaBase64(appId),
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

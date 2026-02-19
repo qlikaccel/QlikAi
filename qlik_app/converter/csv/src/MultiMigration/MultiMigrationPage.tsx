@@ -150,7 +150,7 @@ export default function MultiMigrationPage() {
         formData.append("has_dax", options.combined ? "true" : "false");
 
         // Send to backend
-        const response = await fetch("http://127.0.0.1:8000/powerbi/process", {
+        const response = await fetch(API_ENDPOINTS.powerbiProcess(), {
           method: "POST",
           body: formData,
           credentials: "include",
