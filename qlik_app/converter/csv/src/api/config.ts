@@ -18,7 +18,7 @@ const getApiBaseUrl = (): string => {
     // qliksense-demo.onrender.com -> qlik-backend-demo.onrender.com
     if (hostname.includes('onrender.com')) {
       // Use the hardcoded backend domain for Render
-      return 'https://qlik-backend-demo.onrender.com';
+      return 'https://qliksense-demo.onrender.com';
     }
   }
   
