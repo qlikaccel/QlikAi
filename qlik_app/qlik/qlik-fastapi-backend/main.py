@@ -2314,6 +2314,7 @@ app.include_router(login_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Local development
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
@@ -2322,13 +2323,15 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "http://127.0.0.1:5175",
         "http://127.0.0.1:5176",
-        # Render deployments
+        # Render deployments - specific domains
         "https://qlik-frontend.onrender.com",
         "https://qlik-sense-cloud.onrender.com",
-        "https://qlikai.onrender.com"
+        "https://qlikai.onrender.com",
+        "https://qliksense-demo.onrender.com",
+        "https://qliksense-xd7f.onrender.com",
     ],
-   
-    allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+|https://.*\.onrender\.com",
+    # Allow any Render domain as fallback
+    allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+|https://[a-zA-Z0-9\-]+\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
