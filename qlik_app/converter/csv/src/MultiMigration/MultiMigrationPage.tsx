@@ -2,7 +2,6 @@ import "./MultiMigrationPage.css";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useWizard } from "../context/WizardContext";
-import { API_ENDPOINTS } from "../api/config";
 
 interface SelectedTableData {
   name: string;
@@ -151,7 +150,8 @@ export default function MultiMigrationPage() {
         formData.append("has_dax", options.combined ? "true" : "false");
 
         // Send to backend
-        const response = await fetch(API_ENDPOINTS.powerbiProcess(), {
+        // const response = await fetch("http://127.0.0.1:8000/powerbi/process", {
+        const response = await fetch("https://qliksense-xd7f.onrender.com/powerbi/process", {
           method: "POST",
           body: formData,
           credentials: "include",

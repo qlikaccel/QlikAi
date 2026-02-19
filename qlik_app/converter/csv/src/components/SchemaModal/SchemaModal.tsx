@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import "./SchemaModal.css";
-import { API_ENDPOINTS } from "../../api/config";
 
 interface SchemaModalProps {
   isOpen: boolean;
@@ -29,7 +28,8 @@ export default function SchemaModal({
       setError(null);
       try {
         const response = await fetch(
-          API_ENDPOINTS.schemaBase64(appId),
+          // `http://127.0.0.1:8000/api/app/${appId}/schema/base64`,
+          `https://qliksense-xd7f.onrender.com/api/app/${appId}/schema/base64`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
