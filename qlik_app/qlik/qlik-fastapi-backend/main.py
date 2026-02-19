@@ -2323,15 +2323,15 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "http://127.0.0.1:5175",
         "http://127.0.0.1:5176",
-        # Render deployments - specific domains
+        # Render deployments - frontend domains
         "https://qlik-frontend.onrender.com",
         "https://qlik-sense-cloud.onrender.com",
         "https://qlikai.onrender.com",
         "https://qliksense-demo.onrender.com",
         "https://qliksense-xd7f.onrender.com",
     ],
-    # Allow any Render domain as fallback
-    allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+|https://[a-zA-Z0-9\-]+\.onrender\.com",
+    # Wildcard Render domains as fallback
+    allow_origin_regex=r"^https://[a-zA-Z0-9\-]+\.onrender\.com$|^http://localhost:\d+$|^http://127\.0\.0\.1:\d+$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

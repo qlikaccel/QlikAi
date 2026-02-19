@@ -4,20 +4,25 @@
  */
 
 const getApiBaseUrl = (): string => {
-  // For remote deployment (Render, Vercel, etc)
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     
-    // If running on Render or any remote domain
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      // Replace frontend domain with backend domain
-      // Example: qliksense-xd7f.onrender.com -> qlik-backend.onrender.com
-      const domain = hostname.replace('qliksense', 'qlik-backend');
-      return `https://${domain}`;
+    // Local development
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://127.0.0.1:8000';
+    }
+    
+    // Render production deployment
+    // Map frontend domain to backend domain
+    // qliksense-xd7f.onrender.com -> qlik-backend-demo.onrender.com
+    // qliksense-demo.onrender.com -> qlik-backend-demo.onrender.com
+    if (hostname.includes('onrender.com')) {
+      // Use the hardcoded backend domain for Render
+      return 'https://qlik-backend-demo.onrender.com';
     }
   }
   
-  // Local development - use localhost
+  // Fallback
   return 'http://127.0.0.1:8000';
 };
 
