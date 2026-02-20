@@ -55,22 +55,34 @@ export default function PublishPage() {
   const navigate = useNavigate();
   const { state } = useLocation() as any;
 
-  // Get data from sessionStorage
+  // Get data from sessionStorage (lightweight metadata) — prefer navigation `state` for large payloads
   const tableName = sessionStorage.getItem("migration_selected_table") || "";
   const appName = sessionStorage.getItem("migration_appName") || sessionStorage.getItem("appName") || "Unknown";
   const hasCSV = sessionStorage.getItem("migration_has_csv") === "true";
   const hasDAX = sessionStorage.getItem("migration_has_dax") === "true";
   const rowCount = Number(sessionStorage.getItem("migration_row_count") || "0");
   const columns = JSON.parse(sessionStorage.getItem("migration_columns") || "[]");
-  
-  // Check if multi-table mode
+
+  // Check if multi-table mode (use metadata key first)
   const tableCount = Number(sessionStorage.getItem("migration_table_count") || "0");
   const isMultiTableMode = tableCount > 0;
-  
+
   // Get export options from navigation state
   const exportOptions = state?.exportOptions || { combined: true, separate: false };
   const isSeparateMode = exportOptions.separate;
-  const selectedTablesToPublish = state?.selectedTables || [];
+
+  // Selected tables to publish: prefer `state.selectedTables` (in-memory), fallback to lightweight metadata
+  const selectedTablesToPublish = state?.selectedTables || (() => {
+    try {
+      const metaJson = sessionStorage.getItem("migration_selected_tables_meta") || sessionStorage.getItem("migration_selected_tables");
+      if (!metaJson) return [];
+      const parsed = JSON.parse(metaJson);
+      // If metadata (array of {name,rowCount,...}) convert to expected shape
+      return parsed.map((p: any) => ({ name: p.name || p.table || "", data: { name: p.name || p.table || "", rows: [] } }));
+    } catch (e) {
+      return [];
+    }
+  })();
 
   const [customTableName, setCustomTableName] = useState(tableName);
   const [datasetURL, setDatasetURL] = useState("");
@@ -147,8 +159,8 @@ export default function PublishPage() {
     form.append("has_csv", hasCSV ? "true" : "false");
     form.append("has_dax", hasDAX ? "true" : "false");
 
-    // const res = await fetch("http://localhost:8000/powerbi/process", {
-    const res = await fetch("https://qliksense-xd7f.onrender.com/powerbi/process", {
+    const res = await fetch("http://localhost:8000/powerbi/process", {
+    // const res = await fetch("https://qliksense-xd7f.onrender.com/powerbi/process", {
       method: "POST",
       body: form,
     });
@@ -187,8 +199,8 @@ export default function PublishPage() {
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
-      // const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
-      const authRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/acquire-token", {
+      const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      // const authRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/acquire-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -212,8 +224,8 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
-          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
-          const statusRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/status", {
+          const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          // const statusRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/status", {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -247,13 +259,14 @@ export default function PublishPage() {
         const publishedResults: any[] = [];
 
         for (let i = 0; i < tableCount; i++) {
-          const csvText = sessionStorage.getItem(`migration_csv_${i}`) || "";
+          const csvText = state?.csvPayloads?.[`migration_csv_${i}`] || sessionStorage.getItem(`migration_csv_${i}`) || "";
           const tableName = selectedTablesToPublish[i]?.name || `Table_${i + 1}`;
           const tableRows = selectedTablesToPublish[i]?.data?.rows || [];
+          const inferredRowCount = tableRows.length || (csvText ? Math.max(0, csvText.split('\n').length - 1) : 0);
 
           if (csvText) {
             console.log(`📤 Publishing table ${i + 1}/${tableCount}: ${tableName}...`);
-            const publishResult = await publishSingleTable(csvText, `-- ${tableName} data`, tableName, tableRows.length);
+            const publishResult = await publishSingleTable(csvText, `-- ${tableName} data`, tableName, inferredRowCount);
             publishedResults.push(publishResult);
           }
         }
@@ -266,7 +279,7 @@ export default function PublishPage() {
 
         setResult({ published_tables: publishedResults });
       } else {
-        // Combined mode or single table - use original logic
+        // Combined mode or single table - use updated logic (prefer navigation state payloads)
         setCurrentStep(0);
         console.log("📦 Step 1: Preparing data...");
         
@@ -275,30 +288,32 @@ export default function PublishPage() {
         let tableNameForPublish = customTableName || "Data";
 
         if (isMultiTableMode) {
-          csvText = sessionStorage.getItem("migration_csv_0") || "";
+          csvText = state?.csvPayloads?.["migration_csv_0"] || sessionStorage.getItem("migration_csv_0") || "";
           let selectedTableNames: string[] = [];
           try {
-            const selectedTablesJson = sessionStorage.getItem("migration_selected_tables");
+            const selectedTablesJson = sessionStorage.getItem("migration_selected_tables") || sessionStorage.getItem("migration_selected_tables_meta");
             if (selectedTablesJson) {
               const tables = JSON.parse(selectedTablesJson);
-              selectedTableNames = tables.map((t: any) => t.name);
+              // `tables` might be full objects or metadata; normalize
+              selectedTableNames = tables.map((t: any) => t.name || t.table || '');
             }
           } catch (e) {
             //
           }
           
-          daxText = `-- Multi-Table Export\n-- Primary Table: ${selectedTableNames[0] || 'Table 1'}\n`;
+          daxText = state?.daxPayloads?.["migration_dax"] || sessionStorage.getItem("migration_dax") || `-- Multi-Table Export\n-- Primary Table: ${selectedTableNames[0] || 'Table 1'}\n`;
           daxText += `-- All Selected Tables: ${selectedTableNames.join(', ')}\n`;
           daxText += `-- Generated: ${new Date().toISOString()}\n\n`;
           daxText += selectedTableNames.map((name, idx) => {
-            const tableSize = sessionStorage.getItem(`migration_csv_${idx}`)?.split('\n').length || 0;
+            const tableCsv = state?.csvPayloads?.[`migration_csv_${idx}`] || sessionStorage.getItem(`migration_csv_${idx}`) || "";
+            const tableSize = tableCsv ? Math.max(0, tableCsv.split('\n').length) : 0;
             return `-- ${name}: ${tableSize - 1} rows`;
           }).join('\n');
 
           tableNameForPublish = selectedTableNames[0] || "Combined_Data";
         } else {
-          csvText = sessionStorage.getItem("migration_csv") || "";
-          daxText = sessionStorage.getItem("migration_dax") || "";
+          csvText = state?.csvPayloads?.["migration_csv"] || sessionStorage.getItem("migration_csv") || "";
+          daxText = state?.daxPayloads?.["migration_dax"] || sessionStorage.getItem("migration_dax") || "";
         }
 
         console.log("📊 CSV Data length:", csvText.length);
@@ -424,8 +439,8 @@ export default function PublishPage() {
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
 
       // Download PDF
-      // const response = await fetch('http://localhost:8000/report/download-pdf', {
-      const response = await fetch('https://qliksense-xd7f.onrender.com/report/download-pdf', {
+      const response = await fetch('http://localhost:8000/report/download-pdf', {
+      // const response = await fetch('https://qliksense-xd7f.onrender.com/report/download-pdf', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)

@@ -3164,13 +3164,14 @@ async def validate_login_alias(payload: dict = Body(...)):
 async def get_table_data(
     app_id: str,
     table_name: str,
-    limit: int = Query(default=100, le=10000, description="Maximum number of rows to return"),
+    limit: int = Query(default=100, le=200000, description="Maximum number of rows to return"),
+    offset: int = Query(default=0, ge=0, description="Row offset for paging"),
     ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
 ):
-    """Get actual data from a specific table with tolerant name matching"""
+    """Get actual data from a specific table with tolerant name matching (supports offset+limit)"""
     try:
         # First attempt as-provided
-        result = ws_client.get_table_data(app_id, table_name, limit)
+        result = ws_client.get_table_data(app_id, table_name, limit, offset)
         if result.get("success", False):
             return result
 
@@ -3189,7 +3190,7 @@ async def get_table_data(
         if not actual_name:
             raise HTTPException(status_code=404, detail=f"Table '{table_name}' not found in app")
 
-        result2 = ws_client.get_table_data(app_id, actual_name, limit)
+        result2 = ws_client.get_table_data(app_id, actual_name, limit, offset)
         if not result2.get("success", False):
             raise HTTPException(status_code=500, detail=result2.get("error", "Failed to get table data"))
         return result2
@@ -3285,7 +3286,7 @@ async def get_table_data_simple(
 async def get_table_data_enhanced(
     app_id: str,
     table_name: str,
-    limit: int = Query(default=100, le=10000, description="Maximum number of rows to return"),
+    limit: int = Query(default=100, le=200000, description="Maximum number of rows to return"),
     ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
 ):
     """

@@ -59,20 +59,26 @@ export default function ExportPage() {
   // Check if any export option is selected (only combined remains)
   const isAnyOptionSelected = options.combined;
 
-  // 🔹 SAVE METADATA IMMEDIATELY ON LOAD
+  // 🔹 SAVE METADATA IMMEDIATELY ON LOAD (avoid writing full row payloads to sessionStorage)
   useEffect(() => {
     if (!isMultiSelect && rows && rows.length > 0) {
-      // Single-select: Save metadata immediately
+      // Single-select: Save lightweight metadata only
       sessionStorage.setItem("migration_selected_table", selectedTable || "");
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
       sessionStorage.setItem("migration_row_count", String(rows.length));
     } else if (isMultiSelect && selectedTables.length > 0) {
-      // Multi-select: Save metadata immediately
-      sessionStorage.setItem("migration_selected_tables", JSON.stringify(selectedTables));
+      // Multi-select: Save metadata ONLY (do NOT serialize full row arrays — causes quota errors)
+      const meta = selectedTables.map((t) => ({
+        name: t.name,
+        rowCount: t.data?.rows?.length || 0,
+        columns: t.data?.rows && t.data.rows.length > 0 ? Object.keys(t.data.rows[0]) : [],
+      }));
+
+      sessionStorage.setItem("migration_selected_tables_meta", JSON.stringify(meta));
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_table_count", String(selectedTables.length));
-      
+
       // Save first table's columns and row count for display on Publish page
       if (selectedTables[0]?.data?.rows && selectedTables[0].data.rows.length > 0) {
         sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(selectedTables[0].data.rows[0])));
@@ -107,6 +113,8 @@ export default function ExportPage() {
   }
 
   // Helper: Save data to sessionStorage (for Continue button) - Single Select
+  // NOTE: we only persist lightweight metadata to sessionStorage here.
+  // Large payloads (CSV/DAX) are passed via navigation state when possible to avoid quota errors.
   const saveDataToSessionStorageSingle = () => {
     if (!rows?.length) return;
 
@@ -116,21 +124,23 @@ export default function ExportPage() {
     sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
     sessionStorage.setItem("migration_row_count", String(rows.length));
 
-    // Save CSV data if export is selected
+    // Try to persist CSV/DAX to sessionStorage but do NOT throw on quota errors
     if (options.combined) {
       const headers = Object.keys(rows[0]);
       const csv = [
         headers.join(","),
-        ...rows.map((r: any) =>
-          headers.map((h) => `"${r[h] ?? ""}"`).join(",")
-        ),
+        ...rows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
       ].join("\n");
-      sessionStorage.setItem("migration_csv", csv);
-      sessionStorage.setItem("migration_has_csv", "true");
-    }
 
-    // Save DAX data if combined export is selected
-    if (options.combined) {
+      try {
+        sessionStorage.setItem("migration_csv", csv);
+        sessionStorage.setItem("migration_has_csv", "true");
+      } catch (e) {
+        console.warn("sessionStorage quota exceeded while saving CSV — will pass CSV in-memory via navigation state instead.", e);
+        sessionStorage.removeItem("migration_csv");
+        sessionStorage.setItem("migration_has_csv", "true");
+      }
+
       const cols = Object.keys(rows[0]);
       const daxLines = [] as string[];
       daxLines.push(`-- DAX export skeleton for table: ${selectedTable}`);
@@ -139,24 +149,31 @@ export default function ExportPage() {
       daxLines.push(`\n-- Sample measure`);
       daxLines.push(`[${selectedTable} Count] = COUNTROWS('${selectedTable}')`);
       const daxContent = daxLines.join("\n");
-      sessionStorage.setItem("migration_dax", daxContent);
-      sessionStorage.setItem("migration_has_dax", "true");
+
+      try {
+        sessionStorage.setItem("migration_dax", daxContent);
+        sessionStorage.setItem("migration_has_dax", "true");
+      } catch (e) {
+        console.warn("sessionStorage quota exceeded while saving DAX — will pass DAX in-memory via navigation state instead.", e);
+        sessionStorage.removeItem("migration_dax");
+        sessionStorage.setItem("migration_has_dax", "true");
+      }
     }
-
-
 
     sessionStorage.setItem("exportComplete", "true");
   };
 
   // Helper: Save data to sessionStorage (for Continue button) - Multi Select
+  // Persist only metadata. Large CSV payloads may be passed in-memory to Publish via navigation state
   const saveDataToSessionStorageMulti = () => {
     try {
-      // Save all selected tables data
-      sessionStorage.setItem("migration_selected_tables", JSON.stringify(selectedTables));
+      // Save lightweight metadata ONLY (do not serialize rows)
+      const meta = selectedTables.map((t) => ({ name: t.name, rowCount: t.data?.rows?.length || 0 }));
+      sessionStorage.setItem("migration_selected_tables_meta", JSON.stringify(meta));
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_table_count", String(selectedTables.length));
 
-      // Save CSV data if export is selected
+      // Save CSV data if export is selected — try/catch to avoid quota errors
       if (options.combined) {
         selectedTables.forEach((table, idx) => {
           const tableRows = table.data?.rows || [];
@@ -164,19 +181,21 @@ export default function ExportPage() {
             const headers = Object.keys(tableRows[0]);
             const csv = [
               headers.join(","),
-              ...tableRows.map((r: any) =>
-                headers.map((h) => `"${r[h] ?? ""}"`).join(",")
-              ),
+              ...tableRows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
             ].join("\n");
-            sessionStorage.setItem(`migration_csv_${idx}`, csv);
+
+            try {
+              sessionStorage.setItem(`migration_csv_${idx}`, csv);
+            } catch (e) {
+              console.warn(`sessionStorage quota exceeded while saving migration_csv_${idx}; skipping persistent save and relying on in-memory navigation state.`, e);
+              sessionStorage.removeItem(`migration_csv_${idx}`);
+            }
           }
         });
 
         sessionStorage.setItem("migration_has_csv", "true");
         sessionStorage.setItem("migration_has_dax", "true");
       }
-
-
 
       sessionStorage.setItem("exportComplete", "true");
     } catch (e) {
@@ -315,23 +334,68 @@ export default function ExportPage() {
           onClick={() => {
             if (isAnyOptionSelected) {
                 setShowError(false);
-                // Save data to sessionStorage before navigating
+                // Save metadata to sessionStorage (lightweight) and prepare in-memory payloads for Publish
                 if (isMultiSelect) {
                   saveDataToSessionStorageMulti();
                 } else {
                   saveDataToSessionStorageSingle();
                 }
 
-                // When multiple tables are provided, we want the publish step to process all related tables.
+                // Prepare export payloads to pass via navigation state (avoids sessionStorage quota issues)
                 const exportOptions = { combined: options.combined, separate: isMultiSelect };
 
-                navigate("/publish", { 
-                  state: { 
-                    appId: state?.appId, 
+                const csvPayloads: Record<string, string> = {};
+                const daxPayloads: Record<string, string> = {};
+
+                if (!isMultiSelect) {
+                  if (rows && rows.length > 0 && options.combined) {
+                    const headers = Object.keys(rows[0]);
+                    const csv = [
+                      headers.join(","),
+                      ...rows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
+                    ].join("\n");
+
+                    const cols = Object.keys(rows[0]);
+                    const daxLines = [] as string[];
+                    daxLines.push(`-- DAX export skeleton for table: ${selectedTable}`);
+                    daxLines.push(`-- Columns:`);
+                    cols.forEach((c) => daxLines.push(`-- ${c}`));
+                    daxLines.push(`\n-- Sample measure`);
+                    daxLines.push(`[${selectedTable} Count] = COUNTROWS('${selectedTable}')`);
+                    const daxContent = daxLines.join("\n");
+
+                    csvPayloads["migration_csv"] = csv;
+                    daxPayloads["migration_dax"] = daxContent;
+                  }
+                } else {
+                  // Multi-table: build CSV payloads for each table (pass in-memory)
+                  selectedTables.forEach((t, idx) => {
+                    const tableRows = t.data?.rows || [];
+                    if (tableRows.length > 0) {
+                      const headers = Object.keys(tableRows[0]);
+                      const csv = [
+                        headers.join(","),
+                        ...tableRows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
+                      ].join("\n");
+                      csvPayloads[`migration_csv_${idx}`] = csv;
+                    }
+                  });
+
+                  // DAX: lightweight generated content (metadata only)
+                  const selectedNames = selectedTables.map((s) => s.name || "");
+                  daxPayloads["migration_dax"] = `-- Multi-Table Export\n-- Primary Table: ${selectedNames[0] || 'Table 1'}\n-- All Selected Tables: ${selectedNames.join(', ')}\n-- Generated: ${new Date().toISOString()}`;
+                }
+
+                // Navigate and pass in-memory CSV/DAX to Publish so we don't rely on sessionStorage for large strings
+                navigate("/publish", {
+                  state: {
+                    appId: state?.appId,
                     appName,
                     exportOptions,
-                    selectedTables: isMultiSelect ? selectedTables : null
-                  } 
+                    selectedTables: isMultiSelect ? selectedTables : null,
+                    csvPayloads,
+                    daxPayloads,
+                  },
                 });
               } else {
                 setShowError(true);

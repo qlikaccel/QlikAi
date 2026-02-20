@@ -380,8 +380,8 @@
 import axios from "axios";
 
 // Use environment variable for production (set by Render), fallback to localhost for dev
-// const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-xd7f.onrender.com";
+const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-xd7f.onrender.com";
 
 // Convert FastAPI response → simple format
 const mapApps = (data: any[]) =>
@@ -452,44 +452,36 @@ export const fetchTables = async (appId: string, tenantUrl?: string) => {
 // ✅ CLEAN TABLE DATA (Only standard endpoint)
 export const fetchTableData = async (
   appId: string,
-  table_Name: string
+  table_Name: string,
+  limit?: number,
+  offset?: number
 ) => {
-  console.log("🔍 Fetching table data from API...");
-  console.log("📍 Table Name:", table_Name);
+  console.log("🔍 Fetching table data from API...", { table: table_Name, limit, offset });
 
   try {
     const url = `${BASE_URL}/applications/${appId}/table/${table_Name}/data`;
-    console.log("URL:", url);
+    const params: any = {};
+    if (limit !== undefined) params.limit = limit;
+    if (offset !== undefined) params.offset = offset;
 
-    const res = await axios.get(url);
+    const res = await axios.get(url, { params });
 
-    if (res.data.success === false) {
+    if (res.data && res.data.success === false) {
       throw new Error(res.data.error || "Failed to fetch data");
     }
 
-    if (res.data.rows) {
-      return res.data.rows;
-    }
-
-    if (Array.isArray(res.data)) {
-      return res.data;
-    }
+    // Support both shapes: { rows: [...] } or direct array
+    if (res.data && res.data.rows) return res.data.rows;
+    if (Array.isArray(res.data)) return res.data;
 
     return [];
   } catch (error: any) {
-    console.error(
-      "❌ Failed to fetch table data:",
-      error.response?.data || error.message
-    );
+    console.error("❌ Failed to fetch table data:", error.response?.data || error.message);
 
     const errorMessage =
-      error.response?.data?.detail ||
-      error.message ||
-      "Could not fetch table data";
+      error.response?.data?.detail || error.message || "Could not fetch table data";
 
-    throw new Error(
-      `Could not fetch table "${table_Name}". Error: ${errorMessage}`
-    );
+    throw new Error(`Could not fetch table "${table_Name}". Error: ${errorMessage}`);
   }
 };
 

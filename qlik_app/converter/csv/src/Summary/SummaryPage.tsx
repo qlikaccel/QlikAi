@@ -1,7 +1,7 @@
 import "./SummaryPage.css";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchTables, fetchTableData } from "../api/qlikApi";
+import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV } from "../api/qlikApi";
 import Csvicon from "../assets/Csvicon.png";
 import { useWizard } from "../context/WizardContext";
 import SchemaModal from "../components/SchemaModal/SchemaModal";
@@ -34,6 +34,11 @@ export default function SummaryPage() {
   const [tableLoading, setTableLoading] = useState(false);
   const [summary, setSummary] = useState<any>(null);
   const [pageLoadTime, setPageLoadTime] = useState<string | null>(null);
+  const [totalRows, setTotalRows] = useState<number>(0); // server-reported total for selected table
+
+  // Maximum rows we'll request from the backend in a single call (matches backend limit)
+  // Raised to match backend cap so large tables (e.g. 12k+) are fully retrieved
+  const SERVER_FETCH_MAX = 200000;
  
   // Relationship / star-schema helpers
   const [mainTable, setMainTable] = useState<string | null>(null); // detected hub table
@@ -201,12 +206,14 @@ export default function SummaryPage() {
     return out;
   }, [rows, tableQuery, orderBy, order]);
  
-  const totalEntries = processedRows.length;
+  // For server-side paging use `totalRows` reported by backend; fall back to local data length
+  const totalEntries = totalRows && totalRows > 0 ? totalRows : processedRows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
   const current = Math.min(currentPage, totalPages);
   const startIndex = totalEntries ? (current - 1) * pageSize : 0;
   const endIndex = Math.min(startIndex + pageSize, totalEntries);
-  const visibleRows = processedRows.slice(startIndex, endIndex);
+  // `processedRows` already contains the data for the current page (server-side), so render it directly
+  const visibleRows = processedRows;
  
   const handleRequestSort = (property: string) => {
     if (orderBy === property) {
@@ -238,6 +245,26 @@ export default function SummaryPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [rows, pageSize, tableQuery]);
+
+  // Server-side paging: fetch the selected page when page/size/table changes
+  useEffect(() => {
+    if (!selectedTable) return;
+
+    const loadPage = async () => {
+      setTableLoading(true);
+      try {
+        const offset = (currentPage - 1) * pageSize;
+        const data = await fetchTableData(appId, selectedTable, pageSize, offset);
+        setRows(data || []);
+      } catch (e) {
+        console.error("❌ Failed to load page:", e);
+      } finally {
+        setTableLoading(false);
+      }
+    };
+
+    loadPage();
+  }, [currentPage, pageSize, selectedTable, appId]);
  
   // Filter the left-side table list when the user types in the table search box
   useEffect(() => {
@@ -430,10 +457,22 @@ export default function SummaryPage() {
     startTimer?.(`/summary/data/${tableName}`);
  
     try {
-      const data = await fetchTableData(appId, tableName);
+      // First read table metadata so we can request a single page and know total rows
+      const meta = await fetchTableDataSimple(appId, tableName).catch(() => null);
+      const total = meta?.row_count || meta?.rowCount || meta?.no_of_rows || 0;
+      setTotalRows(total || 0);
+
+      // Fetch the first page (server-side paging). If total is unknown (0), fetch a single pageSize.
+      const firstPageLimit = Math.min(pageSize, total > 0 ? total : pageSize);
+      if (total > SERVER_FETCH_MAX) {
+        console.warn(`Table ${tableName} contains ${total} rows — UI will page on demand (server capped at ${SERVER_FETCH_MAX})`);
+      }
+
+      const data = await fetchTableData(appId, tableName, firstPageLimit, 0);
       setRows(data || []);
- 
-      // Persist selection for Export fallback
+      setCurrentPage(1);
+
+      // Persist selection (store only current page to avoid huge sessionStorage)
       try {
         sessionStorage.setItem("selectedTable", tableName);
         sessionStorage.setItem("selectedRows", JSON.stringify(data || []));
@@ -484,13 +523,31 @@ export default function SummaryPage() {
   // related-table prefetch is handled when exporting a master table (no per-table cache required here)
  
   // CSV DOWNLOAD
-  const downloadCSV = () => {
-    if (!rows.length) {
+const downloadCSV = async () => {
+    if (!rows.length && !totalRows) {
       alert("No data");
       return;
     }
- 
-    const headers = Object.keys(rows[0]);
+
+    // If the table contains more rows than the current page, download the full table via backend export
+    if (totalRows && totalRows > rows.length) {
+      try {
+        const csv = await exportTableAsCSV(appId, selectedTable);
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${selectedTable || "data"}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        return;
+      } catch (e) {
+        console.error("Export failed, falling back to page CSV:", e);
+      }
+    }
+
+    // Fallback: download current page
+    const headers = Object.keys(rows[0] || {});
     const csv = [
       headers.join(","),
       ...rows.map((r) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
@@ -649,7 +706,11 @@ export default function SummaryPage() {
       if ((tableToExport && tableToExport !== selectedTable) || (!masterRows || masterRows.length === 0)) {
         try {
           setTableLoading(true);
-          const loaded = await fetchTableData(appId, sel);
+          // Request full table rows (use meta to determine exact count)
+          const meta = await fetchTableDataSimple(appId, sel).catch(() => null);
+          const totalRows = meta?.row_count || meta?.rowCount || meta?.no_of_rows || 0;
+          const loadLimit = totalRows > 0 ? Math.min(totalRows, SERVER_FETCH_MAX) : SERVER_FETCH_MAX;
+          const loaded = await fetchTableData(appId, sel, loadLimit);
           masterRows = loaded || [];
           // keep UI selection in sync
           setSelectedTable(sel);
@@ -697,7 +758,11 @@ export default function SummaryPage() {
  
       for (const relName of related) {
         try {
-          const relRows = await fetchTableData(appId, relName);
+          // Load related table fully (bounded to server max)
+          const relMeta = await fetchTableDataSimple(appId, relName).catch(() => null);
+          const relTotal = relMeta?.row_count || relMeta?.rowCount || relMeta?.no_of_rows || 0;
+          const relLimit = relTotal > 0 ? Math.min(relTotal, SERVER_FETCH_MAX) : SERVER_FETCH_MAX;
+          const relRows = await fetchTableData(appId, relName, relLimit);
           const { generateSummaryFromData } = await import("../api/qlikApi");
           const relSummary = generateSummaryFromData(relRows, relName);
           selectedData.push({ name: relName, data: { name: relName, rows: relRows, summary: relSummary } });

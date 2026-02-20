@@ -632,15 +632,16 @@ class QlikWebSocketClient:
             traceback.print_exc()
             return {"success": False, "error": str(e)}
     
-    def get_table_data(self, app_id: str, table_name: str, limit: int = 100) -> Dict[str, Any]:
-        """Get actual data from a specific table with improved hypercube handling"""
+    def get_table_data(self, app_id: str, table_name: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """Get actual data from a specific table with improved hypercube handling.
+        Supports offset/limit paging so callers can request a specific window of rows."""
         try:
             if not self.connected or not self.app_handle:
                 if not self.connect_to_app(app_id):
                     return {"success": False, "error": "Failed to connect to app"}
             
             print(f"\n{'='*60}")
-            print(f"Getting data from table: {table_name}")
+            print(f"Getting data from table: {table_name} (offset={offset} limit={limit})")
             print(f"{'='*60}")
             
             # FIRST: Try script parsing (for CSV and INLINE data) - fastest approach
@@ -651,20 +652,23 @@ class QlikWebSocketClient:
                     script = script_result.get("script", "")
                     try:
                         from qlik_script_parser import QlikScriptParser
-                        table_preview = QlikScriptParser.get_table_preview(script, table_name, limit)
+                        # request up to offset+limit so we can slice the returned rows
+                        table_preview = QlikScriptParser.get_table_preview(script, table_name, offset + (limit if limit and limit>0 else 0))
                         
                         if table_preview.get("success"):
-                            rows = table_preview.get("rows", [])
+                            all_rows = table_preview.get("rows", [])
                             columns = table_preview.get("columns", [])
-                            print(f"✅ Successfully extracted {len(rows)} rows from script")
-                            
+                            print(f"✅ Successfully extracted {len(all_rows)} rows from script")
+
+                            # apply offset/limit slice
+                            window = all_rows[offset: offset + limit] if limit and limit > 0 else all_rows[offset:]
                             self.close()
                             return {
                                 "success": True,
                                 "table_name": table_name,
                                 "columns": columns,
-                                "rows": rows,
-                                "row_count": len(rows),
+                                "rows": window,
+                                "row_count": len(all_rows),
                                 "source": "script"
                             }
                     except Exception as e:
@@ -713,8 +717,7 @@ class QlikWebSocketClient:
             print(f"Found {len(table_fields)} fields in table: {table_fields}")
 
             # Build a STRAIGHT-TABLE hypercube using ALL fields as dimensions.
-            # Using dimensions-only (qMode="S") avoids invalid Sum() measures on text
-            # columns and reliably returns row-level values for CSV / DB / INLINE loads.
+            # Do NOT rely on qInitialDataFetch — we'll page explicitly using GetHyperCubeData
             hypercube_def = {
                 "qInfo": {"qType": "HyperCube"},
                 "qHyperCubeDef": {
@@ -724,12 +727,7 @@ class QlikWebSocketClient:
                         for f in table_fields
                     ],
                     "qMeasures": [],
-                    "qInitialDataFetch": [{
-                        "qTop": 0,
-                        "qLeft": 0,
-                        "qWidth": max(len(table_fields), 1),
-                        "qHeight": min(limit, 1000)
-                    }],
+                    "qInitialDataFetch": [],
                     "qSuppressZero": False,
                     "qSuppressMissing": False
                 }
@@ -759,59 +757,150 @@ class QlikWebSocketClient:
                 object_handle = result['qReturn']['qHandle']
                 print(f"✓ Created hypercube with handle: {object_handle}")
 
-                # Get layout
+                # Get layout to determine total size
                 print(f"Getting layout for hypercube...")
                 layout_response = self.send_request("GetLayout", {}, handle=object_handle)
                 print(f"GetLayout response keys: {layout_response.keys() if isinstance(layout_response, dict) else 'N/A'}")
 
-                rows = []
+                rows: list = []
                 column_names = table_fields
 
+                total_rows = 0
+                n_cols = len(column_names)
                 if 'result' in layout_response and 'qLayout' in layout_response['result']:
                     hypercube = layout_response['result']['qLayout'].get('qHyperCube', {})
-                    data_pages = hypercube.get('qDataPages', [])
-                    print(f"✓ Found {len(data_pages)} data pages")
+                    size = hypercube.get('qSize', {})
+                    total_rows = size.get('qcy', 0) if isinstance(size, dict) else 0
+                    n_cols = size.get('qcx', n_cols) if isinstance(size, dict) else n_cols
+                    print(f"✓ HyperCube reported size: {total_rows} rows × {n_cols} cols")
+                else:
+                    total_rows = 0
 
-                for page in data_pages:
-                    matrix = page.get('qMatrix', [])
-                    print(f"  Processing page with {len(matrix)} rows")
-                    for row_idx, row_data in enumerate(matrix):
-                        row_values = {}
+                # Page through the hypercube starting at `offset` (supports windowed requests)
+                page_size = 1000
+                top = offset if offset and offset > 0 else 0
 
-                        for i, cell in enumerate(row_data):
-                            if i < len(column_names):
+                # Determine the fetch target (stop when we reach this row index)
+                if limit and limit > 0:
+                    target = (offset if offset and offset > 0 else 0) + limit
+                    # If engine reported total_rows, don't go beyond it
+                    if total_rows and total_rows > 0:
+                        target = min(target, total_rows)
+                else:
+                    # No explicit limit: fetch until engine-reported total or until pages run out
+                    target = total_rows if total_rows and total_rows > 0 else None
 
-                                text_value = cell.get('qText')
-                                num_value = cell.get('qNum')
+                # If offset is beyond available rows, return empty result early
+                if total_rows and offset and offset >= total_rows:
+                    print(f"⚠️ Requested offset {offset} >= total_rows {total_rows}; returning empty window")
+                    self.send_request("DestroySessionObject", {"qId": str(object_handle)}, handle=-1)
+                    self.close()
+                    return {
+                        "success": True,
+                        "table_name": table_name,
+                        "columns": column_names,
+                        "rows": [],
+                        "row_count": total_rows,
+                        "source": "hypercube"
+                    }
 
-                                # Prefer text if available
-                                if text_value and text_value != "":
-                                    row_values[column_names[i]] = text_value
+                # Loop and page
+                while True:
+                    try:
+                        # Stop conditions
+                        if target is not None and top >= target:
+                            break
+                        if total_rows and top >= total_rows:
+                            break
 
-                                # If numeric column
-                                elif num_value is not None:
-                                    row_values[column_names[i]] = num_value
+                        # Decide how many rows to request in this page
+                        if target is not None:
+                            rows_to_fetch = min(page_size, max(0, target - top))
+                        else:
+                            rows_to_fetch = page_size
 
-                                else:
-                                    row_values[column_names[i]] = ""
+                        if rows_to_fetch <= 0:
+                            break
 
-                        rows.append(row_values)
+                        page_result = self.send_request(
+                            "GetHyperCubeData",
+                            [
+                                "/qHyperCubeDef",
+                                [
+                                    {
+                                        "qLeft": 0,
+                                        "qTop": top,
+                                        "qWidth": n_cols,
+                                        "qHeight": rows_to_fetch,
+                                    }
+                                ],
+                            ],
+                            handle=object_handle,
+                        )
 
-                print(f"✓ Retrieved {len(rows)} rows from hypercube")
-                if rows and len(rows) > 0:
+                        qPages = (page_result.get('result') or {}).get('qDataPages', []) if isinstance(page_result, dict) else []
+                        if not qPages:
+                            # Some engines return qDataPages at top-level
+                            qPages = page_result.get('qDataPages', []) if isinstance(page_result, dict) else []
+
+                        if not qPages:
+                            print(f"⚠️ No data pages returned for top={top} height={rows_to_fetch}")
+                            break
+
+                        for page in qPages:
+                            matrix = page.get('qMatrix', [])
+                            for row_data in matrix:
+                                row_values = {}
+                                for i, cell in enumerate(row_data):
+                                    if i < len(column_names):
+                                        text_value = cell.get('qText')
+                                        num_value = cell.get('qNum')
+                                        if text_value and text_value != "":
+                                            row_values[column_names[i]] = text_value
+                                        elif num_value is not None:
+                                            row_values[column_names[i]] = num_value
+                                        else:
+                                            row_values[column_names[i]] = None
+                                rows.append(row_values)
+
+                        top += rows_to_fetch
+                        print(f"  Fetched rows {top - rows_to_fetch}–{top} / {total_rows or 'unknown'}")
+
+                        # Safety: stop if we've reached requested limit (when limit given)
+                        if limit and limit > 0 and len(rows) >= limit:
+                            break
+
+                        # If engine reported total rows and we've reached it, stop
+                        if total_rows and top >= total_rows:
+                            break
+
+                    except Exception as e:
+                        print(f"⚠️ Error paging hypercube data: {e}")
+                        break
+
+                # If we somehow fetched more than requested (safety), trim to window
+                if offset and offset > 0:
+                    rows = rows[:limit] if limit and limit > 0 else rows
+
+                print(f"✓ Retrieved {len(rows)} rows from hypercube (target={target})")
+
+
+                print(f"✓ Retrieved {len(rows)} rows from hypercube (target={target})")
+                if rows:
                     print(f"  First row sample: {list(rows[0].items())[:2]}")
-                
+
                 # Destroy session object
                 self.send_request("DestroySessionObject", {"qId": str(object_handle)}, handle=-1)
-                
+
                 self.close()
-                
+
                 return {
                     "success": True,
                     "table_name": table_name,
                     "columns": column_names,
                     "rows": rows,
-                    "row_count": len(rows)
+                    "row_count": len(rows),
+                    "source": "hypercube"
                 }
             except Exception as e:
                 print(f"❌ Exception during hypercube operations: {str(e)}")

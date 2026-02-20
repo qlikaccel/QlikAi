@@ -51,12 +51,13 @@ export default function MultiMigrationPage() {
   // Helper: Save data to sessionStorage (for Continue button)
   const saveDataToSessionStorage = () => {
     try {
-      // Save all selected tables data
-      sessionStorage.setItem("migration_selected_tables", JSON.stringify(selectedTables));
+      // Save lightweight metadata only (do NOT serialize full row arrays)
+      const meta = selectedTables.map((t) => ({ name: t.name, rowCount: t.data?.rows?.length || 0 }));
+      sessionStorage.setItem("migration_selected_tables_meta", JSON.stringify(meta));
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_table_count", String(selectedTables.length));
 
-      // Save CSV data if combined export is selected
+      // Save CSV data if combined export is selected (try/catch to avoid quota exceptions)
       if (options.combined) {
         selectedTables.forEach((table, idx) => {
           const rows = table.data?.rows || [];
@@ -64,11 +65,15 @@ export default function MultiMigrationPage() {
             const headers = Object.keys(rows[0]);
             const csv = [
               headers.join(","),
-              ...rows.map((r: any) =>
-                headers.map((h) => `"${r[h] ?? ""}"`).join(",")
-              ),
+              ...rows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
             ].join("\n");
-            sessionStorage.setItem(`migration_csv_${idx}`, csv);
+
+            try {
+              sessionStorage.setItem(`migration_csv_${idx}`, csv);
+            } catch (e) {
+              console.warn(`sessionStorage quota exceeded while saving migration_csv_${idx}; skipping persistent save.`, e);
+              sessionStorage.removeItem(`migration_csv_${idx}`);
+            }
           }
         });
 

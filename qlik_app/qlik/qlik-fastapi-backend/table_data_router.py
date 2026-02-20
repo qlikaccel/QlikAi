@@ -32,7 +32,7 @@ router = APIRouter()
 # ─────────────────────────────────────────────────────────────
 QLIK_BASE_URL   = "https://your-tenant.us.qlikcloud.com"   # ← your tenant URL
 QLIK_API_KEY    = "your-api-key-here"                      # ← your API key
-MAX_ROWS        = 5000   # max rows to pull per table
+MAX_ROWS        = 200000   # max rows to pull per table (increased to support large exports) 
 
 
 # ─────────────────────────────────────────────────────────────
@@ -58,13 +58,13 @@ async def get_table_data(
     app_id: str  = Path(..., description="QlikSense app GUID"),
     table_name: str = Path(..., description="Table name as defined in load script"),
     limit: int  = Query(MAX_ROWS, le=MAX_ROWS),
+    offset: int = Query(0, ge=0, description="Row offset for paging"),
 ):
     """
-    Fetch actual row data for a QlikSense table, whether loaded via
-    INLINE or FROM [lib://DataFiles/...].
+    Fetch actual row data for a QlikSense table, supports offset+limit paging.
     """
     try:
-        result = await fetch_table_via_engine(app_id, table_name, limit)
+        result = await fetch_table_via_engine(app_id, table_name, limit, offset)
         
         return result
     except Exception as e:
@@ -79,13 +79,14 @@ async def fetch_table_via_engine(
     app_id: str,
     table_name: str,
     limit: int = MAX_ROWS,
+    offset: int = 0,
 ) -> TableDataResponse:
     """
     Uses the Qlik Engine JSON API (WebSocket) to:
     1. Open the app
     2. Get all field names for the requested table
     3. Build a HyperCube with those fields
-    4. Page through all rows and return them
+    4. Page through rows starting at `offset` and return up to `limit`
     """
 
     ws_url = (
@@ -162,13 +163,28 @@ async def fetch_table_via_engine(
 
         logger.info(f"✅ HyperCube size: {total} rows × {n_cols} cols")
 
-        # ── Step 5: Page through all rows ─────────────────────
+        # ── Step 5: Page through rows starting at `offset` ───
         all_rows: List[Dict[str, Any]] = []
         page_size = 1000
-        top = 0
+        top = offset if offset and offset > 0 else 0
 
-        while top < min(total, limit):
-            rows_to_fetch = min(page_size, limit - top)
+        # Compute the fetch target (don't go beyond `total` if engine reported it)
+        target = (offset or 0) + (limit or MAX_ROWS)
+        if total and total > 0:
+            target = min(target, total)
+
+        # If offset is beyond the available rows, return empty list
+        if total and offset and offset >= total:
+            return TableDataResponse(
+                table_name=table_name,
+                columns=fields,
+                rows=[],
+                total_rows=total,
+                source="engine_hypercube",
+            )
+
+        while top < target:
+            rows_to_fetch = min(page_size, target - top)
 
             page_result = await rpc(
                 "GetHyperCubeData",
@@ -192,9 +208,6 @@ async def fetch_table_via_engine(
                     row: Dict[str, Any] = {}
                     for col_idx, cell in enumerate(qRow):
                         col_name = fields[col_idx] if col_idx < len(fields) else f"col_{col_idx}"
-                        # qText  = display string  (always use this)
-                        # qNum   = numeric value   (use for numbers)
-                        # qIsNull = whether the cell is NULL
                         if cell.get("qIsNull"):
                             row[col_name] = None
                         elif cell.get("qText", "") not in ("", "-"):
