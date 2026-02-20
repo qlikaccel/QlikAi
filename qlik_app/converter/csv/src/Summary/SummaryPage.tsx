@@ -1336,26 +1336,32 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
  
   // Generate executive summary text
   const generateExecutiveSummary = () => {
-    const topCity = topCityValue || "leading";
     const topEntries = Object.entries(allCategoricalCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3);
-   
-    const bulletPoints = [];
-   
+
+    const bulletPoints: string[] = [];
+
+    // Always show the high-level totals
     bulletPoints.push(`Dataset contains ${totalVehicles} vehicles with total sales value of ${salesM}M`);
-    bulletPoints.push(`${topCity} is the leading city with ${topCityCount} vehicles`);
-   
+
+    // Only include top-city information when we have a valid city and a non-zero count
+    if (topCityValue && topCityCount > 0) {
+      bulletPoints.push(`${topCityValue} is the leading city with ${topCityCount} vehicles`);
+    }
+
     if (topEntries.length > 0) {
       const topItem = topEntries[0];
-      const percentage = ((topItem[1] / totalVehicles) * 100).toFixed(1);
-      bulletPoints.push(`Primary market segment: ${topItem[0].split(': ')[1]} (${percentage}% of dataset)`);
+      const percentage = ((topItem[1] / (totalVehicles || 1)) * 100).toFixed(1);
+      const label = String(topItem[0]).includes(': ') ? topItem[0].split(': ')[1] : String(topItem[0]);
+      bulletPoints.push(`Primary market segment: ${label} (${percentage}% of dataset)`);
     }
-   
+
     if (topEntries.length > 1) {
       const secondItem = topEntries[1];
-      const percentage = ((secondItem[1] / totalVehicles) * 100).toFixed(1);
-      bulletPoints.push(`Secondary segment: ${secondItem[0].split(': ')[1]} (${percentage}% of dataset)`);
+      const percentage = ((secondItem[1] / (totalVehicles || 1)) * 100).toFixed(1);
+      const label = String(secondItem[0]).includes(': ') ? secondItem[0].split(': ')[1] : String(secondItem[0]);
+      bulletPoints.push(`Secondary segment: ${label} (${percentage}% of dataset)`);
     }
    
     bulletPoints.push(`Strong market performance with significant concentration in key geographical regions`);
