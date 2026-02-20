@@ -2353,10 +2353,14 @@ def get_qlik_websocket_client():
 
 # ============= ER DIAGRAM GENERATION =============
 
-def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> bytes:
+def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None, master_border_color: Optional[str] = None, master_border_width: Optional[int] = None) -> bytes:
     """
     Generate an ER diagram showing relationships between tables.
-    Master table (star center) is highlighted in gold.
+    Master table (star center) may be highlighted by border color/width.
+
+    Parameters
+    - master_border_color: optional hex color for the master table border (e.g. '#1d4ed8')
+    - master_border_width: optional integer for master border thickness
     """
     try:
         fig, ax = plt.subplots(figsize=(11, 8), facecolor='white')
@@ -2402,6 +2406,10 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
                 y = radius * np.sin(angle)
                 positions[table_name] = (x, y)
         
+        # Theme defaults for master border color/width (can be overridden by request)
+        mb_border_color = master_border_color or "#1d74d8"
+        mb_border_width = master_border_width if master_border_width is not None else 3
+        
         # Draw connections first
         for i, table1 in enumerate(table_list):
             for table2 in table_list[i+1:]:
@@ -2421,7 +2429,7 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
                         arrow = FancyArrowPatch(
                             (x1, y1), (x2, y2),
                             arrowstyle='<->', mutation_scale=20, linewidth=2,
-                            color='#9ca3af', alpha=0.7, zorder=1
+                            color="#000000", alpha=0.7, zorder=1
                         )
                         ax.add_patch(arrow)
         
@@ -2430,11 +2438,12 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
             name = table['name']
             x, y = positions.get(name, (0, 0))
             
-            # Color: gold for master, white for others
+            # Color: highlight master with blue border only; related = white
             is_master = (name == center_table)
-            bg_color = "#ffffff" if is_master else '#ffffff'
-            border_color = '#00a2ff' if is_master else "#000000"
-            border_width = 3 if is_master else 2
+            # Master = white fill + blue/dynamic border
+            bg_color = "#ffffff"
+            border_color = mb_border_color if is_master else "#000000"
+            border_width = mb_border_width if is_master else 2
             
             # Get fields for sizing
             fields = table.get('fields', [])
@@ -2451,7 +2460,7 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
             field_height = 0.3 * num_fields if num_fields > 0 else 0
             
             # Calculate box dimensions with proper padding
-            box_width = 3.2 if is_master else 3.0
+            box_width = 4.2 if is_master else 3.0
             box_height = max(2.8, 1.2 + field_height + 0.5)  # Min height + table name + fields + padding
             
             fancy_box = FancyBboxPatch(
@@ -2462,8 +2471,8 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
             )
             ax.add_patch(fancy_box)
             
-            # Table name - with word wrapping for long names
-            label_color =  "#000000" if is_master else "#000000"
+            # Table name - use dark labels since background is white
+            label_color = "#000000"
             name_fontsize = 12 if is_master else 10
             
             # Wrap long table names
@@ -2502,7 +2511,7 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
         
         # Legend
         legend_elements = [
-            mpatches.Patch(facecolor="#ffffff", edgecolor='#00a2ff', label='Master Table'),
+            mpatches.Patch(facecolor="#ffffff", edgecolor=mb_border_color, label='Master Table'),
             mpatches.Patch(facecolor='#ffffff', edgecolor='#0f0f10', label='Related Tables'),
             mpatches.Patch(facecolor='none', edgecolor='#040404', label='Relationships'),
         ]
@@ -2534,6 +2543,9 @@ class ERDiagramRequest(BaseModel):
     """Request body for ER diagram generation"""
     tables: List[Dict[str, Any]] = []
     master_table: Optional[str] = None
+    # Optional styling overrides (hex color + border width)
+    master_border_color: Optional[str] = None
+    master_border_width: Optional[int] = None
 
 
 @app.post("/api/app/{app_id}/schema/base64")
@@ -2543,7 +2555,12 @@ async def get_er_diagram_base64(app_id: str, request: ERDiagramRequest):
         tables = request.tables or []
         master_table = request.master_table
         
-        png_bytes = build_er_diagram(tables, master_table)
+        png_bytes = build_er_diagram(
+            tables,
+            master_table,
+            master_border_color=request.master_border_color,
+            master_border_width=request.master_border_width,
+        )
         base64_str = base64.b64encode(png_bytes).decode('utf-8')
         
         return {

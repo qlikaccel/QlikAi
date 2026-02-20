@@ -7,6 +7,9 @@ interface SchemaModalProps {
   appId?: string;
   masterTable?: string;
   tables?: any[];
+  // optional styling props (defaults to blue border)
+  masterBorderColor?: string;
+  masterBorderWidth?: number;
 }
 
 export default function SchemaModal({
@@ -15,6 +18,8 @@ export default function SchemaModal({
   appId = "demo",
   masterTable,
   tables = [],
+  masterBorderColor = '#1d4ed8',
+  masterBorderWidth = 3,
 }: SchemaModalProps) {
   const [schemaImage, setSchemaImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,15 +32,22 @@ export default function SchemaModal({
       setLoading(true);
       setError(null);
       try {
+        // use local backend when running on localhost (dev); otherwise use deployed API
+        const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+          ? 'http://127.0.0.1:8000'
+          : 'https://qliksense-xd7f.onrender.com';
+
         const response = await fetch(
-          // `http://127.0.0.1:8000/api/app/${appId}/schema/base64`,
-          `https://qliksense-xd7f.onrender.com/api/app/${appId}/schema/base64`,
+          `${apiBase}/api/app/${appId}/schema/base64`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               tables: tables,
               master_table: masterTable,
+              // ensure backend receives desired styling (white fill + blue border)
+              master_border_color: masterBorderColor,
+              master_border_width: masterBorderWidth,
             }),
           }
         );

@@ -103,7 +103,6 @@ export default function PublishPage() {
   const [csvData, setCSVData] = useState<string>("");
   const [daxData, setDAXData] = useState<string>("");
   // Preview shows the first N rows (no pagination on Publish page)
-  const PREVIEW_LIMIT = 10;
 
   // Auto-publish on page load
   useEffect(() => {
