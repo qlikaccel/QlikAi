@@ -67,8 +67,8 @@ export default function ExportPage() {
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
       const totalFromState = state?.totalRows ?? null;
-      sessionStorage.setItem("migration_row_count", String(totalFromState ?? rows.length));
-    } else if (isMultiSelect && selectedTables.length > 0) {
+      sessionStorage.setItem("migration_row_count", String(totalFromState ?? rows.length));      // single table -> table_count = 1
+      sessionStorage.setItem("migration_table_count", "1");    } else if (isMultiSelect && selectedTables.length > 0) {
       // Multi-select: Save metadata ONLY (do NOT serialize full row arrays — causes quota errors)
       const meta = selectedTables.map((t) => ({
         name: t.name,
@@ -241,8 +241,8 @@ export default function ExportPage() {
           </div>
 
           <div className="info-box">
-            <span className="label">Total Columns</span>
-            <span className="value">{isMultiSelect ? (selectedTables[0]?.data?.rows?.length ? Object.keys(selectedTables[0].data.rows[0]).length : 0) : (rows && rows.length > 0 ? Object.keys(rows[0]).length : 0)}</span>
+            <span className="label">Tables Exported</span>
+            <span className="value">{isMultiSelect ? selectedTables.length : 1}</span>
           </div>
         </>
       </div>

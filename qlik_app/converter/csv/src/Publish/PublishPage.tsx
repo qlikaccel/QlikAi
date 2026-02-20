@@ -469,7 +469,8 @@ export default function PublishPage() {
       // Build comparison metrics with additional data
       const qlikMetrics = {
         row_count: qlikRowCount,
-        column_count: qlikColumnCount,
+        table_count: (tableCount > 0 ? tableCount : (state?.selectedTables ? state.selectedTables.length : 1)),
+        // column_count: qlikColumnCount,
         column_names: qlikColumns,
         total_records: qlikRowCount,
         // certification_status: "Pre-Migration",
@@ -478,7 +479,8 @@ export default function PublishPage() {
       
       const powerbiMetrics = {
         row_count: powerbiRowCount,
-        column_count: powerbiColumnCount,
+        table_count: (tableCount > 0 ? tableCount : (state?.selectedTables ? state.selectedTables.length : 1)),
+        // column_count: powerbiColumnCount,
         column_names: powerbiColumns,
         total_records: powerbiRowCount,
         // certification_status: "Published to Power BI",
@@ -515,7 +517,11 @@ export default function PublishPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `Validation_Report_${publishedTableName || tableName}_${new Date().toISOString().split('T')[0]}.pdf`;
+      // link.download = `Validation_Report_${publishedTableName || tableName}_${new Date().toISOString().split('T')[0]}.pdf`;
+       // sanitize filename to remove unicode and special chars
+      const baseName = publishedTableName || tableName;
+      const safeName = baseName.replace(/[^a-zA-Z0-9 _-]/g, '');
+      link.download = `Validation_Reconciliation_Report_${safeName}_${new Date().toISOString().split('T')[0]}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -735,8 +741,8 @@ export default function PublishPage() {
               <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{rowCount}</div>
             </div>
             <div className="info-box">
-              <div className="info-box-label">Total Columns</div>
-              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{columns.length}</div>
+              <div className="info-box-label">Tables Exported</div>
+              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{tableCount > 0 ? tableCount : (isMultiTableMode ? tableCount : 1)}</div>
             </div>
             <div className="info-box">
               <div className="info-box-label">Status</div>
@@ -812,25 +818,8 @@ export default function PublishPage() {
             </tbody>
           </table>
 
-          <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
-            📊 Dataset Details
-          </h2>
-          <table style={{ width: '100%', borderCollapse: 'collapse', margin: '15px 0' }}>
-            <tbody>
-              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
-                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Total Rows:</td>
-                <td style={{ padding: '10px 12px' }}>{rowCount}</td>
-              </tr>
-              <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #e0e0e0' }}>
-                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Total Columns:</td>
-                <td style={{ padding: '10px 12px' }}>{columns.length}</td>
-              </tr>
-              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
-                <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>Export Format:</td>
-                <td style={{ padding: '10px 12px' }}>{hasCSV ? "✓ CSV" : "✗"} {hasDAX ? "✓ DAX" : "✗"}</td>
-              </tr>
-            </tbody>
-          </table>
+          {/* Dataset Details section removed per user request */}
+          <div style={{ height: '8px' }} />
 
           <h2 style={{ color: '#0078d4', marginTop: '25px', marginBottom: '15px', fontSize: '18px', borderLeft: '4px solid #0078d4', paddingLeft: '10px' }}>
             📑 Columns ({columns.length} total)

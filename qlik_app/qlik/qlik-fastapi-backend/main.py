@@ -4780,7 +4780,7 @@ async def download_pdf(payload: dict = Body(...)):
                 return str(value)
         
         # Get all metric keys - sorted for consistent order
-        metric_order = ['row_count', 'column_count', 'total_records', 'certification_status']
+        metric_order = ['row_count', 'table_count', 'column_count', 'total_records', 'certification_status']
         excluded_keys = {'column_names', 'timestamp'}  # Explicitly exclude these
         all_keys = set(list(qlik_metrics.keys()) + list(powerbi_metrics.keys()))
         
@@ -4843,7 +4843,25 @@ async def download_pdf(payload: dict = Body(...)):
         # ==============================
         
         pdf_buffer = io.BytesIO()
-        doc = SimpleDocTemplate(pdf_buffer, pagesize=pagesizes.A4, topMargin=0.4*inch, bottomMargin=0.4*inch, leftMargin=0.4*inch, rightMargin=0.4*inch)
+        # doc = SimpleDocTemplate(pdf_buffer, pagesize=pagesizes.A4, topMargin=0.4*inch, bottomMargin=0.4*inch, leftMargin=0.4*inch, rightMargin=0.4*inch) 
+        # Set proper PDF metadata with title (no unicode chars in filename metadata)
+        pdf_title = f"Validation & Reconciliation Report "
+        # {table_name}
+        pdf_author = "Qlik to Power BI Migration Tool"
+        pdf_subject = f"Data Migration Report for {app_name}"
+       
+        doc = SimpleDocTemplate(
+            pdf_buffer,
+            pagesize=pagesizes.A4,
+            topMargin=0.4*inch,
+            bottomMargin=0.4*inch,
+            leftMargin=0.4*inch,
+            rightMargin=0.4*inch,
+            title=pdf_title,
+            author=pdf_author,
+            subject=pdf_subject
+        )
+ 
         elements = []
         styles = getSampleStyleSheet()
         
@@ -4903,6 +4921,10 @@ async def download_pdf(payload: dict = Body(...)):
         
         elements.append(Paragraph(summary_text, normal_style))
         elements.append(Spacer(1, 0.18 * inch))
+        
+        # Dataset Details table intentionally removed (per user request).
+        # (Table omitted; metrics comparison follows)
+        elements.append(Spacer(1, 0.05 * inch))
         
         # Main Metrics Comparison Table
         elements.append(Paragraph("METRICS COMPARISON", heading_style))
@@ -4992,7 +5014,7 @@ async def download_pdf(payload: dict = Body(...)):
         for d in all_metrics:
             if d["metric"] == "total_records":
                 variance_str = str(d["variance"]) if d["variance"] is not None else "—"
-                metric_name = "Total Amount"
+                metric_name = "Total Records"
                 
                 diff_table_data.append([
                     metric_name,
