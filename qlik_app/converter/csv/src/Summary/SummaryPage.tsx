@@ -243,8 +243,10 @@ export default function SummaryPage() {
   }, [totalPages, current]);
  
   useEffect(() => {
+    // Reset to first page only when page size or search query changes.
+    // Do NOT reset when `rows` changes (server-side paging uses `rows` to hold the current page).
     setCurrentPage(1);
-  }, [rows, pageSize, tableQuery]);
+  }, [pageSize, tableQuery]);
 
   // Server-side paging: fetch the selected page when page/size/table changes
   useEffect(() => {
@@ -746,6 +748,7 @@ const downloadCSV = async () => {
             appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
             selectedTable: sel,
             rows: masterRows || [],
+            totalRows: (masterRows || []).length || 0,
           },
         });
         return;
@@ -1094,6 +1097,7 @@ const downloadCSV = async () => {
                                 appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
                                 selectedTable: sel,
                                 rows: masterRows || [],
+                                totalRows: (masterRows || []).length || 0,
                               },
                             });
                             return;

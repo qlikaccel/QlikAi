@@ -2432,8 +2432,8 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
             
             # Color: gold for master, white for others
             is_master = (name == center_table)
-            bg_color = '#f59e0b' if is_master else '#ffffff'
-            border_color = '#d97706' if is_master else '#9ca3af'
+            bg_color = "#ffffff" if is_master else '#ffffff'
+            border_color = '#00a2ff' if is_master else "#000000"
             border_width = 3 if is_master else 2
             
             # Get fields for sizing
@@ -2463,7 +2463,7 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
             ax.add_patch(fancy_box)
             
             # Table name - with word wrapping for long names
-            label_color = 'white' if is_master else '#1f2937'
+            label_color =  "#000000" if is_master else "#000000"
             name_fontsize = 12 if is_master else 10
             
             # Wrap long table names
@@ -2495,16 +2495,16 @@ def build_er_diagram(tables: List[Dict[str, Any]], master_table: str = None) -> 
                        fontsize=field_fontsize, color=label_color, alpha=0.85, 
                        zorder=3, wrap=True)
         
-        # Title
-        ax.text(0, 7.5, 'Entity Relationship Diagram (ER)', 
-               ha='center', va='center',
-               fontsize=14, fontweight='bold', color='#1f2937')
+        # # Title
+        # ax.text(0, 7.5, 'Entity Relationship Diagram (ER)', 
+        #        ha='center', va='center',
+        #        fontsize=14, fontweight='bold', color='#1f2937')
         
         # Legend
         legend_elements = [
-            mpatches.Patch(facecolor='#f59e0b', edgecolor='#d97706', label='Master Table'),
-            mpatches.Patch(facecolor='#ffffff', edgecolor='#9ca3af', label='Related Tables'),
-            mpatches.Patch(facecolor='none', edgecolor='#9ca3af', label='Relationships'),
+            mpatches.Patch(facecolor="#ffffff", edgecolor='#00a2ff', label='Master Table'),
+            mpatches.Patch(facecolor='#ffffff', edgecolor='#0f0f10', label='Related Tables'),
+            mpatches.Patch(facecolor='none', edgecolor='#040404', label='Relationships'),
         ]
         ax.legend(handles=legend_elements, loc='lower right', fontsize=10,
                  framealpha=0.95, edgecolor='#d1d5db')

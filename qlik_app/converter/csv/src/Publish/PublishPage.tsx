@@ -60,7 +60,10 @@ export default function PublishPage() {
   const appName = sessionStorage.getItem("migration_appName") || sessionStorage.getItem("appName") || "Unknown";
   const hasCSV = sessionStorage.getItem("migration_has_csv") === "true";
   const hasDAX = sessionStorage.getItem("migration_has_dax") === "true";
-  const rowCount = Number(sessionStorage.getItem("migration_row_count") || "0");
+  const sessionRowCount = Number(sessionStorage.getItem("migration_row_count") || "0");
+  // Prefer navigation state (totalRows or selectedTables) — fall back to sessionStorage
+  const navTotalRows = state?.totalRows ?? (state?.selectedTables ? state.selectedTables.reduce((s: number, t: any) => s + (t.data?.rows?.length || 0), 0) : 0);
+  const rowCount = navTotalRows || sessionRowCount;
   const columns = JSON.parse(sessionStorage.getItem("migration_columns") || "[]");
 
   // Check if multi-table mode (use metadata key first)
@@ -99,6 +102,8 @@ export default function PublishPage() {
   const [publishedTableName, setPublishedTableName] = useState<string>("");
   const [csvData, setCSVData] = useState<string>("");
   const [daxData, setDAXData] = useState<string>("");
+  // Preview shows the first N rows (no pagination on Publish page)
+  const PREVIEW_LIMIT = 10;
 
   // Auto-publish on page load
   useEffect(() => {
@@ -377,17 +382,72 @@ export default function PublishPage() {
       let qlikColumnCount = 0;
       let qlikColumns: string[] = [];
       
-      // Get raw CSV data from sessionStorage or component state
-      const csvContent = sessionStorage.getItem("migration_csv") || sessionStorage.getItem("migration_csv_0") || csvData || "";
-      
-      if (csvContent) {
-        const csvLines = csvContent.trim().split('\n').filter(line => line.trim());
-        if (csvLines.length > 0) {
-          // First line = headers
-          qlikColumns = csvLines[0].split(',').map(col => col.trim());
+      // Prefer reported totalRows from navigation state or previously computed `rowCount`.
+      // This ensures the PDF/report shows the correct *total* even when the in-memory CSV contains only a page.
+      const navReportedTotal = state?.totalRows ?? rowCount ?? 0;
+      if (navReportedTotal && navReportedTotal > 0) {
+        qlikRowCount = navReportedTotal;
+        // attempt to infer columns if CSV or selectedTables available
+        const csvContentForCols =
+          state?.csvPayloads?.["migration_csv"] ||
+          state?.csvPayloads?.["migration_csv_0"] ||
+          csvData ||
+          null;
+        if (csvContentForCols) {
+          const csvLinesForCols = csvContentForCols.trim().split('\n').filter((line: string) => line.trim());
+          if (csvLinesForCols.length > 0) {
+            qlikColumns = csvLinesForCols[0].split(',').map((col: string) => col.trim());
+            qlikColumnCount = qlikColumns.length;
+          }
+        } else if (state?.selectedTables && state.selectedTables.length > 0) {
+          const first = state.selectedTables[0];
+          qlikColumns = first?.data?.rows?.length ? Object.keys(first.data.rows[0]) : (columns || []);
           qlikColumnCount = qlikColumns.length;
-          // Remaining lines = data rows
-          qlikRowCount = csvLines.length - 1;
+        } else {
+          qlikColumns = columns || [];
+          qlikColumnCount = qlikColumns.length;
+        }
+      } else {
+        // Fallback: derive counts from CSV / state.selectedTables / sessionStorage (previous behaviour)
+        const csvContent =
+          state?.csvPayloads?.["migration_csv"] ||
+          state?.csvPayloads?.["migration_csv_0"] ||
+          (() => {
+            const firstCsvKey = Object.keys(state?.csvPayloads || {}).find(k => k.startsWith('migration_csv_'));
+            return firstCsvKey ? state.csvPayloads[firstCsvKey] : null;
+          })() ||
+          sessionStorage.getItem("migration_csv") ||
+          sessionStorage.getItem("migration_csv_0") ||
+          csvData ||
+          "";
+
+        if (csvContent) {
+          const csvLines = csvContent.trim().split('\n').filter((line: string) => line.trim());
+          if (csvLines.length > 0) {
+            // First line = headers
+            qlikColumns = csvLines[0].split(',').map((col: string) => col.trim());
+            qlikColumnCount = qlikColumns.length;
+            // Remaining lines = data rows
+            qlikRowCount = csvLines.length - 1;
+          }
+        } else if (state?.selectedTables && state.selectedTables.length > 0) {
+          qlikRowCount = state.selectedTables.reduce((sum: number, t: any) => sum + (t.data?.rows?.length || 0), 0);
+          const first = state.selectedTables[0];
+          qlikColumns = first?.data?.rows?.length ? Object.keys(first.data.rows[0]) : (columns || []);
+          qlikColumnCount = qlikColumns.length;
+        } else if (sessionStorage.getItem('migration_selected_tables_meta')) {
+          try {
+            const meta = JSON.parse(sessionStorage.getItem('migration_selected_tables_meta') || '[]');
+            qlikRowCount = (meta || []).reduce((sum: number, t: any) => sum + (t.rowCount || 0), 0);
+            qlikColumns = columns || [];
+            qlikColumnCount = qlikColumns.length;
+          } catch (e) {
+            // fallback to session-stored migration_row_count
+            qlikRowCount = Number(sessionStorage.getItem('migration_row_count') || 0);
+          }
+        } else {
+          // fallback to session-stored migration_row_count if nothing else is present
+          qlikRowCount = Number(sessionStorage.getItem('migration_row_count') || 0);
         }
       }
       
@@ -684,6 +744,9 @@ export default function PublishPage() {
               <div className="info-box-value">✅ Published</div>
             </div>
           </div>
+
+        
+        
 
           {/* ACTION BUTTONS */}
           <div className="btn-group">
