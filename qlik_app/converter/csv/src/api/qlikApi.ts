@@ -380,8 +380,8 @@
 import axios from "axios";
 
 // Use environment variable for production (set by Render), fallback to localhost for dev
-// const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-xd7f.onrender.com";
+const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-xd7f.onrender.com";
 
 // Convert FastAPI response → simple format
 const mapApps = (data: any[]) =>
@@ -662,4 +662,62 @@ export const downloadCSVFile = (
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+};
+
+// ✅ DOWNLOAD M QUERY - Convert Qlik to PowerBI M Query
+export const downloadMQuery = async (appId: string, tableName?: string) => {
+  try {
+    const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+    
+    console.log("📍 Fetching M Query for app:", appId, "table:", tableName);
+    
+    // Build URL with optional table parameter
+    let url = `${BASE_URL}/api/migration/full-pipeline?app_id=${appId}`;
+    if (tableName) {
+      url += `&table_name=${encodeURIComponent(tableName)}`;
+    }
+    
+    // Call the full pipeline endpoint
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Failed to generate M Query");
+    }
+
+    const data = await response.json();
+    
+    if (!data.m_query) {
+      throw new Error("No M Query generated");
+    }
+
+    // Download the M Query as a file
+    const fileName = tableName 
+      ? `powerbi_query_${appId}_${tableName}.m`
+      : `powerbi_query_${appId}.m`;
+    
+    const blob = new Blob([data.m_query], { type: "text/plain;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url_obj = URL.createObjectURL(blob);
+    
+    link.setAttribute("href", url_obj);
+    link.setAttribute("download", fileName);
+    link.style.visibility = "hidden";
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    console.log("✅ M Query downloaded successfully!");
+    return data;
+  } catch (error: any) {
+    console.error("❌ Failed to download M Query:", error);
+    alert(`Error: ${error.message}\n\nCheck browser console for details.`);
+    throw error;
+  }
 };

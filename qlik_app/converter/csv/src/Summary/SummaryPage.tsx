@@ -1,7 +1,7 @@
 import "./SummaryPage.css";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV } from "../api/qlikApi";
+import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, downloadMQuery } from "../api/qlikApi";
 import Csvicon from "../assets/Csvicon.png";
 import { useWizard } from "../context/WizardContext";
 import SchemaModal from "../components/SchemaModal/SchemaModal";
@@ -44,6 +44,7 @@ export default function SummaryPage() {
   const [mainTable, setMainTable] = useState<string | null>(null); // detected hub table
   const [relations, setRelations] = useState<Record<string, string[]>>({}); // name -> related table names
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
+  const [downloadingMQuery, setDownloadingMQuery] = useState(false);
  
   // Helper: build relation graph from `tables` (uses fields when available)
   const buildRelations = (tableList: TableInfo[]) => {
@@ -564,6 +565,30 @@ const downloadCSV = async () => {
     a.click();
     window.URL.revokeObjectURL(url);
   };
+
+  // ✅ DOWNLOAD M QUERY - Convert Qlik to PowerBI M Query for selected table only
+  const handleDownloadMQuery = async () => {
+    if (!appId) {
+      alert("No app selected");
+      return;
+    }
+
+    if (!selectedTable) {
+      alert("Please select a table first");
+      return;
+    }
+
+    try {
+      setDownloadingMQuery(true);
+      console.log("📍 Starting M Query download for app:", appId, "table:", selectedTable);
+      await downloadMQuery(appId, selectedTable);
+      console.log("✅ M Query downloaded successfully for table:", selectedTable);
+    } catch (error) {
+      console.error("❌ Failed to download M Query:", error);
+    } finally {
+      setDownloadingMQuery(false);
+    }
+  };
  
   // Compute master table per-prefix (heuristic: prefer name containing "fact/master/main", else use largest field count)
   const masterMap = useMemo(() => {
@@ -872,7 +897,7 @@ const downloadCSV = async () => {
             <p>👈 Select a table on the left to view its data</p>
           </div>
         )}
- 
+        
         {selectedTable && (
           <>
  
@@ -911,6 +936,42 @@ const downloadCSV = async () => {
                     }}
                   >
                       Schema
+                  </button>
+            
+                  <button
+                    onClick={handleDownloadMQuery}
+                    disabled={downloadingMQuery}
+                    title="Download as PowerBI M Query"
+                    style={{
+                      marginLeft: '8px',
+                      padding: '6px 12px',
+                      fontSize: '12px',
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: downloadingMQuery ? 'not-allowed' : 'pointer',
+                      fontWeight: '500',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s ease',
+                      opacity: downloadingMQuery ? 0.6 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!downloadingMQuery) {
+                        const target = e.currentTarget as HTMLButtonElement;
+                        target.style.backgroundColor = '#059669';
+                        target.style.transform = 'scale(1.05)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      const target = e.currentTarget as HTMLButtonElement;
+                      target.style.backgroundColor = '#10b981';
+                      target.style.transform = 'scale(1)';
+                    }}
+                  >
+                      {downloadingMQuery ? '⏳ Converting...' : '⬇️ M Query'}
                   </button>
                 </h2>
                 {pageLoadTime && (
@@ -1412,6 +1473,7 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
           </ul>
         </div>
       </div>
+
     </div>
   );
 };

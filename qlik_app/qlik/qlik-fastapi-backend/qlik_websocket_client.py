@@ -1054,6 +1054,58 @@ class QlikWebSocketClient:
                 "columns": table_fields[:10]
             }
     
+    def _get_app_script_websocket(self, app_id: str) -> Dict[str, Any]:
+        """
+        Fetch the actual app script via WebSocket Engine API
+        Returns the real loadscript with all tables and definitions
+        """
+        try:
+            print(f"\n📍 WebSocket: Connecting to app {app_id[:8]}...")
+            
+            # Connect to the app
+            if not self.connect_to_app(app_id):
+                return {
+                    "success": False,
+                    "error": "Could not connect to app",
+                    "script": "",
+                    "tables": []
+                }
+            
+            print("📍 WebSocket: Requesting GetScript...")
+            # Get the script using the existing method
+            script_result = self._get_app_script()
+            
+            if script_result.get("success"):
+                print(f"✅ WebSocket: Script retrieved ({len(script_result.get('script', ''))} chars)")
+                return {
+                    "success": True,
+                    "app_name": app_id,
+                    "script": script_result.get("script", ""),
+                    "tables": script_result.get("tables", []),
+                    "method": "websocket_engine_api"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": script_result.get("error", "Unknown error"),
+                    "script": "",
+                    "tables": []
+                }
+        except Exception as e:
+            print(f"❌ WebSocket script fetch error: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "script": "",
+                "tables": []
+            }
+        finally:
+            # Close connection
+            try:
+                self.close()
+            except:
+                pass
+    
     def close(self):
         """Close WebSocket connection"""
         if self.ws:

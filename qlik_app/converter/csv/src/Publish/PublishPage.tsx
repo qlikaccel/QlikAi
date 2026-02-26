@@ -93,6 +93,14 @@ export default function PublishPage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [statusBoxes, setStatusBoxes] = useState({ columns: false, powerbi: false, finished: false });
   const [result, setResult] = useState<any>(null);
+  const [desktopBundle, setDesktopBundle] = useState<any>(null);
+  const [desktopBundleLoading, setDesktopBundleLoading] = useState(false);
+  const [desktopBundleError, setDesktopBundleError] = useState<string>("");
+  const [xmlaSemanticLoading, setXmlaSemanticLoading] = useState(false);
+  const [xmlaSemanticError, setXmlaSemanticError] = useState<string>("");
+  const [xmlaSemanticResult, setXmlaSemanticResult] = useState<any>(null);
+  const [showXmlaDiagram, setShowXmlaDiagram] = useState(false);
+  const [bundlePathCopied, setBundlePathCopied] = useState(false);
 
   const [copied, setCopied] = useState(false);
   const [publishStartTime, setPublishStartTime] = useState<Date | null>(null);
@@ -163,8 +171,8 @@ export default function PublishPage() {
     form.append("has_csv", hasCSV ? "true" : "false");
     form.append("has_dax", hasDAX ? "true" : "false");
 
-    // const res = await fetch("http://localhost:8000/powerbi/process", {
-    const res = await fetch("https://qliksense-xd7f.onrender.com/powerbi/process", {
+    const res = await fetch("http://localhost:8000/powerbi/process", {
+    // const res = await fetch("https://qliksense-xd7f.onrender.com/powerbi/process", {
       method: "POST",
       body: form,
     });
@@ -203,8 +211,8 @@ export default function PublishPage() {
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
-      // const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
-      const authRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/acquire-token", {
+      const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      // const authRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/acquire-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -228,8 +236,8 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
-          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
-          const statusRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/status", {
+          const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          // const statusRes = await fetch("https://qliksense-xd7f.onrender.com/powerbi/login/status", {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -500,8 +508,8 @@ export default function PublishPage() {
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
 
       // Download PDF
-      // const response = await fetch('http://localhost:8000/report/download-pdf', {
-      const response = await fetch('https://qliksense-xd7f.onrender.com/report/download-pdf', {
+      const response = await fetch('http://localhost:8000/report/download-pdf', {
+      // const response = await fetch('https://qliksense-xd7f.onrender.com/report/download-pdf', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -538,6 +546,199 @@ export default function PublishPage() {
     if (datasetURL) {
       window.open(datasetURL, "_blank");
     }
+  };
+
+  const resolveWorkspaceId = () => {
+    const resultWorkspaceId =
+      result?.dataset?.workspaceId ||
+      result?.published_tables?.[0]?.workspaceId ||
+      "";
+    if (resultWorkspaceId) return resultWorkspaceId;
+
+    const urlMatch = datasetURL.match(/groups\/([^/?#]+)/i);
+    return urlMatch?.[1] || "";
+  };
+
+  const resolveAppId = () => {
+    return state?.appId || sessionStorage.getItem("appSelected") || "";
+  };
+
+  const toCsvSample = (
+    csvText: string,
+    maxRows: number = 150,
+    maxChars: number = 120000
+  ) => {
+    const text = (csvText || "").trim();
+    if (!text) return "";
+
+    const lines = text.split(/\r?\n/);
+    if (lines.length === 0) return "";
+
+    const sampledLines = [lines[0]]; // header
+    for (let i = 1; i < lines.length && sampledLines.length <= maxRows; i++) {
+      if (!lines[i]?.trim()) continue;
+      sampledLines.push(lines[i]);
+    }
+
+    let sampled = sampledLines.join("\n");
+    if (sampled.length > maxChars) {
+      sampled = sampled.slice(0, maxChars);
+    }
+    return sampled;
+  };
+
+  const collectCsvPayloadMap = () => {
+    const payloadMap: Record<string, string> = {};
+    // Keep multipart form payload safely below 1MB parser limit.
+    let remainingBudget = 650000;
+
+    if (isMultiTableMode) {
+      const totalTables = Math.max(tableCount, selectedTablesToPublish.length);
+      for (let i = 0; i < totalTables; i++) {
+        if (remainingBudget <= 2000) break;
+
+        const tableNameForCsv = selectedTablesToPublish[i]?.name || `Table_${i + 1}`;
+        const csvText =
+          state?.csvPayloads?.[`migration_csv_${i}`] ||
+          sessionStorage.getItem(`migration_csv_${i}`) ||
+          "";
+
+        const sampled = toCsvSample(csvText, 120, Math.min(100000, remainingBudget));
+        if (sampled.trim()) {
+          payloadMap[tableNameForCsv] = sampled;
+          remainingBudget -= sampled.length + tableNameForCsv.length + 32;
+        }
+      }
+      return payloadMap;
+    }
+
+    const singleCsv =
+      state?.csvPayloads?.["migration_csv"] ||
+      sessionStorage.getItem("migration_csv") ||
+      state?.csvPayloads?.["migration_csv_0"] ||
+      sessionStorage.getItem("migration_csv_0") ||
+      "";
+    const singleTableName = customTableName || tableName || "Data";
+    const sampledSingle = toCsvSample(singleCsv, 200, 250000);
+    if (sampledSingle.trim()) {
+      payloadMap[singleTableName] = sampledSingle;
+    }
+    return payloadMap;
+  };
+
+  const generateXmlaSemanticModel = async () => {
+    try {
+      setXmlaSemanticLoading(true);
+      setXmlaSemanticError("");
+      setXmlaSemanticResult(null);
+      setShowXmlaDiagram(false);
+
+      const appId = resolveAppId();
+      const workspaceId = resolveWorkspaceId();
+
+      if (!appId) {
+        throw new Error("Missing app ID. Please restart from app selection.");
+      }
+      if (!workspaceId) {
+        throw new Error("Missing workspace ID. Publish to cloud first, then enable semantic model.");
+      }
+
+      const datasetNameRaw = publishedTableName || customTableName || tableName || "Model_Master";
+      const datasetName = `${datasetNameRaw.replace(/\s+/g, "_")}_Semantic`;
+      const csvPayloadMap = collectCsvPayloadMap();
+
+      const form = new FormData();
+      form.append("app_id", appId);
+      form.append("dataset_name", datasetName);
+      form.append("workspace_id", workspaceId);
+      if (Object.keys(csvPayloadMap).length > 0) {
+        const csvPayloadJson = JSON.stringify(csvPayloadMap);
+        // Hard guard: avoid multipart part-size failures from large JSON payloads.
+        if (csvPayloadJson.length <= 850000) {
+          form.append("csv_payload_json", csvPayloadJson);
+        } else {
+          console.warn("XMLA CSV payload too large, sending schema-only mode.");
+        }
+      }
+
+      const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
+        method: "POST",
+        body: form,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || "Failed to create XMLA semantic model");
+      }
+
+      setXmlaSemanticResult(data);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setXmlaSemanticError(msg);
+    } finally {
+      setXmlaSemanticLoading(false);
+    }
+  };
+
+  const generateDesktopCloudBundle = async () => {
+    try {
+      setDesktopBundleLoading(true);
+      setDesktopBundleError("");
+      setDesktopBundle(null);
+
+      const appId = resolveAppId();
+      const workspaceId = resolveWorkspaceId();
+
+      if (!appId) {
+        throw new Error("Missing app ID. Please restart from app selection.");
+      }
+
+      if (!workspaceId) {
+        throw new Error("Missing workspace ID. Publish to cloud first, then generate desktop bundle.");
+      }
+
+      const datasetNameRaw = publishedTableName || customTableName || tableName || "Model_Master";
+      const datasetName = datasetNameRaw.replace(/\s+/g, "_");
+
+      const params = new URLSearchParams({
+        app_id: appId,
+        dataset_name: datasetName,
+        workspace_id: workspaceId,
+        publish_mode: "desktop_cloud",
+      });
+
+      const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
+        method: "POST",
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || "Failed to generate Desktop+Cloud bundle");
+      }
+
+      if (!data?.desktop_bundle?.bundle_dir) {
+        throw new Error("Desktop bundle response missing bundle path");
+      }
+
+      setDesktopBundle(data.desktop_bundle);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setDesktopBundleError(msg);
+    } finally {
+      setDesktopBundleLoading(false);
+    }
+  };
+
+  const copyBundlePath = () => {
+    const path = desktopBundle?.bundle_dir;
+    if (!path) return;
+
+    navigator.clipboard.writeText(path).then(() => {
+      setBundlePathCopied(true);
+      setTimeout(() => setBundlePathCopied(false), 2000);
+    }).catch(() => {
+      // Ignore clipboard errors
+    });
   };
 
   return (
@@ -759,16 +960,215 @@ export default function PublishPage() {
               onClick={openInPowerBI}
               className="btn btn-small btn-success"
             >
-              ☁️ Open in Power BI
+              Open in Power BI
+            </button>
+            <button
+              onClick={generateXmlaSemanticModel}
+              className="btn btn-small btn-primary"
+              disabled={xmlaSemanticLoading}
+            >
+              {xmlaSemanticLoading ? "Enabling Semantic..." : "Enable Semantic Model (XMLA)"}
+            </button>
+            <button
+              onClick={generateDesktopCloudBundle}
+              className="btn btn-small btn-primary"
+              disabled={desktopBundleLoading}
+            >
+              {desktopBundleLoading ? "Building Bundle..." : "Desktop + Cloud Bundle"}
             </button>
             <button
               onClick={downloadDataset}
               className="btn btn-small btn-warning"
             >
-              📥 Download Report
+              Download Report
             </button>
           </div>
 
+          {desktopBundleError && (
+            <div style={{
+              marginTop: "12px",
+              padding: "10px 12px",
+              borderRadius: "6px",
+              backgroundColor: "#fff5f5",
+              color: "#b42318",
+              border: "1px solid #fecaca",
+              fontSize: "13px"
+            }}>
+              Desktop bundle error: {desktopBundleError}
+            </div>
+          )}
+
+          {xmlaSemanticError && (
+            <div style={{
+              marginTop: "12px",
+              padding: "10px 12px",
+              borderRadius: "6px",
+              backgroundColor: "#fff5f5",
+              color: "#b42318",
+              border: "1px solid #fecaca",
+              fontSize: "13px"
+            }}>
+              XMLA semantic model error: {xmlaSemanticError}
+            </div>
+          )}
+
+          {xmlaSemanticResult?.links?.workspace && (
+            <div style={{
+              marginTop: "14px",
+              padding: "12px",
+              borderRadius: "8px",
+              backgroundColor: "#ecfdf3",
+              border: "1px solid #86efac"
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: "8px", color: "#14532d" }}>
+                XMLA semantic model created in cloud
+              </div>
+              <div style={{ fontSize: "12px", color: "#14532d", marginBottom: "6px" }}>
+                Model name: <strong>{xmlaSemanticResult?.dataset_name || "N/A"}</strong>
+              </div>
+              <div style={{ fontSize: "12px", color: "#14532d", marginBottom: "8px" }}>
+                This mode builds an enhanced semantic model from Qlik schema + CSV metadata without Desktop.
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={xmlaSemanticResult?.links?.workspace || ""}
+                  className="url-input"
+                />
+                <button
+                  onClick={() => window.open(xmlaSemanticResult?.links?.workspace, "_blank")}
+                  className="btn btn-small"
+                  style={{
+                    padding: "8px 12px",
+                    minWidth: "120px",
+                    height: "45px",
+                    backgroundColor: "#16a34a",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "13px",
+                  }}
+                >
+                  Open Workspace
+                </button>
+              </div>
+              {xmlaSemanticResult?.links?.dataset && (
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "8px" }}>
+                  <input
+                    type="text"
+                    readOnly
+                    value={xmlaSemanticResult?.links?.dataset || ""}
+                    className="url-input"
+                  />
+                  <button
+                    onClick={() => window.open(xmlaSemanticResult?.links?.dataset, "_blank")}
+                    className="btn btn-small"
+                    style={{
+                      padding: "8px 12px",
+                      minWidth: "120px",
+                      height: "45px",
+                      backgroundColor: "#15803d",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "13px",
+                    }}
+                  >
+                    Open Model
+                  </button>
+                  <button
+                    onClick={() => setShowXmlaDiagram((v) => !v)}
+                    className="btn btn-small"
+                    style={{
+                      padding: "8px 12px",
+                      minWidth: "120px",
+                      height: "45px",
+                      backgroundColor: "#0f766e",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "13px",
+                    }}
+                  >
+                    {showXmlaDiagram ? "Hide ER Diagram" : "View ER Diagram"}
+                  </button>
+                </div>
+              )}
+              {!xmlaSemanticResult?.links?.dataset && (
+                <div style={{ fontSize: "12px", color: "#14532d", marginTop: "8px" }}>
+                  Dataset link unavailable. Use workspace search with the model name shown above.
+                </div>
+              )}
+              {showXmlaDiagram && xmlaSemanticResult?.er_diagram && (
+                <div style={{ marginTop: "10px" }}>
+                  <div style={{ fontSize: "12px", color: "#14532d", marginBottom: "6px" }}>
+                    Mermaid ER diagram (all tables + inferred relationships)
+                  </div>
+                  <textarea
+                    readOnly
+                    value={xmlaSemanticResult.er_diagram}
+                    style={{
+                      width: "100%",
+                      minHeight: "180px",
+                      borderRadius: "6px",
+                      border: "1px solid #86efac",
+                      padding: "10px",
+                      fontFamily: "monospace",
+                      fontSize: "12px",
+                      color: "#14532d",
+                      backgroundColor: "#f0fdf4",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {desktopBundle?.bundle_dir && (
+            <div style={{
+              marginTop: "14px",
+              padding: "12px",
+              borderRadius: "8px",
+              backgroundColor: "#f0f9ff",
+              border: "1px solid #bae6fd"
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: "8px", color: "#0c4a6e" }}>
+                Desktop + Cloud bundle generated
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={desktopBundle.bundle_dir}
+                  className="url-input"
+                />
+                <button
+                  onClick={copyBundlePath}
+                  className="btn btn-small"
+                  style={{
+                    padding: "8px 12px",
+                    minWidth: "90px",
+                    height: "45px",
+                    backgroundColor: bundlePathCopied ? "#27ae60" : "#3498db",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "13px",
+                  }}
+                >
+                  {bundlePathCopied ? "Copied" : "Copy Path"}
+                </button>
+              </div>
+              <div style={{ marginTop: "8px", fontSize: "12px", color: "#0c4a6e" }}>
+                Open the bundle README file and publish with Power BI Desktop to cloud.
+              </div>
+            </div>
+          )}
           {/* COMPLETION MESSAGE */}
           <div className="completion-message">
             🎉 Your dataset is now live in Power BI! You can start creating reports and dashboards with your data.
@@ -906,3 +1306,4 @@ export default function PublishPage() {
   );
 
 };
+

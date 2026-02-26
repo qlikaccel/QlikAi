@@ -1,42 +1,87 @@
-# import sys
-# import os
-# sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+"""
+Qlik Cloud to Power BI Migration Backend
 
-# from fastapi import FastAPI, HTTPException, Depends, Query, UploadFile, File, BackgroundTasks, Form
-# from fastapi.middleware.cors import CORSMiddleware
-# from fastapi.responses import HTMLResponse, PlainTextResponse
-# from typing import List, Dict, Any, Optional
-# import threading
-# import time
-# import requests
-# import json
-# import re
-# from qlik_client import QlikClient
-# from qlik_websocket_client import QlikWebSocketClient
-# from login_validation import router as login_router
-# from processor import PowerBIProcessor
-# from table_tracker import enhance_tables_with_timestamps
-# from powerbi_service_delegated import PowerBIService, infer_schema_from_rows
-# from powerbi_auth import get_auth_manager
-# from pydantic import BaseModel
+Complete 6-stage pipeline implementation
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from fastapi import FastAPI, Query, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+
+# Import routers
+from login_validation import router as login_router
+from migration_api import router as migration_router
+from qlik_websocket_client import QlikWebSocketClient
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Qlik to Power BI 6-Stage Migration API",
+    version="1.0.0",
+    description="Extract → Infer → Normalize → XMLA Write → TOM Create → ER Diagram"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "https://qlik-frontend.onrender.com",
+        "https://qlik-sense-cloud.onrender.com",
+    ],
+    allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+|https://.*\.onrender\.com",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(login_router)
+app.include_router(migration_router)
+
+# Root endpoint
+@app.get("/")
+def root():
+    return {
+        "api": "Qlik to Power BI 6-Stage Migration",
+        "version": "1.0.0",
+        "endpoints": {
+            "login": "/powerbi/login/acquire-token",
+            "publish": "/api/migration/publish-table",
+            "preview": "/api/migration/preview-migration",
+            "diagram": "/api/migration/view-diagram",
+            "help": "/api/migration/pipeline-help",
+            "docs": "/docs"
+        }
+    }
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 
-# qlik_client = QlikClient()
-
-# # Try to import script parser, but make it optional
-# try:
-#     from qlik_script_parser import QlikScriptParser
-#     SCRIPT_PARSER_AVAILABLE = True
-# except ImportError:
-#     SCRIPT_PARSER_AVAILABLE = False
-#     print("WARNING: qlik_script_parser not found. Script extraction endpoints will be disabled.")
-
-# app = FastAPI(title="Qlik Sense Cloud API", version="2.0.0")
-
-# app.include_router(login_router)
-
-# # CORS Middleware
-# app.add_middleware(
+if __name__ == "__main__":
+    import uvicorn
+    logger.info("Starting 6-Stage Qlik-to-Power BI Migration API...")
+    logger.info("Available endpoints:")
+    logger.info("  POST /api/migration/publish-table - Publish Qlik table to Power BI")
+    logger.info("  POST /api/migration/preview-migration - Preview migration")
+    logger.info("  GET /api/migration/view-diagram - View ER diagram")
+    logger.info("  GET /api/migration/pipeline-help - API help")
+    logger.info("  GET /docs - Interactive API documentation")
+    logger.info("Server starting at http://127.0.0.1:8000")
+    
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
 #     CORSMiddleware,
 #     allow_origins=[
 #         "http://localhost:5173",
@@ -66,11 +111,11 @@
 #     except ValueError as e:
 #         raise HTTPException(status_code=500, detail=str(e))
 
-# def get_qlik_websocket_client():
-#     try:
-#         return QlikWebSocketClient()
-#     except ValueError as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+def get_qlik_websocket_client():
+    try:
+        return QlikWebSocketClient()
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # # ============= DAX PARSING & POWER BI HELPERS =============
@@ -570,29 +615,29 @@
 
 
 
-# @app.get("/applications/{app_id}/tables")
-# async def get_app_tables(app_id: str, include_script: bool = Query(default=False), ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
-#     try:
-#         result = ws_client.get_app_tables_simple(app_id)
-#         if not result.get("success", False):
-#             raise HTTPException(status_code=500, detail=result.get("error", "Failed to get tables"))
+@app.get("/applications/{app_id}/tables")
+async def get_app_tables(app_id: str, include_script: bool = Query(default=False), ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
+    try:
+        result = ws_client.get_app_tables_simple(app_id)
+        if not result.get("success", False):
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to get tables"))
        
-#         # Get tables and enhance with timestamp information
-#         tables = result.get("tables", [])
-#         enhanced_tables = enhance_tables_with_timestamps(app_id, tables)
+        # Get tables and enhance with timestamp information
+        tables = result.get("tables", [])
+        enhanced_tables = enhance_tables_with_timestamps(app_id, tables)
        
-#         response = {
-#             "success": True,
-#             "app_id": result.get("app_id"),
-#             "tables": enhanced_tables
-#         }
-#         if include_script:
-#             response["script"] = result.get("script", "")
-#         return response
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to get tables: {str(e)}")
+        response = {
+            "success": True,
+            "app_id": result.get("app_id"),
+            "tables": enhanced_tables
+        }
+        if include_script:
+            response["script"] = result.get("script", "")
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get tables: {str(e)}")
 
 
 # @app.get("/applications/{app_id}/script")
@@ -2309,6 +2354,7 @@ except ImportError:
 app = FastAPI(title="Qlik Sense Cloud API", version="2.0.0")
 
 app.include_router(login_router)
+app.include_router(migration_router)
 
 # CORS Middleware
 app.add_middleware(
