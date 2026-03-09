@@ -62,7 +62,7 @@ export default function SummaryPage() {
   // AI Executive Summary 
   const [aiSummaryBullets, setAiSummaryBullets] = useState<string[]>([]);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
-  const [aiSummaryError, setAiSummaryError] = useState<string>("");
+  const [_aiSummaryError, setAiSummaryError] = useState<string>("");
 
 
  
@@ -1741,7 +1741,6 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
  
   // Combine ALL categorical data into one pie chart
   const allCategoricalCounts: Record<string, number> = {};
-  let topCityValue = "";
   let topCityCount = 0;
   const cityCount: Record<string, number> = {};
  
@@ -1761,7 +1760,6 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
           cityCount[strValue] = (cityCount[strValue] || 0) + 1;
           if (cityCount[strValue] > topCityCount) {
             topCityCount = cityCount[strValue];
-            topCityValue = strValue;
           }
         }
       }
@@ -1769,52 +1767,8 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
   });
  
   // Calculate metrics
-  const totalVehicles = rows.length;
-  const totalSales = rows.reduce((sum, row) => {
-    const salesVal = Object.values(row).find(v => {
-      const num = Number(v);
-      return !isNaN(num) && num > 100;
-    });
-    return sum + (Number(salesVal) || 0);
-  }, 0);
-  const salesM = (totalSales / 1000000).toFixed(2);
  
   // Generate executive summary text
-  const generateExecutiveSummary = () => {
-    const topEntries = Object.entries(allCategoricalCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
-
-    const bulletPoints: string[] = [];
-
-    // Always show the high-level totals
-    bulletPoints.push(`Dataset contains ${totalVehicles} vehicles with total sales value of ${salesM}M`);
-
-    // Only include top-city information when we have a valid city and a non-zero count
-    if (topCityValue && topCityCount > 0) {
-      bulletPoints.push(`${topCityValue} is the leading city with ${topCityCount} vehicles`);
-    }
-
-    if (topEntries.length > 0) {
-      const topItem = topEntries[0];
-      const percentage = ((topItem[1] / (totalVehicles || 1)) * 100).toFixed(1);
-      const label = String(topItem[0]).includes(': ') ? topItem[0].split(': ')[1] : String(topItem[0]);
-      bulletPoints.push(`Primary market segment: ${label} (${percentage}% of dataset)`);
-    }
-
-    if (topEntries.length > 1) {
-      const secondItem = topEntries[1];
-      const percentage = ((secondItem[1] / (totalVehicles || 1)) * 100).toFixed(1);
-      const label = String(secondItem[0]).includes(': ') ? secondItem[0].split(': ')[1] : String(secondItem[0]);
-      bulletPoints.push(`Secondary segment: ${label} (${percentage}% of dataset)`);
-    }
-   
-    bulletPoints.push(`Strong market performance with significant concentration in key geographical regions`);
-    bulletPoints.push(`Diversified product portfolio across multiple categories`);
-   
-    return bulletPoints;
-  };
- 
   return (
     <div className="summary-report">
       {/* Top Metrics Cards */}
