@@ -1,7 +1,7 @@
 import "./SummaryPage.css";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, downloadMQuery } from "../api/qlikApi";
+import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, fetchLoadScript, parseLoadScript } from "../api/qlikApi";
 import Csvicon from "../assets/Csvicon.png";
 import { useWizard } from "../context/WizardContext";
 import SchemaModal from "../components/SchemaModal/SchemaModal";
@@ -44,7 +44,27 @@ export default function SummaryPage() {
   const [mainTable, setMainTable] = useState<string | null>(null); // detected hub table
   const [relations, setRelations] = useState<Record<string, string[]>>({}); // name -> related table names
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
-  const [downloadingMQuery, setDownloadingMQuery] = useState(false);
+  const [activeTab, setActiveTab] = useState<"summary" | "mquery">("summary");
+
+  // LoadScript and MQuery Display States
+  const [loadscript, setLoadscript] = useState<string>("");
+  const [parsedScript, setParsedScript] = useState<any>(null);
+  const [mquery, setMquery] = useState<string>("");
+  const [convertingToMquery, setConvertingToMquery] = useState(false);
+  const [loadscriptError, setLoadscriptError] = useState<string>("");
+
+  // Publish MQuery to Power BI states
+  const [publishingMQuery, setPublishingMQuery] = useState(false);
+  const [publishStatus, setPublishStatus] = useState<"idle" | "success" | "error">("idle");
+  const [publishMessage, setPublishMessage] = useState<string>("");
+  const [dataSourcePath, setDataSourcePath] = useState<string>("");
+
+  // AI Executive Summary 
+  const [aiSummaryBullets, setAiSummaryBullets] = useState<string[]>([]);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState<string>("");
+
+
  
   // Helper: build relation graph from `tables` (uses fields when available)
   const buildRelations = (tableList: TableInfo[]) => {
@@ -455,7 +475,10 @@ export default function SummaryPage() {
     setTableLoading(true);
     setRows([]);
     setSummary(null);
- 
+ // added lines to refresh summary and AI bullets when switching tables
+    setAiSummaryBullets([]);
+    setAiSummaryError("");
+    //setAiSummaryLoading(true);
     // start timing this table's data load
     startTimer?.(`/summary/data/${tableName}`);
  
@@ -488,6 +511,39 @@ export default function SummaryPage() {
       const { generateSummaryFromData } = await import("../api/qlikApi");
       const summary = generateSummaryFromData(data, tableName);
       setSummary(summary);
+
+      // AI Executive Summary via Mistral 7B
+      fetchAiSummary(data, tableName);
+
+      // 3️⃣ AUTO-FETCH LOADSCRIPT for selected table
+      try {
+        console.log("📍 Auto-fetching LoadScript for table:", tableName);
+        const scriptResult = await fetchLoadScript(appId, tableName);
+        
+        if (scriptResult.status === "success" || scriptResult.status === "partial_success") {
+          const script = scriptResult.loadscript || "";
+          setLoadscript(script);
+          
+          // Auto-parse the loadscript
+          if (script) {
+            try {
+              const parseResult = await parseLoadScript(script);
+              if (parseResult.status === "success") {
+                setParsedScript(parseResult);
+                console.log("✅ LoadScript auto-parsed for table:", tableName);
+              }
+            } catch (parseError) {
+              console.warn("Auto-parse failed, keeping raw loadscript", parseError);
+            }
+          }
+          
+          console.log("✅ LoadScript auto-loaded for table:", tableName);
+        }
+      } catch (scriptError) {
+        console.warn("⚠️ Could not auto-fetch LoadScript:", scriptError);
+        // Don't fail the whole operation if LoadScript fetch fails
+      }
+      
     } catch (e) {
       console.error("❌ Error loading table data:", e);
      
@@ -566,30 +622,169 @@ const downloadCSV = async () => {
     window.URL.revokeObjectURL(url);
   };
 
-  // ✅ DOWNLOAD M QUERY - Convert Qlik to PowerBI M Query for selected table only
-  const handleDownloadMQuery = async () => {
-    if (!appId) {
-      alert("No app selected");
+  // ✅ CONVERT TO MQUERY from parsed loadscript
+  const handleConvertToMQuery = async () => {
+    if (!loadscript) {
+      setLoadscriptError("No LoadScript available");
       return;
     }
 
     if (!selectedTable) {
-      alert("Please select a table first");
+      setLoadscriptError("Please select a table first");
       return;
     }
 
     try {
-      setDownloadingMQuery(true);
-      console.log("📍 Starting M Query download for app:", appId, "table:", selectedTable);
-      await downloadMQuery(appId, selectedTable);
-      console.log("✅ M Query downloaded successfully for table:", selectedTable);
-    } catch (error) {
-      console.error("❌ Failed to download M Query:", error);
+      setConvertingToMquery(true);
+      setLoadscriptError("");
+      setMquery("");
+
+      console.log("📍 Converting LoadScript to M Query for table:", selectedTable);
+
+      // If we don't have parsed script, parse it first
+      let scriptToConvert = parsedScript;
+      if (!scriptToConvert) {
+        console.log("Parsing LoadScript first...");
+        const parseResult = await parseLoadScript(loadscript);
+        if (parseResult.status === "success") {
+          scriptToConvert = parseResult;
+          setParsedScript(parseResult);
+        } else {
+          throw new Error("Failed to parse LoadScript");
+        }
+      }
+
+      // Convert to M Query — POST body to avoid HTTP 431 (URL too large for big scripts).
+      // base_path is sent so the backend generates the correct connector (e.g. SharePoint.Files()
+      // for SharePoint URLs) rather than the generic File.Contents() pattern.
+      const convertResponse = await fetch("/api/migration/convert-to-mquery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parsed_script_json: JSON.stringify(scriptToConvert),
+          table_name: "",           // empty = convert all tables
+          base_path: dataSourcePath.trim() || "",
+        }),
+      });
+      if (!convertResponse.ok) {
+        throw new Error(`Failed to convert to M Query: ${convertResponse.status}`);
+      }
+      const convertResult = await convertResponse.json();
+
+      if (convertResult.status !== "success" && convertResult.status !== "partial_success") {
+        throw new Error(convertResult.message || "Failed to convert to M Query");
+      }
+
+      // M expressions are fully generated by the backend with the correct connector —
+      // no client-side [DataSourcePath] string replacement needed.
+      const finalMQuery = convertResult.m_query || "";
+      setMquery(finalMQuery);
+      console.log(
+        "✅ Converted to M Query successfully —",
+        convertResult.statistics?.total_tables_converted ?? "?",
+        "table(s)"
+      );
+    } catch (error: any) {
+      const errorMsg = error.message || "Failed to convert to M Query";
+      setLoadscriptError(errorMsg);
+      console.error("❌ Error converting to M Query:", error);
     } finally {
-      setDownloadingMQuery(false);
+      setConvertingToMquery(false);
     }
   };
- 
+
+  const fetchAiSummary = async (tableRows: any[], tableName: string) => {
+    if (!tableRows || tableRows.length === 0) return;
+    setAiSummaryLoading(true);
+    setAiSummaryError("");
+    setAiSummaryBullets([]);
+    try {
+      const res = await fetch("/chat/summary-hf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table_name: tableName, data: tableRows.slice(0, 500) }),
+      });
+      const rawText = await res.text();
+      let result: any = {};
+      try { result = rawText ? JSON.parse(rawText) : {}; } catch { 
+        setAiSummaryError(`Server error: ${rawText.slice(0, 200) || "Empty response"}`);
+        return;
+      }
+      if (!res.ok || !result.success) {
+        setAiSummaryError(result.detail || result.error || `HTTP ${res.status}`);
+        return;
+      }
+      setAiSummaryBullets(result.bullets || []);
+    } catch (e: any) {
+      setAiSummaryError(e.message || "Error calling AI summary");
+    } finally {
+      setAiSummaryLoading(false);
+    }
+  };
+
+  const handlePublishMQuery = async () => {
+    if (!mquery && !loadscript) {
+      setPublishStatus("error");
+      setPublishMessage("No M Query available. Click 'Convert to MQuery' first.");
+      return;
+    }
+
+    try {
+      setPublishingMQuery(true);
+      setPublishStatus("idle");
+      setPublishMessage("Publishing to Power BI...");
+
+      const response = await fetch("/api/migration/publish-mquery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_name:         selectedTable || "Qlik_Dataset",
+          combined_mquery:      mquery || "",
+          raw_script:           mquery ? "" : loadscript,
+          data_source_path:     dataSourcePath?.trim() || "",
+        }),
+      });
+
+      let result: any = {};
+      const rawText = await response.text();
+      try { result = rawText ? JSON.parse(rawText) : {}; } catch {}
+
+      // Device code auth required (PPU workspace)
+      if (result.auth_required) {
+        setPublishStatus("error");
+        setPublishMessage(
+          `Login required for Power BI PPU workspace:\n` +
+          `1. Open: ${result.device_code_url}\n` +
+          `2. Enter code: ${result.user_code}\n` +
+          `3. Sign in, then click Publish again.`
+        );
+        // Open login URL automatically
+        if (result.device_code_url) {
+          window.open(result.device_code_url, "_blank");
+        }
+        return;
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.detail || result.error || `HTTP ${response.status}: Publish failed`);
+      }
+
+      setPublishStatus("success");
+      setPublishMessage(
+        result.message ||
+        `Published "${result.dataset_name}" to Power BI (${result.tables_deployed} tables)`
+      );
+      if (result.workspace_url) {
+        setTimeout(() => window.open(result.workspace_url, "_blank"), 1500);
+      }
+    } catch (error: any) {
+      setPublishStatus("error");
+      setPublishMessage(`Publish failed: ${error.message || "Unknown error"}`);
+    } finally {
+      setPublishingMQuery(false);
+    }
+  };
+
   // Compute master table per-prefix (heuristic: prefer name containing "fact/master/main", else use largest field count)
   const masterMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -908,9 +1103,40 @@ const downloadCSV = async () => {
                   <span>{selectedTable}</span>
                   {isSelectionMaster && <span className="master-indicator">master</span>}
                   <button
-                    onClick={() => setIsSchemaModalOpen(true)}
+                    onClick={() => setActiveTab("summary")}
+                    title="View Summary"
                     style={{
                       marginLeft: '12px',
+                      padding: '6px 12px',
+                      fontSize: '12px',
+                      backgroundColor: activeTab === "summary" ? '#667eea' : '#a0aec0',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontWeight: '500',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      const target = e.currentTarget as HTMLButtonElement;
+                      target.style.backgroundColor = '#667eea';
+                      target.style.transform = 'scale(1.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      const target = e.currentTarget as HTMLButtonElement;
+                      target.style.backgroundColor = activeTab === "summary" ? '#667eea' : '#a0aec0';
+                      target.style.transform = 'scale(1)';
+                    }}
+                  >
+                      📊 Summary
+                  </button>
+                  <button
+                    onClick={() => setIsSchemaModalOpen(true)}
+                    style={{
+                      marginLeft: '8px',
                       padding: '6px 12px',
                       fontSize: '12px',
                       backgroundColor: '#f59e0b',
@@ -939,39 +1165,35 @@ const downloadCSV = async () => {
                   </button>
             
                   <button
-                    onClick={handleDownloadMQuery}
-                    disabled={downloadingMQuery}
-                    title="Download as PowerBI M Query"
+                    onClick={() => setActiveTab("mquery")}
+                    title="View M Query conversion"
                     style={{
                       marginLeft: '8px',
                       padding: '6px 12px',
                       fontSize: '12px',
-                      backgroundColor: '#10b981',
+                      backgroundColor: activeTab === "mquery" ? '#059669' : '#10b981',
                       color: 'white',
                       border: 'none',
                       borderRadius: '4px',
-                      cursor: downloadingMQuery ? 'not-allowed' : 'pointer',
+                      cursor: 'pointer',
                       fontWeight: '500',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '6px',
                       transition: 'all 0.2s ease',
-                      opacity: downloadingMQuery ? 0.6 : 1,
                     }}
                     onMouseEnter={(e) => {
-                      if (!downloadingMQuery) {
-                        const target = e.currentTarget as HTMLButtonElement;
-                        target.style.backgroundColor = '#059669';
-                        target.style.transform = 'scale(1.05)';
-                      }
+                      const target = e.currentTarget as HTMLButtonElement;
+                      target.style.backgroundColor = '#059669';
+                      target.style.transform = 'scale(1.05)';
                     }}
                     onMouseLeave={(e) => {
                       const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = '#10b981';
+                      target.style.backgroundColor = activeTab === "mquery" ? '#059669' : '#10b981';
                       target.style.transform = 'scale(1)';
                     }}
                   >
-                      {downloadingMQuery ? '⏳ Converting...' : '⬇️ M Query'}
+                      ⚙️ M Query
                   </button>
                 </h2>
                 {pageLoadTime && (
@@ -979,8 +1201,166 @@ const downloadCSV = async () => {
                 )}
               </div>
             </div>
- 
-            <SummaryReport summary={summary} rows={rows} />
+
+            {/* ===== TAB CONTENT ===== */}
+            <div className="tabs-content">
+              {/* SUMMARY TAB */}
+              {activeTab === "summary" && (
+                <div className="tab-content summary-tab">
+                  <div className="summary-div pie-chart-div">
+                    <SummaryReport summary={summary} rows={rows} aiBullets={aiSummaryBullets} aiLoading={aiSummaryLoading} />
+                  </div>
+
+                </div>
+              )}
+
+              {/* MQUERY TAB */}
+              {activeTab === "mquery" && (
+                <div className="tab-content mquery-tab">
+                  <div className="summary-div loadscript-div">
+                    <div className="loadscript-header">
+                      <h3>LoadScript Conversion - {selectedTable}</h3>
+                    </div>
+
+                    {loadscriptError && (
+                      <div className="error-message">
+                        ⚠️ {loadscriptError}
+                      </div>
+                    )}
+
+                    <div className="loadscript-displays">
+                      {/* First Display: LoadScript */}
+                      <div className="display-section loadscript-display">
+                        <h4>Qlik LoadScript</h4>
+                        {!loadscript && (
+                          <div className="empty-display">Select a table to auto-load its LoadScript</div>
+                        )}
+                        {loadscript && (
+                          <>
+                            <div className="script-content">
+                              <pre>{loadscript}</pre>
+                            </div>
+                            {/* DataSourcePath input — for CSV/QVD file sources */}
+                            <div style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "4px",
+                              marginBottom: "10px",
+                              padding: "10px 12px",
+                              background: "#f0f9ff",
+                              borderRadius: "6px",
+                              border: "1px solid #bae6fd",
+                            }}>
+                              <label style={{ fontSize: "12px", fontWeight: 600, color: "#0369a1" }}>
+                                📁 Data Source Path <span style={{ fontWeight: 400, color: "#64748b" }}>(optional)</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={dataSourcePath}
+                                onChange={(e) => setDataSourcePath(e.target.value)}
+                                placeholder="e.g. https://company.sharepoint.com  or  https://company.sharepoint.com/Shared Documents/MyFolder/"
+                                style={{
+                                  padding: "6px 10px",
+                                  fontSize: "12px",
+                                  fontFamily: "monospace",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: "4px",
+                                  outline: "none",
+                                  width: "100%",
+                                  boxSizing: "border-box" as const,
+                                  background: "#fff",
+                                }}
+                              />
+                              <span style={{ fontSize: "11px", color: "#64748b", lineHeight: "1.4" }}>
+                                SharePoint site root or full folder path. e.g. https://company.sharepoint.com/Shared Documents/MyFolder/
+                                Used for CSV/QVD sources. Leave blank to keep the placeholder — you can define it as a Query Parameter in Power BI Desktop later.
+                              </span>
+                            </div>
+
+                            <button
+                              onClick={handleConvertToMQuery}
+                              disabled={convertingToMquery || !selectedTable}
+                              className="convert-btn"
+                              title={!selectedTable ? "Please select a table first" : "Convert to M Query"}
+                            >
+                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to MQuery"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Second Display: MQuery */}
+                      <div className="display-section mquery-display">
+                        <h4>Generated M Query</h4>
+                        {!mquery && !convertingToMquery && (
+                          <div className="empty-display">M Query will appear here after conversion</div>
+                        )}
+                        {mquery && (
+                          <>
+                            <div className="script-content">
+                              <pre>{mquery}</pre>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const element = document.createElement("a");
+                                const file = new Blob([mquery], { type: "text/plain" });
+                                element.href = URL.createObjectURL(file);
+                                element.download = `${selectedTable || "query"}_mquery.m`;
+                                document.body.appendChild(element);
+                                element.click();
+                                document.body.removeChild(element);
+                              }}
+                              className="download-btn"
+                              title="Download M Query"
+                            >
+                              ⬇️ Download M Query
+                            </button>
+                          </>
+                        )}
+
+                        {/* Download .pbit + Publish buttons */}
+                        {mquery && (
+                          <>
+                            <button
+                              onClick={handlePublishMQuery}
+                              disabled={publishingMQuery}
+                              className="publish-pbi-btn"
+                              title="Publish Push dataset to Power BI Service (schema only — no file data)"
+                            >
+                              {publishingMQuery ? (
+                                <>
+                                  <span className="publish-spinner" />
+                                  Publishing…
+                                </>
+                              ) : (
+                                <>
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                    <path d="M2 17l10 5 10-5"/>
+                                    <path d="M2 12l10 5 10-5"/>
+                                  </svg>
+                                  Publish MQuery to PowerBI
+                                </>
+                              )}
+                            </button>
+
+                            {publishStatus !== "idle" && publishMessage && (
+                              <div
+                                className={`publish-status-msg ${publishStatus === "success" ? "publish-success" : "publish-error"}`}
+                              >
+                                {publishMessage}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+
+            </div>
  
             {/* ===== SEPARATE DIV FOR TABLE ===== */}
             <div className="data-section">
@@ -1244,6 +1624,8 @@ import React from "react";
 interface SummaryReportProps {
   summary: any;
   rows: Row[];
+  aiBullets?: string[];
+  aiLoading?: boolean;
 }
  
 // Pie Chart Component
@@ -1352,6 +1734,8 @@ const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ d
 export const SummaryReport: React.FC<SummaryReportProps> = ({
   summary,
   rows,
+  aiBullets = [],
+  aiLoading = false,
 }) => {
   if (!summary && rows.length === 0) return null;
  
@@ -1465,11 +1849,15 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
        
         {/* Right: AI Summary Section */}
         <div className="hf-summary-section">
-          <h4>Executive Summary</h4>
+          <h4>Executive Summary </h4>
           <ul className="hf-summary-content">
-            {generateExecutiveSummary().map((point, idx) => (
-              <li key={idx}>{point}</li>
-            ))}
+            {aiLoading ? (
+              <li style={{ color: "#6366f1" }}>⏳ Generating AI insights...</li>
+            ) : aiBullets.length > 0 ? (
+              aiBullets.map((point, idx) => (
+                <li key={idx}>{point.replace(/^[-•]\s*/, "")}</li>
+              ))
+            ) : null } 
           </ul>
         </div>
       </div>

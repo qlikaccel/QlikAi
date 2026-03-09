@@ -266,7 +266,7 @@ export default function PublishPage() {
       console.log("📤 Step 3: Publishing to Power BI...");
 
       // Check if separate table mode
-      if (isSeparateMode && isMultiTableMode && selectedTablesToPublish.length > 0) {
+      /*if (isSeparateMode && isMultiTableMode && selectedTablesToPublish.length > 0) {
         // Publish each table separately
         const publishedResults: any[] = [];
 
@@ -289,7 +289,52 @@ export default function PublishPage() {
           setDatasetURL(publishedResults[0].url || "");
         }
 
-        setResult({ published_tables: publishedResults });
+        setResult({ published_tables: publishedResults });*/
+        if (isSeparateMode && isMultiTableMode && selectedTablesToPublish.length > 0) {
+        // Publish all tables as a single dataset with relationships
+        const batchTables: any[] = [];
+
+        for (let i = 0; i < tableCount; i++) {
+          const csvText = state?.csvPayloads?.[`migration_csv_${i}`] || sessionStorage.getItem(`migration_csv_${i}`) || "";
+          const tName = selectedTablesToPublish[i]?.name || `Table_${i + 1}`;
+          if (!csvText) continue;
+
+          // Parse CSV into rows
+          const lines = csvText.trim().split('\n').filter((l: string) => l.trim());
+          if (lines.length < 2) continue;
+          const headers = lines[0].split(',').map((h: string) => h.trim().replace(/^"|"$/g, ''));
+          const rows = lines.slice(1).map((line: string) => {
+            const vals = line.split(',');
+            const row: any = {};
+            headers.forEach((h: string, idx: number) => {
+              row[h] = vals[idx]?.trim().replace(/^"|"$/g, '') ?? null;
+            });
+            return row;
+          });
+
+          batchTables.push({ name: tName, rows });
+          console.log(`📦 Prepared table ${i + 1}/${tableCount}: ${tName} (${rows.length} rows)`);
+        }
+
+        if (batchTables.length === 0) throw new Error("No table data available to publish");
+
+        console.log(`📤 Publishing ${batchTables.length} tables as single dataset with relationships...`);
+        const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dataset_name: appName || "Qlik_Migrated_Dataset",
+            tables: batchTables,
+          }),
+        });
+
+        const batchData = await batchRes.json();
+        if (!batchRes.ok) throw new Error(batchData?.detail || "Batch publish failed");
+
+        console.log("✅ Batch publish successful:", batchData);
+        setPublishedTableName(batchData.dataset_name || appName);
+        setDatasetURL(batchData.workspace_url || "");
+        setResult({ published_tables: batchTables.map((t: any) => ({ tableName: t.name, rowCount: t.rows.length, url: batchData.workspace_url })) });
       } else {
         // Combined mode or single table - use updated logic (prefer navigation state payloads)
         setCurrentStep(0);

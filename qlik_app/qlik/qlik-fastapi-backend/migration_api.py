@@ -1,221 +1,387 @@
 """
-Model Publishing API - FastAPI Router
+Migration API -- FastAPI router for the 6-stage Qlik-to-Power BI pipeline.
 
-Exposes the 6-stage migration pipeline via REST endpoints.
+Endpoints:
+  POST /api/migration/publish-table        Full 6-stage pipeline
+  POST /api/migration/preview-migration    Stages 1-3 only (no Power BI writes)
+  GET  /api/migration/view-diagram         Stages 1-3+6: Mermaid + HTML ER diagram
+  GET  /api/migration/er-diagram-html      Returns raw HTML for iframe embedding
+  GET  /api/migration/pipeline-help        API documentation
+
+Changes vs previous version:
+  - Default publish_mode is now "xmla_semantic" (PPU).
+  - /view-diagram returns both mermaid and html in the JSON response.
+  - New /er-diagram-html endpoint returns raw HTML (for <iframe> embedding).
+  - publish-table accepts publish_mode query param so callers can choose mode.
 """
 
 import logging
-import json
-from datetime import datetime
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
-import io
+from fastapi import APIRouter, Form, HTTPException, Query
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel as _BaseModel
 
-from powerbi_auth import get_auth_manager
-from powerbi_pbix_importer import import_pbix_and_wait
-from six_stage_orchestrator import run_migration_pipeline
-from loadscript_fetcher import LoadScriptFetcher
-from loadscript_parser import LoadScriptParser
-from simple_mquery_generator import SimpleMQueryGenerator
-from conversion_logger import get_session_manager, LogLevel
-from mquery_file_generator import MQueryFileGenerator, generate_dual_download_zip
+from six_stage_orchestrator import SixStageOrchestrator, run_migration_pipeline
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/migration", tags=["Migration Pipeline"])
+router = APIRouter(prefix="/api/migration", tags=["Migration"])
 
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+def _orchestrator() -> SixStageOrchestrator:
+    return SixStageOrchestrator()
+
+
+# ---------------------------------------------------------------------------
+# POST /publish-table
+# ---------------------------------------------------------------------------
 
 @router.post("/publish-table")
-def publish_table_to_powerbi(
-    app_id: str = Query(..., description="Qlik app ID"),
-    dataset_name: str = Query(..., description="Power BI dataset name"),
-    workspace_id: str = Query(..., description="Power BI workspace ID"),
-    access_token: Optional[str] = Query(None, description="Power BI access token"),
+async def publish_table(
+    app_id:       str = Query(..., description="Qlik Cloud app ID"),
+    dataset_name: str = Query(..., description="Target Power BI dataset / semantic model name"),
+    workspace_id: str = Query(..., description="Power BI workspace GUID"),
+    access_token: Optional[str] = Query(None, description="Azure AD bearer token"),
     publish_mode: str = Query(
-        "cloud_push",
-        description="Publish mode: cloud_push | desktop_cloud | xmla_semantic",
+        "xmla_semantic",
+        description=(
+            "Deployment mode: "
+            "'xmla_semantic' (PPU -- full semantic model, ER Diagram visible), "
+            "'cloud_push' (REST Push dataset -- limited Model View), "
+            "'desktop_cloud' (bundle only, no Power BI write)"
+        ),
     ),
-    csv_payload_json: Optional[str] = Query(
-        None,
-        description="Optional JSON map {table_name: csv_text}; used by xmla_semantic mode",
-    ),
-) -> Dict[str, Any]:
+):
     """
-    Publish Qlik metadata and inferred relationships using complete pipeline.
+    Execute the full 6-stage migration pipeline.
 
-    Modes:
-    - cloud_push: create Push semantic model via REST API
-    - desktop_cloud: generate Desktop handoff bundle for PBIX publish to cloud
-    - xmla_semantic: create enhanced semantic model in cloud via XMLA (no Desktop required)
+    Recommended for PPU workspaces: publish_mode=xmla_semantic
+      -> Creates a proper Tabular semantic model
+      -> Relationships visible in Model View
+      -> ER Diagram renders in Power BI Service
+
+    The response includes `er_diagram_html` which can be embedded directly
+    in a React frontend via <iframe srcDoc={...}>.
     """
-    try:
-        logger.info(
-            "Publishing table - App=%s Dataset=%s Mode=%s", app_id, dataset_name, publish_mode
+    if not app_id:
+        raise HTTPException(400, "app_id is required")
+    if not dataset_name:
+        raise HTTPException(400, "dataset_name is required")
+    if not workspace_id:
+        raise HTTPException(400, "workspace_id is required")
+
+    if publish_mode == "xmla_semantic" and not access_token:
+        raise HTTPException(
+            400,
+            "access_token is required for publish_mode=xmla_semantic. "
+            "Obtain one via /powerbi/login/acquire-token.",
         )
 
-        resolved_access_token = access_token
-        if not resolved_access_token:
-            try:
-                auth = get_auth_manager()
-                if auth.is_token_valid():
-                    resolved_access_token = auth.get_access_token()
-            except Exception:
-                resolved_access_token = None
+    logger.info(
+        "[API] publish-table: app_id=%s  dataset=%s  workspace=%s  mode=%s",
+        app_id, dataset_name, workspace_id, publish_mode,
+    )
 
-        csv_payloads: Dict[str, str] = {}
-        if csv_payload_json:
-            try:
-                parsed_payload = json.loads(csv_payload_json)
-                if not isinstance(parsed_payload, dict):
-                    raise ValueError("csv_payload_json must be a JSON object")
-                csv_payloads = {
-                    str(k): str(v)
-                    for k, v in parsed_payload.items()
-                    if str(k).strip() and isinstance(v, str) and v.strip()
-                }
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Invalid csv_payload_json: {str(exc)}")
+    result = run_migration_pipeline(
+        app_id=app_id,
+        dataset_name=dataset_name,
+        workspace_id=workspace_id,
+        access_token=access_token,
+        publish_mode=publish_mode,
+    )
 
-        result = run_migration_pipeline(
-            app_id=app_id,
-            dataset_name=dataset_name,
-            workspace_id=workspace_id,
-            access_token=resolved_access_token,
-            publish_mode=publish_mode,
-            csv_table_payloads=csv_payloads,
+    # Strip heavy HTML from the main response to keep it lean
+    # (full HTML available via /er-diagram-html endpoint)
+    summary_result = {k: v for k, v in result.items() if k != "er_diagram_html"}
+    summary_result["er_diagram_available"] = bool(result.get("er_diagram_html"))
+    summary_result["er_diagram_endpoint"]  = (
+        f"/api/migration/er-diagram-htmlapp_id={app_id}&dataset_name={dataset_name}"
+    )
+
+    return summary_result
+
+
+# ---------------------------------------------------------------------------
+# POST /preview-migration
+# ---------------------------------------------------------------------------
+
+@router.post("/preview-migration")
+async def preview_migration(
+    app_id:       str = Query(..., description="Qlik Cloud app ID"),
+    dataset_name: str = Query("Preview", description="Dataset name (for labelling only)"),
+):
+    """
+    Run stages 1-3 only (Extract -> Infer -> Normalize).
+    No Power BI writes.  Returns inferred tables, relationships, and ER diagram.
+    """
+    if not app_id:
+        raise HTTPException(400, "app_id is required")
+
+    logger.info("[API] preview-migration: app_id=%s", app_id)
+
+    orchestrator = _orchestrator()
+    stage1 = orchestrator._stage_1_extract(app_id)
+    if not stage1.get("success"):
+        raise HTTPException(400, f"Stage 1 failed: {stage1.get('error', 'unknown')}")
+
+    tables    = stage1.get("tables", [])
+    stage2    = orchestrator._stage_2_infer(tables)
+    inferred  = stage2.get("relationships", [])
+    stage3    = orchestrator._stage_3_normalize(tables, inferred)
+    normalized = stage3.get("relationships", [])
+    stage6    = orchestrator._stage_6_er_diagram(tables, normalized)
+
+    return {
+        "success":       True,
+        "app_id":        app_id,
+        "app_name":      stage1.get("app_name"),
+        "dataset_name":  dataset_name,
+        "tables":        tables,
+        "relationships": normalized,
+        "summary": {
+            "table_count":        len(tables),
+            "relationship_count": len(normalized),
+            "avg_confidence":     stage2.get("avg_confidence", 0),
+        },
+        "er_diagram": {
+            "mermaid": stage6.get("mermaid", ""),
+            "html":    stage6.get("html", ""),
+        },
+        "note": "Preview only -- no Power BI changes made.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /view-diagram
+# ---------------------------------------------------------------------------
+
+@router.get("/view-diagram")
+async def view_diagram(
+    app_id:       str = Query(..., description="Qlik Cloud app ID"),
+    dataset_name: str = Query("Diagram", description="Label for diagram title"),
+):
+    """
+    Generate the ER diagram for a Qlik app without publishing to Power BI.
+    Returns both Mermaid syntax and full standalone HTML.
+
+    Tip: Use /er-diagram-html for raw HTML suitable for <iframe> embedding.
+    """
+    if not app_id:
+        raise HTTPException(400, "app_id is required")
+
+    logger.info("[API] view-diagram: app_id=%s", app_id)
+
+    orchestrator = _orchestrator()
+    result = orchestrator.get_er_diagram_only(app_id)
+
+    if not result.get("success"):
+        raise HTTPException(500, result.get("error", "ER diagram generation failed"))
+
+    return {
+        "success":       True,
+        "app_id":        app_id,
+        "app_name":      result.get("app_name", ""),
+        "tables":        result.get("tables", 0),
+        "relationships": result.get("relationships", 0),
+        "er_diagram": {
+            "mermaid":           result.get("mermaid", ""),
+            "html":              result.get("html", ""),
+            "iframe_endpoint":   f"/api/migration/er-diagram-htmlapp_id={app_id}&dataset_name={dataset_name}",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /er-diagram-html  <- NEW: raw HTML for iframe embedding
+# ---------------------------------------------------------------------------
+
+@router.get("/er-diagram-html", response_class=HTMLResponse)
+async def er_diagram_html(
+    app_id:       str = Query(..., description="Qlik Cloud app ID"),
+    dataset_name: str = Query("ER Diagram", description="Title shown in diagram"),
+):
+    """
+    Returns a standalone HTML page containing the rendered Mermaid ER diagram.
+
+    Designed for <iframe> embedding in a React frontend:
+
+        <iframe
+          src="/api/migration/er-diagram-htmlapp_id=abc123&dataset_name=Sales"
+          style={{ width: '100%', height: '600px', border: 'none' }}
+        />
+    """
+    if not app_id:
+        raise HTTPException(400, "app_id is required")
+
+    logger.info("[API] er-diagram-html: app_id=%s", app_id)
+
+    orchestrator = _orchestrator()
+    result = orchestrator.get_er_diagram_only(app_id)
+
+    if not result.get("success"):
+        # Return a minimal error HTML page rather than a JSON 500
+        return HTMLResponse(
+            content=f"""<!DOCTYPE html><html><body>
+            <h3 style="color:red">ER Diagram Error</h3>
+            <p>{result.get('error', 'Unknown error')}</p>
+            </body></html>""",
+            status_code=200,
         )
 
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "Pipeline failed"))
+    from stage6_er_diagram import ERDiagramGenerator
+    gen  = ERDiagramGenerator()
+    html = gen.generate_html_diagram(
+        result.get("mermaid", ""),
+        title=f"{dataset_name} -- Entity Relationship Diagram",
+    )
+    return HTMLResponse(content=html)
 
-        response: Dict[str, Any] = {
-            "success": True,
-            "message": "Migration pipeline executed successfully",
-            "dataset_name": dataset_name,
-            "publish_mode": publish_mode,
-            "summary": result.get("summary", {}),
-            "stages_completed": list(result.get("stages", {}).keys()),
-            "er_diagram": result.get("stages", {}).get("6_er_diagram", {}).get("mermaid", ""),
-            "warnings": result.get("warnings", []),
-            "duration_seconds": result.get("duration_seconds", 0),
-        }
 
-        if publish_mode == "desktop_cloud":
-            response["desktop_bundle"] = result.get("stages", {}).get("7_desktop_bundle", {})
-            response["next_steps"] = [
-                "1. Open desktop bundle README",
-                "2. Build/open model in Power BI Desktop",
-                "3. Publish PBIX to target workspace",
-                "4. Open semantic model in service and verify relationships",
-            ]
-        elif publish_mode == "xmla_semantic":
-            xmla_stage = result.get("stages", {}).get("4_xmla_semantic", {})
-            response["xmla_semantic"] = xmla_stage
-            response["links"] = {
-                "workspace": xmla_stage.get("workspace_url")
-                or f"https://app.powerbi.com/groups/{workspace_id}",
-                "dataset": xmla_stage.get("dataset_url"),
-            }
-            response["next_steps"] = [
-                "1. Open the workspace link",
-                "2. Open semantic model in service",
-                "3. Verify Model view shows inferred relationships",
-                "4. Build report on top of the enhanced model",
-            ]
-        else:
-            response["next_steps"] = [
-                "1. Go to Power BI workspace",
-                "2. Find your semantic model",
-                "3. If Open semantic model is disabled, republish using desktop_cloud mode",
-                "4. Validate tables and relationships",
-            ]
+# ---------------------------------------------------------------------------
+# GET /pipeline-help
+# ---------------------------------------------------------------------------
 
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("publish-table failed")
-        raise HTTPException(status_code=500, detail=str(exc))
-
+@router.get("/pipeline-help")
+async def pipeline_help():
+    """Return API documentation for the migration pipeline."""
+    return {
+        "title":    "Qlik-to-Power BI 6-Stage Migration Pipeline",
+        "version":  "2.0.0",
+        "ppu_note": (
+            "For Power BI PPU workspaces, use publish_mode=xmla_semantic. "
+            "This deploys a proper Tabular semantic model that shows ER Diagram "
+            "and Model View in Power BI Service."
+        ),
+        "endpoints": {
+            "POST /api/migration/publish-table": {
+                "description": "Full 6-stage pipeline",
+                "params": {
+                    "app_id":       "Qlik Cloud app ID (required)",
+                    "dataset_name": "Target Power BI semantic model name (required)",
+                    "workspace_id": "Power BI workspace GUID (required)",
+                    "access_token": "Azure AD bearer token (required for xmla_semantic / cloud_push)",
+                    "publish_mode": "xmla_semantic | cloud_push | desktop_cloud  [default: xmla_semantic]",
+                },
+            },
+            "POST /api/migration/preview-migration": {
+                "description": "Stages 1-3 + ER diagram only -- no Power BI writes",
+                "params": {
+                    "app_id":       "Qlik Cloud app ID (required)",
+                    "dataset_name": "Label for output (optional)",
+                },
+            },
+            "GET /api/migration/view-diagram": {
+                "description": "ER diagram JSON (Mermaid + HTML)",
+                "params": {
+                    "app_id":       "Qlik Cloud app ID (required)",
+                    "dataset_name": "Diagram title label (optional)",
+                },
+            },
+            "GET /api/migration/er-diagram-html": {
+                "description": "Standalone HTML ER diagram for <iframe> embedding",
+                "params": {
+                    "app_id":       "Qlik Cloud app ID (required)",
+                    "dataset_name": "Diagram title (optional)",
+                },
+            },
+        },
+        "publish_modes": {
+            "xmla_semantic": {
+                "description": "Deploy a full Tabular semantic model via XMLA (PPU/Premium)",
+                "requires":    "Tabular Editor 2 CLI + XMLA endpoint enabled in workspace",
+                "er_diagram":  "Fully visible in Power BI Service Model View",
+                "recommended": True,
+            },
+            "cloud_push": {
+                "description": "Create a Push dataset via REST API",
+                "er_diagram":  "Not available in Power BI Service (use embedded HTML instead)",
+                "recommended": False,
+            },
+            "desktop_cloud": {
+                "description": "Generate desktop handoff bundle (no Power BI writes)",
+                "er_diagram":  "HTML file included in bundle",
+                "recommended": False,
+            },
+        },
+        "setup": {
+            "tabular_editor": {
+                "download": "https://github.com/TabularEditor/TabularEditor2/releases",
+                "env_var":  "TABULAR_EDITOR_PATH",
+                "example":  r"C:\Program Files\Tabular Editor 2\TabularEditor2.exe",
+            },
+            "xmla_endpoint": {
+                "enable":  "Power BI workspace -> Settings -> Premium -> XMLA Endpoint -> Read Write",
+                "env_var": "POWERBI_XMLA_ENDPOINT",
+                "format":  "powerbi://api.powerbi.com/v1.0/myorg/<WorkspaceName>",
+            },
+        },
+    }
 
 @router.post("/publish-semantic-model")
 async def publish_semantic_model_xmla(
-    app_id: str = Form(..., description="Qlik app ID"),
-    dataset_name: str = Form(..., description="Target semantic model name"),
-    workspace_id: str = Form(..., description="Power BI workspace ID"),
-    csv_payload_json: Optional[str] = Form(
-        None,
-        description="JSON map {table_name: csv_text} for metadata enhancement",
-    ),
-    access_token: Optional[str] = Form(None, description="Optional Power BI access token"),
+    app_id: str = Form(...),
+    dataset_name: str = Form(...),
+    workspace_id: str = Form(...),
+    csv_payload_json: Optional[str] = Form(None),
+    access_token: Optional[str] = Form(None),
 ) -> Dict[str, Any]:
     """
-    Build an enhanced semantic model in cloud via XMLA from:
-    1) Qlik schema metadata (Stage 1)
-    2) inferred relationships (Stages 2-3)
-    3) optional CSV payloads for better column type inference
+    Deploy a full Tabular semantic model to a PPU Power BI workspace via XMLA.
+    Uses Tabular Editor 2 CLI if available and a user token exists,
+    otherwise falls back to REST API Push dataset.
     """
     try:
         csv_payloads: Dict[str, str] = {}
         if csv_payload_json:
             try:
-                parsed_payload = json.loads(csv_payload_json)
-                if not isinstance(parsed_payload, dict):
-                    raise ValueError("csv_payload_json must be a JSON object")
-                csv_payloads = {
-                    str(k): str(v)
-                    for k, v in parsed_payload.items()
-                    if str(k).strip() and isinstance(v, str) and v.strip()
-                }
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Invalid csv_payload_json: {str(exc)}")
+                parsed = json.loads(csv_payload_json)
+                if isinstance(parsed, dict):
+                    csv_payloads = {str(k): str(v) for k, v in parsed.items()}
+            except Exception:
+                pass
 
-        resolved_access_token = access_token
-        if not resolved_access_token:
-            auth = get_auth_manager()
-            if not auth.is_token_valid():
-                raise HTTPException(
-                    status_code=401,
-                    detail="Power BI token is not valid. Run /powerbi/login/acquire-token first.",
-                )
-            resolved_access_token = auth.get_access_token()
+        # Resolve access token from auth manager if not provided
+        if not access_token:
+            try:
+                from powerbi_auth import get_auth_manager
+                auth = get_auth_manager()
+                if auth.is_token_valid():
+                    access_token = auth.get_access_token()
+            except Exception:
+                pass
 
-        result = run_migration_pipeline(
+        if not access_token:
+            raise HTTPException(
+                status_code=400,
+                detail="No access token available. Please login via /powerbi/login/initiate first.",
+            )
+
+        logger.info(
+            "[API] publish-semantic-model: app_id=%s dataset=%s workspace=%s",
+            app_id, dataset_name, workspace_id,
+        )
+
+        # Run stages 1-3 (extract + infer + normalize) then deploy via XMLA
+        orchestrator = SixStageOrchestrator()
+        result = orchestrator.execute_pipeline(
             app_id=app_id,
             dataset_name=dataset_name,
             workspace_id=workspace_id,
-            access_token=resolved_access_token,
+            access_token=access_token,
             publish_mode="xmla_semantic",
             csv_table_payloads=csv_payloads,
         )
 
         if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "Pipeline failed"))
+            raise HTTPException(status_code=500, detail=result.get("error", "Deployment failed"))
 
-        xmla_stage = result.get("stages", {}).get("4_xmla_semantic", {})
-        return {
-            "success": True,
-            "message": "Enhanced semantic model created via XMLA",
-            "publish_mode": "xmla_semantic",
-            "dataset_name": dataset_name,
-            "workspace_id": workspace_id,
-            "summary": result.get("summary", {}),
-            "er_diagram": result.get("stages", {}).get("6_er_diagram", {}).get("mermaid", ""),
-            "xmla_semantic": xmla_stage,
-            "links": {
-                "workspace": xmla_stage.get("workspace_url")
-                or f"https://app.powerbi.com/groups/{workspace_id}",
-                "dataset": xmla_stage.get("dataset_url"),
-            },
-            "warnings": result.get("warnings", []),
-            "note": (
-                "Requires XMLA write-enabled workspace capacity and proper permissions. "
-                "This path avoids Power BI Desktop."
-            ),
-        }
+        return result
+
     except HTTPException:
         raise
     except Exception as exc:
@@ -223,1144 +389,795 @@ async def publish_semantic_model_xmla(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/preview-migration")
-def preview_migration(
-    app_id: str = Query(..., description="Qlik app ID"),
-    dataset_name: str = Query(..., description="Dataset name"),
-) -> Dict[str, Any]:
-    """Preview migration without making Power BI changes (stages 1-3 + 6 + bundle)."""
-    try:
-        result = run_migration_pipeline(
-            app_id=app_id,
-            dataset_name=dataset_name,
-            workspace_id="preview",
-            access_token=None,
-            publish_mode="desktop_cloud",
-        )
-
-        return {
-            "success": result.get("success"),
-            "dataset_name": dataset_name,
-            "tables": result.get("stages", {}).get("1_extract", {}).get("tables", []),
-            "relationships": result.get("stages", {}).get("3_normalize", {}).get("relationships", []),
-            "desktop_bundle": result.get("stages", {}).get("7_desktop_bundle", {}),
-            "statistics": {
-                "table_count": len(result.get("stages", {}).get("1_extract", {}).get("tables", [])),
-                "relationship_count": len(
-                    result.get("stages", {}).get("3_normalize", {}).get("relationships", [])
-                ),
-                "avg_confidence": result.get("stages", {}).get("2_infer", {}).get("avg_confidence", 0),
-            },
-            "note": "No Power BI dataset created in preview mode.",
-        }
-
-    except Exception as exc:
-        logger.exception("preview-migration failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+@router.post("/xmla-login/initiate")
+async def xmla_login_initiate():
+    """Start XMLA user login (ROPC or device code fallback)."""
+    from xmla_auth import initiate_xmla_login
+    result = initiate_xmla_login()
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
 
 
-@router.get("/view-diagram")
-def view_er_diagram(
-    app_id: str = Query(..., description="Qlik app ID"),
-    dataset_name: str = Query(..., description="Dataset name"),
-) -> Dict[str, Any]:
-    """Generate ER diagram from extracted metadata and inferred relationships."""
-    try:
-        result = run_migration_pipeline(
-            app_id=app_id,
-            dataset_name=dataset_name,
-            workspace_id="diagram-only",
-            access_token=None,
-            publish_mode="desktop_cloud",
-        )
-
-        er_result = result.get("stages", {}).get("6_er_diagram", {})
-        return {
-            "success": er_result.get("success", False),
-            "dataset_name": dataset_name,
-            "mermaid_diagram": er_result.get("mermaid", ""),
-            "html_diagram": er_result.get("html", ""),
-            "table_count": er_result.get("table_count", 0),
-            "relationship_count": er_result.get("relationship_count", 0),
-        }
-
-    except Exception as exc:
-        logger.exception("view-diagram failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+@router.post("/xmla-login/complete")
+async def xmla_login_complete():
+    """Complete device code login after user signs in via browser."""
+    from xmla_auth import complete_xmla_login
+    return complete_xmla_login()
 
 
-@router.post("/import-pbix")
-async def import_pbix_to_workspace(
-    pbix_file: UploadFile = File(..., description="PBIX file exported from Power BI Desktop"),
-    dataset_name: str = Form(..., description="Target dataset display name in Power BI"),
-    workspace_id: Optional[str] = Form(None, description="Power BI workspace ID (optional, defaults to configured workspace)"),
-    name_conflict: str = Form("CreateOrOverwrite", description="Import conflict mode (Abort|Overwrite|CreateOrOverwrite|Ignore)"),
-    timeout_seconds: int = Form(600, description="Max wait time for import completion"),
-) -> Dict[str, Any]:
-    """
-    Import a PBIX file into a Power BI workspace.
-
-    This is the workflow that creates a Desktop-origin semantic model in cloud,
-    which can enable the 'Open semantic model' option in Service.
-    """
-    try:
-        filename = (pbix_file.filename or "").strip()
-        if not filename.lower().endswith(".pbix"):
-            raise HTTPException(status_code=400, detail="Only .pbix files are supported")
-
-        auth = get_auth_manager()
-        if not auth.is_token_valid():
-            raise HTTPException(
-                status_code=401,
-                detail="Power BI token is not valid. Run /powerbi/login/acquire-token first.",
-            )
-
-        token = auth.get_access_token()
-        target_workspace_id = (workspace_id or auth.workspace_id or "").strip()
-        if not target_workspace_id:
-            raise HTTPException(status_code=400, detail="workspace_id is required")
-
-        file_bytes = await pbix_file.read()
-        if not file_bytes:
-            raise HTTPException(status_code=400, detail="PBIX file is empty")
-
-        logger.info(
-            "Importing PBIX to workspace=%s dataset_name=%s file=%s size=%s bytes",
-            target_workspace_id,
-            dataset_name,
-            filename,
-            len(file_bytes),
-        )
-
-        import_result = import_pbix_and_wait(
-            access_token=token,
-            workspace_id=target_workspace_id,
-            dataset_display_name=dataset_name,
-            pbix_bytes=file_bytes,
-            pbix_filename=filename,
-            name_conflict=name_conflict,
-            timeout_seconds=max(60, int(timeout_seconds)),
-        )
-
-        dataset_id = import_result.get("dataset_id")
-        report_id = import_result.get("report_id")
-
-        return {
-            "success": True,
-            "message": "PBIX imported successfully",
-            "workspace_id": target_workspace_id,
-            "dataset_name": dataset_name,
-            "import_id": import_result.get("import_id"),
-            "dataset_id": dataset_id,
-            "report_id": report_id,
-            "links": {
-                "workspace": f"https://app.powerbi.com/groups/{target_workspace_id}",
-                "dataset": (
-                    f"https://app.powerbi.com/groups/{target_workspace_id}/datasets/{dataset_id}"
-                    if dataset_id
-                    else None
-                ),
-                "report": (
-                    f"https://app.powerbi.com/groups/{target_workspace_id}/reports/{report_id}"
-                    if report_id
-                    else None
-                ),
-            },
-            "note": "This imported model is Desktop-origin and is the right path for enabling 'Open semantic model'.",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("import-pbix failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+@router.get("/xmla-login/status")
+async def xmla_login_status():
+    """Check XMLA user token status."""
+    from xmla_auth import get_xmla_login_status
+    return get_xmla_login_status()
 
 
-@router.get("/pipeline-help")
-def get_pipeline_help() -> Dict[str, Any]:
-    """Get pipeline documentation."""
-    return {
-        "pipeline": "6-Stage Qlik-to-Power BI Migration",
-        "publish_modes": [
-            {
-                "mode": "cloud_push",
-                "description": "Create Push semantic model directly in Power BI service",
-                "note": "Open semantic model may be limited for Push models",
-            },
-            {
-                "mode": "desktop_cloud",
-                "description": "Generate Desktop handoff bundle, then publish PBIX to service",
-                "note": "Recommended when semantic model editing in service is required",
-            },
-            {
-                "mode": "xmla_semantic",
-                "description": "Create enhanced semantic model directly in cloud via XMLA",
-                "note": "No Desktop needed; requires XMLA write and supported workspace capacity",
-            },
-        ],
-        "stages": [
-            {
-                "number": 1,
-                "name": "Extract",
-                "description": "Get metadata from Qlik Cloud API",
-            },
-            {
-                "number": 2,
-                "name": "Infer",
-                "description": "Infer PK/FK relationships with confidence scoring",
-            },
-            {
-                "number": 3,
-                "name": "Normalize",
-                "description": "Normalize to Power BI relationship JSON",
-            },
-            {
-                "number": 4,
-                "name": "REST Write",
-                "description": "Create Push dataset in cloud_push mode",
-            },
-            {
-                "number": 5,
-                "name": "REST Relationships",
-                "description": "Create relationships in cloud_push mode",
-            },
-            {
-                "number": 6,
-                "name": "ER Diagram",
-                "description": "Generate Mermaid + HTML diagram",
-            },
-        ],
-        "endpoints": [
-            "POST /api/migration/publish-table",
-            "POST /api/migration/publish-semantic-model",
-            "POST /api/migration/import-pbix",
-            "POST /api/migration/preview-migration",
-            "GET /api/migration/view-diagram",
-            "GET /api/migration/pipeline-help",
-            "POST /api/migration/fetch-loadscript (NEW - Phase 1-4)",
-            "POST /api/migration/parse-loadscript (NEW - Phase 5)",
-            "POST /api/migration/convert-to-mquery (NEW - Phase 6)",
-            "POST /api/migration/download-mquery (NEW - Download)",
-            "POST /api/migration/full-pipeline (NEW - All Phases)",
-        ],
-        "loadscript_conversion": {
-            "description": "NEW: Convert Qlik LoadScript to PowerBI M Query",
-            "phases": [
-                {"phase": 1, "name": "Connection Test", "endpoint": "/fetch-loadscript"},
-                {"phase": 2, "name": "Fetch Apps", "endpoint": "/fetch-loadscript"},
-                {"phase": 3, "name": "App Details", "endpoint": "/fetch-loadscript"},
-                {"phase": 4, "name": "Fetch LoadScript", "endpoint": "/fetch-loadscript"},
-                {"phase": 5, "name": "Parse Script", "endpoint": "/parse-loadscript"},
-                {"phase": 6, "name": "Convert to M", "endpoint": "/convert-to-mquery"},
-            ],
-            "workflow": [
-                "1. Call /fetch-loadscript with app_id",
-                "2. Extract loadscript from response",
-                "3. Call /parse-loadscript with loadscript content",
-                "4. Extract parsed_script from response",
-                "5. Call /convert-to-mquery with parsed_script JSON",
-                "6. Get M query from response",
-                "7. Call /download-mquery to download as .m file",
-                "OR use /full-pipeline to do all steps in one call"
-            ],
-            "endpoints_new": {
-                "/fetch-loadscript": {
-                    "method": "POST",
-                    "query_params": {"app_id": "Qlik app ID"},
-                    "description": "Fetch loadscript from QlikCloud with logging"
-                },
-                "/parse-loadscript": {
-                    "method": "POST",
-                    "query_params": {"loadscript": "Script content to parse"},
-                    "description": "Parse loadscript and extract components"
-                },
-                "/convert-to-mquery": {
-                    "method": "POST",
-                    "query_params": {"parsed_script_json": "Parsed script as JSON"},
-                    "description": "Convert to PowerBI M Query language"
-                },
-                "/download-mquery": {
-                    "method": "POST",
-                    "query_params": {
-                        "m_query": "Generated M query",
-                        "filename": "Output filename (optional)"
-                    },
-                    "description": "Download M query as .m file"
-                },
-                "/full-pipeline": {
-                    "method": "POST",
-                    "query_params": {
-                        "app_id": "Qlik app ID",
-                        "auto_download": "Auto-download result (optional)"
-                    },
-                    "description": "Execute complete pipeline (Phases 1-6)"
-                }
-            }
-        },
-        "conversion_tracking": {
-            "description": "ENHANCED: Real-time tracking and visual logging",
-            "workflow": [
-                "1. Call /conversion/start-session to create a session ID",
-                "2. Use the session_id in /full-pipeline-tracked to execute pipeline with tracking",
-                "3. Poll /conversion/logs?session_id=<id> to get real-time progress logs",
-                "4. Poll /conversion/status?session_id=<id> to get progress percentage",
-                "5. Download results using format-specific endpoints",
-                "6. Call /conversion/data?session_id=<id> to get complete conversion data"
-            ],
-            "endpoints_tracking": {
-                "/conversion/start-session": {
-                    "method": "POST",
-                    "description": "Create a new conversion session for tracking",
-                    "returns": ["session_id", "log endpoint", "status endpoint"]
-                },
-                "/full-pipeline-tracked": {
-                    "method": "POST",
-                    "query_params": {
-                        "app_id": "Qlik app ID",
-                        "session_id": "Session ID from start-session"
-                    },
-                    "description": "Execute pipeline with real-time progress tracking via session"
-                },
-                "/conversion/logs": {
-                    "method": "GET",
-                    "query_params": {
-                        "session_id": "Session ID",
-                        "limit": "Max logs to return (default 50)"
-                    },
-                    "description": "Get real-time logs for a session (call repeatedly for live updates)"
-                },
-                "/conversion/status": {
-                    "method": "GET",
-                    "query_params": {"session_id": "Session ID"},
-                    "description": "Get current status, progress %, phase, and timing"
-                },
-                "/conversion/data": {
-                    "method": "GET",
-                    "query_params": {
-                        "session_id": "Session ID",
-                        "include_logs": "Include full logs (optional)"
-                    },
-                    "description": "Get complete conversion data (LoadScript, Parsed, M Query)"
-                },
-                "/download-file": {
-                    "method": "POST",
-                    "query_params": {
-                        "session_id": "Session ID",
-                        "format": "File format: pq | txt | m"
-                    },
-                    "description": "Download M Query in specified format"
-                },
-                "/download-dual-zip": {
-                    "method": "POST",
-                    "query_params": {"session_id": "Session ID"},
-                    "description": "Download both .pq and .txt files in ZIP archive"
-                }
-            }
-        },
-    }
+# ===========================================================================
+# LOADSCRIPT -> M QUERY PIPELINE ENDPOINTS
+# These endpoints are called by the frontend (SummaryPage / qlikApi.ts):
+#   POST /api/migration/fetch-loadscript
+#   POST /api/migration/parse-loadscript
+#   POST /api/migration/convert-to-mquery
+#   POST /api/migration/full-pipeline
+# ===========================================================================
 
-
-@router.get("/health")
-def migration_api_health() -> Dict[str, Any]:
-    return {
-        "status": "healthy",
-        "service": "6-Stage Migration Pipeline API",
-        "version": "1.2",
-    }
-
-
-# ============================================================================
-# NEW ENDPOINTS: Qlik LoadScript to PowerBI M Query Conversion
-# ============================================================================
+import json
+import os
 
 @router.post("/fetch-loadscript")
-def fetch_loadscript_endpoint(
-    app_id: str = Query(..., description="Qlik app ID to fetch loadscript from")
-) -> Dict[str, Any]:
+async def fetch_loadscript_endpoint(
+    app_id:     str           = Query(..., description="Qlik Cloud app ID"),
+    table_name: str           = Query("", description="Selected table name (optional)"),
+    tenant_url: str           = Query("", description="Qlik Cloud tenant URL (optional override)"),
+):
     """
-    Fetch loadscript from Qlik Cloud application
-    
-    Phase 1-4 of the conversion pipeline:
-    1. Initialize fetcher
-    2. Test connection to Qlik Cloud
-    3. Fetch applications and details
-    4. Fetch loadscript from specified app
-    
-    Returns: Loadscript content with metadata
+    Phase 4: Fetch the LoadScript from a Qlik Cloud app via WebSocket Engine API.
+    Falls back to REST API if WebSocket is unavailable.
     """
     logger.info("=" * 80)
-    logger.info(f"ENDPOINT: /fetch-loadscript")
-    logger.info(f"App ID: {app_id}")
+    logger.info("[fetch_loadscript_endpoint] ENDPOINT: /fetch-loadscript")
+    logger.info("[fetch_loadscript_endpoint] App ID: %s", app_id)
     logger.info("=" * 80)
-    
+
     try:
-        # Initialize fetcher
-        logger.info("Initializing LoadScript Fetcher...")
+        from loadscript_fetcher import LoadScriptFetcher
+        logger.info("[fetch_loadscript_endpoint] Initializing LoadScript Fetcher...")
         fetcher = LoadScriptFetcher()
-        
-        # Test connection
-        logger.info("Testing Qlik Cloud connection...")
+
+        logger.info("[fetch_loadscript_endpoint] Testing Qlik Cloud connection...")
         conn_result = fetcher.test_connection()
-        if conn_result["status"] != "success":
-            logger.error(f"Connection test failed: {conn_result}")
-            raise HTTPException(status_code=400, detail="Failed to connect to Qlik Cloud")
-        
-        # Fetch loadscript
-        logger.info(f"Fetching loadscript for app: {app_id}")
-        script_result = fetcher.fetch_loadscript(app_id)
-        
-        if script_result["status"] not in ["success", "partial_success"]:
-            logger.error(f"Failed to fetch loadscript: {script_result}")
+        if conn_result.get("status") != "success":
             raise HTTPException(
-                status_code=400,
-                detail=f"Failed to fetch loadscript: {script_result.get('message', 'Unknown error')}"
+                status_code=503,
+                detail=f"Qlik Cloud connection failed: {conn_result.get('message', 'Unknown')}"
             )
-        
-        logger.info(f"✅ Successfully fetched loadscript ({script_result.get('script_length', 0)} chars)")
-        return script_result
-        
+
+        logger.info("[fetch_loadscript_endpoint] Fetching loadscript for app: %s", app_id)
+        result = fetcher.fetch_loadscript(app_id)
+
+        logger.info(
+            "[fetch_loadscript_endpoint] [OK] Successfully fetched loadscript (%d chars)",
+            len(result.get("loadscript", ""))
+        )
+        return result
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"❌ Error fetching loadscript: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("[fetch_loadscript_endpoint] Failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/parse-loadscript")
-def parse_loadscript_endpoint(
-    loadscript: str = Query(..., description="Loadscript content to parse")
-) -> Dict[str, Any]:
+async def parse_loadscript_endpoint(
+    loadscript: str = Query(..., description="Raw Qlik LoadScript to parse"),
+):
     """
-    Parse Qlik loadscript and extract components
-    
-    Phase 5 of the conversion pipeline:
-    - Extract comments
-    - Extract LOAD statements
-    - Extract table names
-    - Extract field definitions
-    - Extract data connections
-    - Extract transformations (WHERE, GROUP BY, DISTINCT, ORDER BY)
-    - Extract JOIN operations
-    - Extract variable definitions
-    
-    Returns: Parsed script structure with all components
+    Phase 5: Parse a raw Qlik LoadScript and extract structured table definitions.
+    Returns tables, fields, data connections, transformations, variables.
     """
     logger.info("=" * 80)
-    logger.info(f"ENDPOINT: /parse-loadscript")
-    logger.info(f"Script length: {len(loadscript)} characters")
+    logger.info("[parse_loadscript_endpoint] ENDPOINT: /parse-loadscript")
+    logger.info("[parse_loadscript_endpoint] Script length: %d characters", len(loadscript))
     logger.info("=" * 80)
-    
+
     try:
-        if not loadscript or len(loadscript.strip()) == 0:
-            logger.error("Empty loadscript provided")
-            raise HTTPException(status_code=400, detail="Loadscript cannot be empty")
-        
-        logger.info("Initializing LoadScript Parser...")
+        from loadscript_parser import LoadScriptParser
+        logger.info("[parse_loadscript_endpoint] Initializing LoadScript Parser...")
+        logger.info("[parse_loadscript_endpoint] Starting parse operation...")
         parser = LoadScriptParser(loadscript)
-        
-        logger.info("Starting parse operation...")
-        parse_result = parser.parse()
-        
-        if parse_result["status"] != "success":
-            logger.error(f"Parse failed: {parse_result}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Parse failed: {parse_result.get('message', 'Unknown error')}"
-            )
-        
-        logger.info(f"✅ Successfully parsed loadscript")
-        logger.info(f"   Tables: {parse_result['summary']['tables_count']}")
-        logger.info(f"   Fields: {parse_result['summary']['fields_count']}")
-        logger.info(f"   Connections: {parse_result['summary']['connections_count']}")
-        
-        return parse_result
-        
+        result = parser.parse()
+
+        logger.info("[parse_loadscript_endpoint] [OK] Successfully parsed loadscript")
+        logger.info("[parse_loadscript_endpoint]    Tables: %d", result.get("summary", {}).get("tables_count", 0))
+        logger.info("[parse_loadscript_endpoint]    Fields: %d", result.get("summary", {}).get("fields_count", 0))
+        logger.info("[parse_loadscript_endpoint]    Connections: %d", result.get("summary", {}).get("connections_count", 0))
+        return result
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"❌ Error parsing loadscript: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("[parse_loadscript_endpoint] Failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class ConvertToMQueryRequest(_BaseModel):
+    parsed_script_json: str = ""   # Full parse result JSON from /parse-loadscript
+    table_name:         str = ""   # Specific table to convert (empty = all tables)
+    base_path:          str = ""   # Base path / SharePoint site URL for file sources
+    connection_string:  str = ""   # ODBC connection string for SQL sources
 
 
 @router.post("/convert-to-mquery")
-def convert_to_mquery_endpoint(
-    parsed_script_json: str = Query(..., description="Parsed script as JSON from /parse-loadscript")
-) -> Dict[str, Any]:
+async def convert_to_mquery_endpoint(
+    request: ConvertToMQueryRequest,
+    # Legacy query-param support (kept for backward compatibility with old clients)
+    parsed_script_json_q: str = Query("", alias="parsed_script_json", description="[deprecated] Use request body instead"),
+    table_name_q:         str = Query("", alias="table_name",         description="[deprecated] Use request body instead"),
+    base_path_q:          str = Query("", alias="base_path",          description="[deprecated] Use request body instead"),
+    connection_string_q:  str = Query("", alias="connection_string",  description="[deprecated] Use request body instead"),
+):
     """
-    Convert parsed Qlik loadscript to PowerBI M Query language
-    
-    Phase 6 of the conversion pipeline:
-    - Convert data connections
-    - Convert table definitions
-    - Convert field definitions
-    - Convert transformations
-    - Convert JOIN operations
-    - Assemble final M query
-    
-    Returns: M query language code and conversion details
-    """
-    logger.info("=" * 80)
-    logger.info(f"ENDPOINT: /convert-to-mquery")
-    logger.info("=" * 80)
-    
-    try:
-        if not parsed_script_json:
-            logger.error("Empty parsed script provided")
-            raise HTTPException(status_code=400, detail="Parsed script JSON cannot be empty")
-        
-        logger.info("Parsing input JSON...")
-        parsed_script = json.loads(parsed_script_json)
-        
-        logger.info("Initializing Simple M Query Generator...")
-        generator = SimpleMQueryGenerator(parsed_script)
-        
-        logger.info("Starting M Query generation...")
-        m_query = generator.generate()
-        
-        if not m_query or len(m_query.strip()) == 0:
-            logger.error("M Query generation resulted in empty output")
-            raise HTTPException(
-                status_code=400,
-                detail="M Query generation failed - empty output"
-            )
-        
-        logger.info(f"✅ Successfully generated complete M Query")
-        logger.info(f"   Query length: {len(m_query)} characters")
-        
-        return {
-            "status": "success",
-            "m_query": m_query,
-            "query_length": len(m_query),
-            "generator": "CompleteMQueryGenerator",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON provided: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error converting to M Query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    Phase 6: Convert parsed LoadScript to Power Query M expressions.
 
+    Accepts a JSON request body (recommended — avoids HTTP 431 for large scripts).
+    Legacy query parameters are also accepted for backward compatibility.
 
-@router.post("/download-mquery")
-def download_mquery_endpoint(
-    m_query: str = Query(..., description="M query code to download"),
-    filename: str = Query("powerbi_query.m", description="Output filename")
-) -> StreamingResponse:
+    If table_name is empty, returns M expressions for ALL tables.
+
+    base_path priority: request body → query param → DATA_SOURCE_PATH env var → [DataSourcePath]
     """
-    Download the converted M Query as a file
-    
-    Generates and downloads the PowerBI M query in .m format
-    suitable for import into Power Query Editor
-    
-    Returns: Downloadable .m file
-    """
+    # Body takes priority over legacy query params
+    _parsed_json    = request.parsed_script_json or parsed_script_json_q
+    _table_name     = request.table_name         or table_name_q
+    _base_path      = request.base_path or base_path_q or os.getenv("DATA_SOURCE_PATH", "[DataSourcePath]")
+    _connection_str = request.connection_string  or connection_string_q
+
     logger.info("=" * 80)
-    logger.info(f"ENDPOINT: /download-mquery")
-    logger.info(f"Filename: {filename}")
-    logger.info(f"Query length: {len(m_query)} characters")
+    logger.info("[convert_to_mquery_endpoint] ENDPOINT: /convert-to-mquery")
+    logger.info("[convert_to_mquery_endpoint] Table: %s", _table_name or "(all)")
+    logger.info("[convert_to_mquery_endpoint] base_path: %s", _base_path)
     logger.info("=" * 80)
-    
+
+    # 1. Parse the JSON payload
     try:
-        if not m_query or len(m_query.strip()) == 0:
-            logger.error("Empty M query provided")
-            raise HTTPException(status_code=400, detail="M query cannot be empty")
-        
-        logger.info("Creating file for download...")
-        
-        # Create file content
-        file_content = m_query.encode('utf-8')
-        file_obj = io.BytesIO(file_content)
-        
-        logger.info(f"✅ File ready for download ({len(file_content)} bytes)")
-        logger.info(f"   Filename: {filename}")
-        
-        return StreamingResponse(
-            iter([file_obj.getvalue()]),
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        parse_result: Dict[str, Any] = json.loads(_parsed_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in parsed_script_json: {exc}")
+
+    # 2. Extract tables list
+    tables: List[Dict[str, Any]] = (
+        parse_result.get("details", {}).get("tables", [])
+        or parse_result.get("tables", [])
+    )
+    raw_script: str = parse_result.get("raw_script", "")
+
+    if not tables and not raw_script:
+        raise HTTPException(
+            status_code=400,
+            detail="No tables found in parsed_script_json. Re-run /parse-loadscript first."
         )
-        
+
+    # 3. Convert using MQueryConverter (handles all source types including RESIDENT)
+    try:
+        from mquery_converter import MQueryConverter
+        converter = MQueryConverter()
+        all_table_names = {t["name"] for t in tables}
+
+        if _table_name:
+            # Single-table mode
+            target = next(
+                (t for t in tables if t["name"] == _table_name),
+                None
+            )
+            if not target:
+                # Case-insensitive fallback
+                target = next(
+                    (t for t in tables if t["name"].lower() == _table_name.lower()),
+                    None
+                )
+            if not target:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"Table '{_table_name}' not found. "
+                        f"Available tables: {sorted(all_table_names)}"
+                    )
+                )
+
+            m_expr = converter.convert_one(
+                target,
+                base_path=_base_path,
+                connection_string=_connection_str or None,
+                all_table_names=all_table_names,
+            )
+
+            # For RESIDENT tables, include the source table's M as a dependency
+            dep_queries: Dict[str, str] = {}
+            if target.get("source_type") == "resident":
+                src_name = target.get("source_path", "")
+                src_table = next((t for t in tables if t["name"] == src_name), None)
+                if src_table:
+                    dep_queries[src_name] = converter.convert_one(
+                        src_table,
+                        base_path=_base_path,
+                        connection_string=_connection_str or None,
+                        all_table_names=all_table_names,
+                    )
+
+            resident_note = (
+                f" [!] RESIDENT table -- also include '{target.get('source_path')}' query in your dataset."
+                if target.get("source_type") == "resident" else ""
+            )
+
+            logger.info(
+                "[convert_to_mquery_endpoint] [OK] Converted table '%s' [%s]",
+                _table_name, target.get("source_type", "")
+            )
+
+            return {
+                "status":             "success",
+                "table_name":         _table_name,
+                "source_type":        target.get("source_type", "unknown"),
+                "m_query":            m_expr,
+                "query_length":       len(m_expr),
+                "dependency_queries": dep_queries,
+                "message":            f"M Query generated for '{_table_name}'.{resident_note}",
+                "statistics": {
+                    "total_tables_available": len(tables),
+                    "resident_dependencies":  len(dep_queries),
+                },
+            }
+
+        else:
+            # All-tables mode -- convert every table
+            all_converted = converter.convert_all(
+                tables,
+                base_path=_base_path,
+                connection_string=_connection_str or None,
+            )
+
+            # Build a combined M script: each table as a named section
+            parts = []
+            for item in all_converted:
+                parts.append(
+                    f"// \n"
+                    f"// Table: {item['name']}  [{item['source_type']}]\n"
+                    f"// \n"
+                    f"{item['m_expression']}"
+                )
+            combined_m = "\n\n".join(parts)
+
+            resident_tables = [t for t in all_converted if t["source_type"] == "resident"]
+
+            logger.info(
+                "[convert_to_mquery_endpoint] [OK] Converted %d tables (%d RESIDENT)",
+                len(all_converted), len(resident_tables)
+            )
+
+            return {
+                "status":       "success",
+                "table_name":   "",
+                "m_query":      combined_m,
+                "query_length": len(combined_m),
+                "all_tables":   all_converted,
+                "message":      (
+                    f"M Query generated for all {len(all_converted)} table(s)."
+                    + (
+                        f" Note: {len(resident_tables)} RESIDENT table(s) -- "
+                        "ensure all source queries are included in your dataset."
+                        if resident_tables else ""
+                    )
+                ),
+                "statistics": {
+                    "total_tables_converted":    len(all_converted),
+                    "total_fields_converted":    sum(len(t.get("fields", [])) for t in tables),
+                    "resident_tables":           len(resident_tables),
+                },
+            }
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"❌ Error creating download: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("[convert_to_mquery_endpoint] Conversion failed")
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}")
 
 
 @router.post("/full-pipeline")
-def full_pipeline_endpoint(
-    app_id: str = Query(..., description="Qlik app ID"),
-    auto_download: bool = Query(False, description="Auto-download result as file"),
-    table_name: str = Query(None, description="Optional: specific table name to generate M Query for")
-) -> Dict[str, Any]:
+async def full_pipeline(
+    app_id:            str = Query(..., description="Qlik Cloud app ID"),
+    table_name:        str = Query("", description="Specific table to convert (empty = all tables)"),
+    base_path:         str = Query("[DataSourcePath]", description="Base path for file sources"),
+    connection_string: str = Query("", description="ODBC connection string for SQL sources"),
+    auto_download:     bool = Query(False, description="Not used -- kept for compatibility"),
+):
     """
-    Execute complete Qlik to PowerBI M Query conversion pipeline (PHASES 1-6)
-    
-    Combines all steps:
-    1. Initialize and test connection
-    2. Get available apps and verify app exists
-    3. Fetch loadscript from Qlik Cloud
-    4. Parse the loadscript
-    5. Convert to PowerBI M Query
-    6. Optionally download the result
-    
-    Parameters:
-    - app_id: Qlik app ID (required)
-    - auto_download: Auto-download result as file (optional)
-    - table_name: Specific table name to generate M Query for (optional) - if provided, only that table's M Query is generated
-    
-    Returns: Complete conversion result with all intermediate data
+    Full pipeline: Fetch LoadScript -> Parse -> Convert to M Query.
+    Equivalent to calling fetch-loadscript -> parse-loadscript -> convert-to-mquery in sequence.
+    Returns the complete M Query plus pipeline diagnostics.
     """
     logger.info("=" * 80)
-    logger.info(f"ENDPOINT: /full-pipeline")
-    logger.info(f"App ID: {app_id}")
-    logger.info(f"Table Name: {table_name}")
-    logger.info(f"Auto Download: {auto_download}")
+    logger.info("[full_pipeline] ENDPOINT: /full-pipeline  app_id=%s table=%s", app_id, table_name or "(all)")
     logger.info("=" * 80)
-    
+
     try:
-        # Validate app_id
-        if not app_id or len(app_id.strip()) == 0:
-            raise HTTPException(status_code=400, detail="App ID is required and cannot be empty")
-        
-        # PHASE 1-4: Initialize and Fetch loadscript
-        logger.info("🔄 PHASE 1-4: Initializing and fetching loadscript...")
-        try:
-            fetcher = LoadScriptFetcher()
-            conn_result = fetcher.test_connection()
-            
-            if conn_result.get("status") != "success":
-                conn_error = conn_result.get("message", "Connection failed")
-                logger.error(f"❌ Connection check failed: {conn_error}")
-                raise HTTPException(status_code=400, detail=f"Qlik Cloud connection failed: {conn_error}")
-            
-            logger.info(f"✅ Connected to Qlik Cloud as: {conn_result.get('user_name', 'Unknown')}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"❌ Connection test failed: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Failed to connect to Qlik Cloud: {str(e)}")
-        
-        try:
-            script_result = fetcher.fetch_loadscript(app_id)
-            
-            if script_result.get("status") not in ["success", "partial_success"]:
-                fetch_error = script_result.get("message", "Unknown error")
-                logger.error(f"❌ Fetch failed: {fetch_error}")
-                # Don't fail completely - we can generate from metadata
-                loadscript = "// Could not fetch full script, using metadata-based template\n"
-                loadscript += f"// App: {script_result.get('app_name', 'Unknown')}\n"
-            else:
-                loadscript = script_result.get('loadscript', '')
-                if not loadscript or len(loadscript.strip()) == 0:
-                    loadscript = "// Could not fetch script, using template\n"
-            
-            logger.info(f"✅ Loadscript ready ({len(loadscript)} chars)")
-        except Exception as e:
-            logger.error(f"❌ Loadscript fetch error: {str(e)}")
-            # Create a minimal script to continue pipeline
-            loadscript = f"// Error fetching script: {str(e)}\n// LOAD [Field1], [Field2] FROM [Table1];\n"
-        
-        # PHASE 5: Parse loadscript
-        logger.info("🔄 PHASE 5: Parsing loadscript...")
-        try:
-            parser = LoadScriptParser(loadscript)
-            parse_result = parser.parse()
-            
-            if not parse_result or parse_result.get("status") == "error":
-                parse_error = parse_result.get("message", "Unknown parse error") if parse_result else "No result"
-                logger.warning(f"⚠️  Parse completed with issues: {parse_error}")
-                # Continue with empty result - converter can handle it
-                parse_result = {
-                    "status": "partial_success",
-                    "summary": {"tables_count": 0, "fields_count": 0, "comments_count": 0},
-                    "components": {"tables": [], "fields": [], "connections": []},
-                    "message": parse_error
-                }
-            else:
-                logger.info(f"✅ Parsed successfully")
-                logger.info(f"   - Tables: {parse_result.get('summary', {}).get('tables_count', 0)}")
-                logger.info(f"   - Fields: {parse_result.get('summary', {}).get('fields_count', 0)}")
-        except Exception as e:
-            logger.error(f"❌ Parser error: {str(e)}")
-            parse_result = {
-                "status": "partial_success",
-                "summary": {"tables_count": 0, "fields_count": 0},
-                "components": {"tables": [], "fields": [], "connections": []},
-                "error": str(e)
-            }
-        
-        # PHASE 6: Convert to M Query
-        logger.info("🔄 PHASE 6: Converting to PowerBI M Query...")
-        try:
-            # If table_name is provided, filter the parse result to only include that table
-            filtered_parse_result = parse_result
-            if table_name:
-                logger.info(f"🔍 Filtering M Query for table: {table_name}")
-                tables_in_result = parse_result.get("components", {}).get("tables", [])
-                
-                # Find the matching table
-                matching_table = None
-                for t in tables_in_result:
-                    if isinstance(t, dict) and t.get("name") == table_name:
-                        matching_table = t
-                        break
-                    elif isinstance(t, str) and t == table_name:
-                        matching_table = t
-                        break
-                
-                if matching_table:
-                    # Create a filtered parse result with only this table
-                    filtered_parse_result = dict(parse_result)
-                    filtered_parse_result["components"] = {
-                        "tables": [matching_table],
-                        "fields": parse_result.get("components", {}).get("fields", []),
-                        "connections": parse_result.get("components", {}).get("connections", [])
-                    }
-                    filtered_parse_result["summary"] = {
-                        "tables_count": 1,
-                        "fields_count": len(parse_result.get("components", {}).get("fields", [])),
-                        "comments_count": 0
-                    }
-                    logger.info(f"✅ Filtered parse result to table: {table_name}")
-                else:
-                    logger.warning(f"⚠️  Table {table_name} not found in parsed tables. Generating M Query for all tables.")
-            
-            generator = SimpleMQueryGenerator(filtered_parse_result)
-            m_query = generator.generate()
-            
-            if not m_query or len(m_query.strip()) == 0:
-                logger.warning("⚠️  No M Query generated, creating minimal query...")
-                m_query = f"""let
-    Source = "Generated from Qlik Cloud App: {script_result.get('app_name', 'Unknown')}",
-    // App ID: {app_id}
-    // Table: {table_name or 'All tables'}
-    // Generated: {datetime.now().isoformat()}
-    Result = Source
-in
-    Result"""
-            
-            logger.info(f"✅ M Query generated ({len(m_query)} chars)")
-            conversion_result = {"status": "success", "m_query": m_query}
-        except Exception as e:
-            logger.error(f"❌ Generator error: {str(e)}")
-            m_query = f"""let
-    Source = "Error generating M Query: {str(e)}",
-    Result = Source
-in
-    Result"""
-            conversion_result = {"status": "partial_success", "m_query": m_query}
-        
-        logger.info("=" * 80)
-        logger.info("✅ COMPLETE PIPELINE EXECUTED")
-        logger.info("=" * 80)
-        
-        return {
-            "status": "success",
-            "pipeline": "full_execution",
-            "app_id": app_id,
-            "table_name": table_name,
-            "phases": {
-                "phase_1_4_fetch": {
-                    "status": script_result.get('status', 'unknown'),
-                    "script_length": len(loadscript),
-                    "method": script_result.get('method', 'unknown')
-                },
-                "phase_5_parse": {
-                    "status": parse_result.get('status', 'unknown'),
-                    "summary": parse_result.get('summary', {})
-                },
-                "phase_6_convert": {
-                    "status": conversion_result.get('status', 'unknown'),
-                    "query_length": len(m_query)
-                }
-            },
-            "m_query": m_query,
-            "detailed_results": {
-                "fetch_result": script_result,
-                "parse_result": parse_result,
-                "conversion_result": conversion_result
-            },
-            "auto_download": auto_download
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Pipeline error: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
-
-
-# ============================================================================
-# NEW ENDPOINTS: Conversion Session Tracking & Visual Logging
-# ============================================================================
-
-@router.post("/conversion/start-session")
-def start_conversion_session() -> Dict[str, Any]:
-    """
-    Start a new conversion session for tracking progress and logs
-    
-    Returns: Session ID for use in subsequent calls
-    """
-    session_manager = get_session_manager()
-    session_id = session_manager.create_session()
-    session = session_manager.get_session(session_id)
-    
-    if session:
-        session.set_status("PENDING", "Conversion session started")
-    
-    logger.info(f"📌 Started conversion session: {session_id}")
-    
-    return {
-        "success": True,
-        "session_id": session_id,
-        "message": "Conversion session created",
-        "endpoints": {
-            "fetch": f"/api/migration/full-pipeline-tracked?session_id={session_id}",
-            "logs": f"/api/migration/conversion/logs?session_id={session_id}",
-            "status": f"/api/migration/conversion/status?session_id={session_id}",
-            "data": f"/api/migration/conversion/data?session_id={session_id}"
-        }
-    }
-
-
-@router.get("/conversion/logs")
-def get_conversion_logs(
-    session_id: str = Query(..., description="Conversion session ID"),
-    limit: int = Query(50, description="Max number of logs to return")
-) -> Dict[str, Any]:
-    """
-    Get logs for a conversion session with visual formatting
-    
-    Returns: Array of log entries with timestamps and levels
-    """
-    session_manager = get_session_manager()
-    logs = session_manager.get_session_logs(session_id, limit)
-    
-    if not logs:
-        logger.warning(f"No logs found for session: {session_id}")
-    
-    return {
-        "session_id": session_id,
-        "log_count": len(logs),
-        "logs": logs,
-        "timestamp_retrieved": datetime.now().isoformat()
-    }
-
-
-@router.get("/conversion/status")
-def get_conversion_status(
-    session_id: str = Query(..., description="Conversion session ID")
-) -> Dict[str, Any]:
-    """
-    Get real-time status and progress of a conversion session
-    
-    Returns: Session status, progress percentage, current phase
-    """
-    session_manager = get_session_manager()
-    session = session_manager.get_session(session_id)
-    
-    if not session:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-    
-    return session.to_dict()
-
-
-@router.get("/conversion/data")
-def get_conversion_data(
-    session_id: str = Query(..., description="Conversion session ID"),
-    include_logs: bool = Query(False, description="Include full logs in response")
-) -> Dict[str, Any]:
-    """
-    Get complete conversion data including results and optionally logs
-    
-    Returns: Full session data with LoadScript, Parsed Script, and M Query
-    """
-    session_manager = get_session_manager()
-    data = session_manager.get_session_data(session_id)
-    
-    if "error" in data:
-        raise HTTPException(status_code=404, detail=data["error"])
-    
-    if not include_logs:
-        data.pop("logs", None)
-    
-    return data
-
-
-@router.post("/full-pipeline-tracked")
-def full_pipeline_with_tracking(
-    app_id: str = Query(..., description="Qlik app ID"),
-    session_id: str = Query(..., description="Conversion session ID from /conversion/start-session")
-) -> Dict[str, Any]:
-    """
-    Execute full conversion pipeline with real-time progress tracking via session
-    
-    This is the same as /full-pipeline but logs all intermediate steps to the session
-    for real-time UI updates.
-    
-    Call /conversion/logs?session_id=<session_id> to get live progress
-    """
-    session_manager = get_session_manager()
-    session = session_manager.get_session(session_id)
-    
-    if not session:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-    
-    try:
-        session.set_status("RUNNING", "Starting conversion pipeline...")
-        session.set_progress(5, "Initializing")
-        
-        # PHASE 1-4: Fetch loadscript
-        session.set_phase(1, f"Fetching loadscript from app: {app_id}")
-        session.set_progress(10, "Testing Qlik Cloud connection")
-        
-        try:
-            fetcher = LoadScriptFetcher()
-            conn_result = fetcher.test_connection()
-            
-            if conn_result.get("status") != "success":
-                session.set_status("FAILED", f"Connection failed: {conn_result.get('message', 'Unknown')}")
-                raise HTTPException(status_code=400, detail="Failed to connect to Qlik Cloud")
-            
-            session.add_log(f"Connected to Qlik Cloud as: {conn_result.get('user_name', 'Unknown')}", LogLevel.SUCCESS)
-            session.set_progress(20, "Fetching loadscript...")
-            
-            script_result = fetcher.fetch_loadscript(app_id)
-            
-            if script_result.get("status") not in ["success", "partial_success"]:
-                loadscript = f"// Could not fetch loadscript for app: {app_id}\n"
-            else:
-                loadscript = script_result.get('loadscript', '')
-            
-            session.add_log(f"Loadscript fetched ({len(loadscript)} characters)", LogLevel.SUCCESS, phase=4)
-            session.set_result_data(loadscript=loadscript)
-            
-        except Exception as e:
-            session.set_status("FAILED", f"Fetch error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
-        
-        # PHASE 5: Parse loadscript
-        session.set_phase(5, "Parsing loadscript")
-        session.set_progress(40, "Parsing script components...")
-        
-        try:
-            parser = LoadScriptParser(loadscript)
-            parse_result = parser.parse()
-            
-            if parse_result.get("status") == "error":
-                parse_result = {
-                    "status": "partial_success",
-                    "summary": {"tables_count": 0, "fields_count": 0},
-                    "details": {"tables": [], "fields": [], "data_connections": []}
-                }
-            
-            tables_count = parse_result.get('summary', {}).get('tables_count', 0)
-            fields_count = parse_result.get('summary', {}).get('fields_count', 0)
-            
-            session.add_log(
-                f"Parsed: {tables_count} tables, {fields_count} fields",
-                LogLevel.SUCCESS,
-                phase=5,
-                data={"tables": tables_count, "fields": fields_count}
-            )
-            session.set_result_data(parsed=parse_result)
-            
-        except Exception as e:
-            session.set_status("FAILED", f"Parse error: {str(e)}")
-            parse_result = {
-                "status": "partial_success",
-                "summary": {"tables_count": 0, "fields_count": 0},
-                "details": {"tables": [], "fields": [], "data_connections": []}
-            }
-        
-        # PHASE 6: Convert to M Query
-        session.set_phase(6, "Converting to Power BI M Query")
-        session.set_progress(70, "Generating M query code...")
-        
-        try:
-            generator = SimpleMQueryGenerator(parse_result)
-            m_query = generator.generate()
-            
-            if not m_query:
-                m_query = f"""let
-    Source = "Generated from Qlik Cloud App: {app_id}",
-    Result = Source
-in
-    Result"""
-            
-            session.add_log(
-                f"M Query generated ({len(m_query)} characters)",
-                LogLevel.SUCCESS,
-                phase=6,
-                data={"query_length": len(m_query)}
-            )
-            session.set_result_data(m_query=m_query)
-            
-        except Exception as e:
-            logger.error(f"Generator error: {str(e)}")
-            m_query = f"""let
-    Source = "Error in generation: {str(e)}",
-    Result = Source
-in
-    Result"""
-        
-        # PHASE 7: Generate files
-        session.set_phase(7, "Generating download files")
-        session.set_progress(90, "Creating file formats...")
-        
-        try:
-            generator = MQueryFileGenerator(m_query, parse_result)
-            files = generator.get_file_downloads()
-            
-            session.add_log("Generated .pq, .txt, and .m formats", LogLevel.SUCCESS, phase=7)
-            session.set_progress(95, "Finalizing...")
-            
-        except Exception as e:
-            session.add_log(f"File generation error: {str(e)}", LogLevel.WARNING)
-            files = {}
-        
-        # Mark as complete
-        session.set_progress(100, "Conversion complete")
-        session.set_status("COMPLETED", "Pipeline completed successfully")
-        session.finalize()
-        
-        logger.info(f"✅ Pipeline completed for session {session_id}")
-        
-        return {
-            "success": True,
-            "session_id": session_id,
-            "status": "COMPLETED",
-            "progress": 100,
-            "app_id": app_id,
-            "results": {
-                "loadscript_length": len(loadscript) if loadscript else 0,
-                "tables_count": parse_result.get('summary', {}).get('tables_count', 0),
-                "fields_count": parse_result.get('summary', {}).get('fields_count', 0),
-                "m_query_length": len(m_query) if m_query else 0,
-                "m_query": m_query
-            },
-            "files_available": list(files.keys()),
-            "endpoints": {
-                "download_pq": f"/api/migration/download-file?session_id={session_id}&format=pq",
-                "download_txt": f"/api/migration/download-file?session_id={session_id}&format=txt",
-                "download_m": f"/api/migration/download-file?session_id={session_id}&format=m",
-                "download_dual_zip": f"/api/migration/download-dual-zip?session_id={session_id}",
-                "logs": f"/api/migration/conversion/logs?session_id={session_id}"
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        session.set_status("FAILED", f"Pipeline error: {str(e)}")
-        session.finalize()
-        logger.error(f"❌ Tracked pipeline error: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Pipeline failed: {str(e)}")
-
-
-@router.post("/download-file")
-def download_conversion_file(
-    session_id: str = Query(..., description="Conversion session ID"),
-    format: str = Query("m", description="File format: pq | txt | m"),
-    table: str = Query(None, description="Optional: specific table name for download")
-) -> StreamingResponse:
-    """
-    Download converted M Query in specified format
-    
-    Formats:
-    - pq: Power Query format (.pq)
-    - txt: Documentation format (.txt)
-    - m: M Query format (.m)
-    
-    If table parameter is provided, attempts to extract that table's M Query.
-    Currently returns the full M Query with table name in filename.
-    """
-    session_manager = get_session_manager()
-    session = session_manager.get_session(session_id)
-    
-    if not session:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-    
-    if not session.m_query:
-        raise HTTPException(status_code=400, detail="No M Query available in this session")
-    
-    try:
-        generator = MQueryFileGenerator(session.m_query, session.parsed_script)
-        files = generator.get_file_downloads()
-        
-        if format not in files:
+        # Phase 4: Fetch
+        from loadscript_fetcher import LoadScriptFetcher
+        fetcher = LoadScriptFetcher()
+        fetch_result = fetcher.fetch_loadscript(app_id)
+        if fetch_result.get("status") not in ("success", "partial_success"):
             raise HTTPException(
-                status_code=400,
-                detail=f"Invalid format: {format}. Available: {', '.join(files.keys())}"
+                status_code=503,
+                detail=f"Fetch failed: {fetch_result.get('message', 'Unknown error')}"
             )
-        
-        file_data = files[format]
-        content = file_data['content'].encode('utf-8')
-        
-        # Include table name in filename if specified
-        filename = file_data['filename']
-        if table and table != 'combined':
-            # Insert table name before extension
-            name_parts = filename.rsplit('.', 1)
-            filename = f"{name_parts[0]}_{table}.{name_parts[1]}" if len(name_parts) > 1 else f"{filename}_{table}"
-        
-        logger.info(f"📥 Downloading {format} file: {filename} ({len(content)} bytes)" + (f" for table: {table}" if table else ""))
-        
-        return StreamingResponse(
-            iter([content]),
-            media_type=file_data['mime_type'],
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
-        
+        loadscript = fetch_result.get("loadscript", "")
+
+        # Phase 5: Parse
+        from loadscript_parser import LoadScriptParser
+        parse_result = LoadScriptParser(loadscript).parse()
+        tables = parse_result.get("details", {}).get("tables", [])
+
+        # Phase 6: Convert
+        from mquery_converter import MQueryConverter
+        converter = MQueryConverter()
+        all_table_names = {t["name"] for t in tables}
+
+        if table_name:
+            target = next((t for t in tables if t["name"] == table_name), None)
+            if not target:
+                target = next((t for t in tables if t["name"].lower() == table_name.lower()), None)
+            if not target:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Table '{table_name}' not found. Available: {sorted(all_table_names)}"
+                )
+            m_query = converter.convert_one(
+                target, base_path=base_path,
+                connection_string=connection_string or None,
+                all_table_names=all_table_names,
+            )
+        else:
+            all_converted = converter.convert_all(
+                tables, base_path=base_path, connection_string=connection_string or None
+            )
+            m_query = "\n\n".join(
+                f"// Table: {t['name']}\n{t['m_expression']}" for t in all_converted
+            )
+
+        logger.info("[full_pipeline] [OK] Pipeline complete -- %d tables, query length %d", len(tables), len(m_query))
+
+        return {
+            "status":    "success",
+            "app_id":    app_id,
+            "app_name":  fetch_result.get("app_name", ""),
+            "m_query":   m_query,
+            "phases": {
+                "fetch": {
+                    "method":        fetch_result.get("method"),
+                    "script_length": len(loadscript),
+                },
+                "parse": {
+                    "tables_count":  len(tables),
+                    "fields_count":  parse_result.get("summary", {}).get("fields_count", 0),
+                },
+                "convert": {
+                    "table_requested": table_name or "(all)",
+                    "query_length":    len(m_query),
+                },
+            },
+            "summary": {
+                "total_tables_converted": len(tables),
+                "query_length":           len(m_query),
+            },
+        }
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Download error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("[full_pipeline] Failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/download-dual-zip")
-def download_dual_zip_file(
-    session_id: str = Query(..., description="Conversion session ID")
-) -> StreamingResponse:
+# ===========================================================================
+# PUBLISH M QUERY -> POWER BI  (simple REST Push dataset)
+# Called by the "Publish MQuery to PowerBI" button in the frontend.
+# Uses service principal credentials from .env -- no user login required.
+# ===========================================================================
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Relationship inference helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _tables_m_to_extractor_format(tables_m: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Download both .pq and .txt files combined in a ZIP archive
-    
-    Useful for downloading both formats at once to combine in different contexts
+    Convert tables_m (from parse_combined_mquery / MQueryConverter) into the
+    format that RelationshipExtractor expects.
+
+    tables_m["fields"] is a list of dicts:
+        [{"name": "VIN", "type": "string", ...}, ...]
+
+    RelationshipExtractor["fields"] must be a list of plain strings:
+        ["VIN", "ModelName", ...]
+
+    We use alias if set (explicit AS rename), otherwise the raw field name.
+    This must match exactly what ends up as the column header in the BIM/M
+    expression, because relationship column refs are validated against those names.
     """
-    session_manager = get_session_manager()
-    session = session_manager.get_session(session_id)
-    
-    if not session:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-    
-    if not session.m_query:
-        raise HTTPException(status_code=400, detail="No M Query available in this session")
-    
+    result = []
+    for t in tables_m:
+        raw_fields = t.get("fields", [])
+        if raw_fields and isinstance(raw_fields[0], dict):
+            # Dict format from loadscript_parser / mquery_converter
+            field_names = [
+                f.get("alias") or f.get("name", "")
+                for f in raw_fields
+                if f.get("name") and f.get("name") != "*"
+            ]
+        else:
+            # Already strings
+            field_names = [f for f in raw_fields if f and f != "*"]
+
+        result.append({
+            "name":        t["name"],
+            "source_type": t.get("source_type", ""),
+            "fields":      field_names,
+        })
+    return result
+
+
+def _infer_relationships_from_tables(tables_m: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Auto-infer Power BI relationships from tables_m using RelationshipExtractor
+    (the canonical inference engine already in the codebase).
+
+    Converts the dict-field format from tables_m into the string-field format
+    that RelationshipExtractor requires, runs extraction, then normalizes via
+    RelationshipNormalizer.normalize_list() into BIM-compatible relationship dicts.
+
+    Filters out manyToMany relationships (denormalised fields like ServiceType)
+    since Power BI requires unique keys on the one-side of every relationship.
+
+    Returns a list of dicts with keys:
+        fromTable, fromColumn, toTable, toColumn, cardinality, crossFilteringBehavior
+    """
+    from relationship_extractor import RelationshipExtractor
+    from relationship_normalizer import RelationshipNormalizer
+
+    # Convert field format: dict -> string
+    extractor_tables = _tables_m_to_extractor_format(tables_m)
+
+    # Run extraction
+    extractor = RelationshipExtractor(extractor_tables)
+    raw_rels = extractor.extract()
+
+    # Filter out manyToMany — these are denormalised fields (e.g. ServiceType)
+    # Power BI requires the one-side to have unique values; manyToMany breaks this
+    valid_rels = [r for r in raw_rels if r.get("cardinality") != "manyToMany"]
+
+    if not valid_rels:
+        return []
+
+    # Normalize into consistent format
+    normalized = RelationshipNormalizer.normalize_list(valid_rels)
+
+    # Convert to BIM-compatible dicts
+    return [
+        {
+            "fromTable":              n.from_table,
+            "fromColumn":             n.from_column,
+            "toTable":                n.to_table,
+            "toColumn":               n.to_column,
+            "cardinality":            n.cardinality,      # ManyToOne
+            "crossFilteringBehavior": n.direction,        # Single / Both
+        }
+        for n in normalized
+    ]
+
+class PublishMQueryRequest(_BaseModel):
+    dataset_name:         str  = "Qlik_Migrated_Dataset"
+    combined_mquery:      str  = ""
+    raw_script:           str  = ""
+    access_token:         str  = ""
+    data_source_path:     str  = ""
+    sharepoint_url:       str  = ""   # SharePoint site URL for CSV/Excel sources
+    db_connection_string: str  = ""
+    relationships:        list = []
+
+@router.post("/publish-mquery")
+async def publish_mquery_endpoint(
+    request: PublishMQueryRequest,
+):
+    """
+    Publish M Query to Power BI as a full semantic model.
+
+    Strategy (tried in order):
+      1. Fabric Items API  -- creates real semantic model with M queries (PPU/Fabric)
+      2. Push dataset      -- fallback, works on any workspace (limited Model View)
+
+    Auth for PPU workspaces:
+      - Provide access_token (user-delegated) in request body, OR
+      - Set POWERBI_USER + POWERBI_PASSWORD in .env for silent ROPC login, OR
+      - If neither available, returns auth_required=true with device code URL.
+
+    Data source options:
+      - data_source_path      : sets the DataSourcePath parameter default in M queries
+      - db_connection_string  : rewrites CSV sources to ODBC (e.g. SQL Server)
+    """
+    dataset_name = request.dataset_name or "Qlik_Migrated_Dataset"
+    combined_m   = request.combined_mquery or ""
+    raw_script   = request.raw_script or ""
+
+    logger.info("=" * 70)
+    logger.info("[publish_mquery] ENDPOINT: /publish-mquery")
+    logger.info("[publish_mquery] Dataset: %s", dataset_name)
+    logger.info("=" * 70)
+
+    workspace_id = os.getenv("POWERBI_WORKSPACE_ID", "")
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="POWERBI_WORKSPACE_ID not set in .env file.")
+
+    if not combined_m and not raw_script:
+        raise HTTPException(status_code=400, detail="Provide combined_mquery or raw_script.")
+
+    # Parse M Query or LoadScript into table list
     try:
-        logger.info(f"📦 Creating dual-file ZIP for session {session_id}")
-        zip_content = generate_dual_download_zip(session.m_query, session.parsed_script)
-        
-        logger.info(f"📥 Downloading ZIP file ({len(zip_content)} bytes)")
-        
-        return StreamingResponse(
-            iter([zip_content]),
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": "attachment; filename=powerbi_query_files.zip"
-            }
+        from pbit_generator import parse_combined_mquery
+        if combined_m.strip():
+            tables_m = parse_combined_mquery(combined_m)
+            # Enrich with field metadata — extract from the M expression itself.
+            # parse_combined_mquery only returns {name, source_type, m_expression}
+            # with no fields. We need fields populated for relationship inference.
+            # Primary: parse from the M expression using _extract_fields_from_m.
+            # Fallback: if raw_script also provided, use loadscript_parser for richer types.
+            try:
+                from powerbi_publisher import _extract_fields_from_m
+                for t in tables_m:
+                    if not t.get("fields"):
+                        extracted = _extract_fields_from_m(t.get("m_expression", ""))
+                        # Convert from [{name, type}] dicts to the format
+                        # _tables_m_to_extractor_format() expects
+                        t["fields"] = extracted  # list of {"name": ..., "type": ...}
+                        if extracted:
+                            logger.info(
+                                "[publish_mquery] Extracted %d fields from M for table '%s': %s",
+                                len(extracted), t["name"],
+                                [f["name"] for f in extracted]
+                            )
+            except Exception as extract_exc:
+                logger.warning("[publish_mquery] M-expression field extraction failed: %s", extract_exc)
+
+            # Secondary enrichment: if raw_script also sent, use loadscript_parser
+            # for better type information (overrides M-extracted types)
+            if raw_script:
+                try:
+                    from loadscript_parser import LoadScriptParser
+                    from mquery_converter import MQueryConverter
+                    parse_result  = LoadScriptParser(raw_script).parse()
+                    raw_tables    = parse_result.get("details", {}).get("tables", [])
+                    all_converted = MQueryConverter().convert_all(raw_tables)
+                    fields_by_name = {t["name"]: t.get("fields", []) for t in all_converted}
+                    for t in tables_m:
+                        if fields_by_name.get(t["name"]):
+                            t["fields"] = fields_by_name[t["name"]]
+                except Exception as enrich_exc:
+                    logger.warning("[publish_mquery] LoadScript field enrichment failed: %s", enrich_exc)
+
+            QLIK_SYSTEM_PREFIXES = ("__city", "__geo", "__key", "AutoCalendar", "MasterCalendar")
+            before = len(tables_m)
+            tables_m = [t for t in tables_m if not t["name"].startswith(QLIK_SYSTEM_PREFIXES)]
+            logger.info("[publish_mquery] Parsed combined M Query: %d tables (%d system tables filtered)", len(tables_m), before - len(tables_m))
+        else:
+            from loadscript_parser import LoadScriptParser
+            from mquery_converter import MQueryConverter
+            parse_result = LoadScriptParser(raw_script).parse()
+            raw_tables   = parse_result.get("details", {}).get("tables", [])
+            converter    = MQueryConverter()
+            all_converted = converter.convert_all(raw_tables, base_path="[DataSourcePath]")
+            tables_m = [{"name": t["name"], "source_type": t["source_type"],
+                         "m_expression": t["m_expression"],
+                         "fields": t.get("fields", [])} for t in all_converted]
+            QLIK_SYSTEM_PREFIXES = ("__city", "__geo", "__key", "AutoCalendar", "MasterCalendar")
+            before = len(tables_m)
+            tables_m = [t for t in tables_m if not t["name"].startswith(QLIK_SYSTEM_PREFIXES)]
+            logger.info("[publish_mquery] Converted LoadScript: %d tables (%d system tables filtered)", len(tables_m), before - len(tables_m))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Script parse/convert error: {exc}")
+
+    if not tables_m:
+        raise HTTPException(status_code=400, detail="No tables found in the provided script.")
+
+    # ── Relationship inference ────────────────────────────────────────────────
+    # If the frontend sent explicit relationships, use them.
+    # Otherwise auto-infer from the parsed tables using Qlik naming conventions:
+    #   • Shared field names that look like keys (end in ID, Key, VIN, etc.)
+    #   • Qualified fields TableName.FieldName that cross-reference another table
+    relationships = request.relationships or []
+    if not relationships:
+        try:
+            relationships = _infer_relationships_from_tables(tables_m)
+            if relationships:
+                logger.info(
+                    "[publish_mquery] Auto-inferred %d relationship(s) from table fields",
+                    len(relationships),
+                )
+                for r in relationships:
+                    logger.info(
+                        "[publish_mquery]   %s.%s -> %s.%s",
+                        r["fromTable"], r["fromColumn"],
+                        r["toTable"],   r["toColumn"],
+                    )
+        except Exception as rel_exc:
+            logger.warning("[publish_mquery] Relationship inference failed: %s", rel_exc)
+
+    # Publish via new publisher (TMSL/Fabric API -> Push dataset fallback)
+    try:
+        from powerbi_publisher import publish_semantic_model
+        result = publish_semantic_model(
+            dataset_name=dataset_name,
+            tables_m=tables_m,
+            workspace_id=workspace_id,
+            relationships=relationships,
+            # data_source_path=request.sharepoint_url or request.data_source_path or "",
+            data_source_path=request.data_source_path or "",
+            db_connection_string=request.db_connection_string or "",
+            access_token=request.access_token or "",
         )
-        
-    except Exception as e:
-        logger.error(f"ZIP download error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+        # If auth required (PPU device code flow), return 200 with auth_required flag
+        if result.get("auth_required"):
+            return {
+                "success": False,
+                "auth_required": True,
+                "user_code":       result.get("user_code"),
+                "device_code_url": result.get("device_code_url"),
+                "message":         result.get("message", ""),
+                "instructions":    (
+                    f"1. Open {result.get('device_code_url')} in your browser\n"
+                    f"2. Enter code: {result.get('user_code')}\n"
+                    f"3. Sign in with your Power BI account\n"
+                    f"4. Click Publish again"
+                ),
+            }
+
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Publish failed"))
+
+        logger.info("[publish_mquery] [OK] Published via %s", result.get("method"))
+        return {
+            "success":         True,
+            "dataset_id":      result.get("dataset_id", ""),
+            "dataset_name":    dataset_name,
+            "tables_deployed": len(tables_m),
+            "method":          result.get("method", ""),
+            "workspace_url":   result.get("workspace_url", ""),
+            "message":         result.get("message", f"Published {dataset_name} to Power BI"),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[publish_mquery] Publish failed")
+        raise HTTPException(status_code=500, detail=f"Publish failed: {exc}")
+
+
+class GeneratePbitRequest(_BaseModel):
+    dataset_name:          str = "Qlik_Migrated_Dataset"
+    combined_mquery:       str = ""     # combined M Query text (all tables)
+    raw_script:            str = ""     # fallback: raw Qlik LoadScript
+    data_source_path:      str = ""     # default value for DataSourcePath parameter
+    relationships:         list = []    # [{from_table, from_column, to_table, to_column}]
+
+
+@router.post("/generate-pbit")
+async def generate_pbit_endpoint(request: GeneratePbitRequest):
+    """
+    Generate a Power BI Template (.pbit) file from a combined M Query string.
+
+    The .pbit opens directly in Power BI Desktop -- each Qlik table becomes
+    a separate Query with its M expression. DataSourcePath is exposed as a
+    Query Parameter so users can point it at their data folder once.
+
+    Accepts JSON body:
+      {
+        "dataset_name":     "MyDataset",
+        "combined_mquery":  "// Table: Orders [csv]\\nlet\\n...",
+        "data_source_path": "C:/Data",    // optional default for the parameter
+        "relationships":    []            // optional
+      }
+
+    Returns: base64-encoded .pbit file + metadata.
+    """
+    import base64
+
+    logger.info("[generate_pbit] Dataset: %s", request.dataset_name)
+
+    combined_m = request.combined_mquery or ""
+    raw_script  = request.raw_script or ""
+
+    if not combined_m and not raw_script:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either combined_mquery (from Convert to MQuery) or raw_script."
+        )
+
+    try:
+        from pbit_generator import parse_combined_mquery, build_pbit
+
+        # If we have a combined M query, parse it directly
+        if combined_m.strip():
+            tables_m = parse_combined_mquery(combined_m)
+            if not tables_m:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Could not parse table sections from combined_mquery. "
+                        "Make sure it was generated by the Convert to MQuery button "
+                        "(expects '// Table: Name [type]' headers)."
+                    )
+                )
+        else:
+            # Fallback: run the full conversion pipeline from raw script
+            from loadscript_parser import LoadScriptParser
+            from mquery_converter import MQueryConverter
+
+            parse_result = LoadScriptParser(raw_script).parse()
+            tables = parse_result.get("details", {}).get("tables", [])
+            if not tables:
+                raise HTTPException(status_code=400, detail="No tables found in raw_script.")
+
+            converter = MQueryConverter()
+            all_table_names = {t["name"] for t in tables}
+            all_converted = converter.convert_all(
+                tables,
+                base_path="[DataSourcePath]",
+                connection_string=None,
+            )
+            tables_m = [
+                {"name": t["name"], "source_type": t["source_type"], "m_expression": t["m_expression"]}
+                for t in all_converted
+            ]
+
+        logger.info("[generate_pbit] Building .pbit with %d tables", len(tables_m))
+
+        pbit_bytes = build_pbit(
+            tables_m=tables_m,
+            dataset_name=request.dataset_name,
+            relationships=request.relationships or [],
+            data_source_path_default=request.data_source_path or "",
+        )
+
+        pbit_b64 = base64.b64encode(pbit_bytes).decode("ascii")
+        safe_name = re.sub(r"[^\w\-]", "_", request.dataset_name)
+
+        logger.info("[generate_pbit] [OK] .pbit generated: %d bytes, %d tables", len(pbit_bytes), len(tables_m))
+
+        return {
+            "success":        True,
+            "dataset_name":   request.dataset_name,
+            "filename":       f"{safe_name}.pbit",
+            "tables_count":   len(tables_m),
+            "tables":         [{"name": t["name"], "source_type": t["source_type"]} for t in tables_m],
+            "file_size_bytes": len(pbit_bytes),
+            "pbit_base64":    pbit_b64,
+            "message": (
+                f"[OK] {request.dataset_name}.pbit generated with {len(tables_m)} table(s). "
+                "Open in Power BI Desktop -> set DataSourcePath parameter -> Refresh."
+            ),
+            "instructions": [
+                "1. Download the .pbit file",
+                "2. Open it in Power BI Desktop",
+                "3. When prompted for 'DataSourcePath', enter your data folder path (e.g. C:/Data)",
+                "4. Click Refresh -- Power BI will load all tables from the CSVs",
+                "5. Publish to Power BI Service from Desktop",
+            ],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[generate_pbit] Failed")
+        raise HTTPException(status_code=500, detail=f"PBIT generation failed: {exc}")
+
 
