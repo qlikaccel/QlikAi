@@ -52,11 +52,11 @@ from typing import List, Dict, Any, Optional
 import logging
 import base64
 import io
-#from fastapi import HTTPException
+from fastapi import HTTPException
 from dotenv import load_dotenv
 
 load_dotenv()
-#app = FastAPI()
+app = FastAPI()
 
 # Visualisation / numeric
 import matplotlib.pyplot as plt
@@ -1930,7 +1930,7 @@ async def check_data_quality(request: TableDataRequest):
 
 HF_URL = "https://router.huggingface.co/v1/chat/completions"
 HF_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
-HF_MODEL_FALLBACK = "mistralai/Mistral-7B-Instruct-v0.3"
+
 
 # def call_hf_model(prompt: str):
 
@@ -2003,30 +2003,46 @@ def call_hf_model(prompt: str):
         "temperature": 0.3
     }
 
-    for model in [HF_MODEL, HF_MODEL_FALLBACK]:
-        payload["model"] = model
-        try:
-            resp = requests.post(HF_URL, headers=headers, json=payload, timeout=60)
+    try:
 
-            if resp.status_code == 200:
-                data = resp.json()
-                if "choices" in data:
-                    return data["choices"][0]["message"]["content"]
+        resp = requests.post(
+            "https://router.huggingface.co/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
 
-            logger.warning(f"HF model {model} failed ({resp.status_code}): {resp.text[:200]}")
+        if resp.status_code != 200:
+            print("HF ERROR:", resp.status_code)
+            print("HF BODY:", resp.text[:500])
 
-        except requests.exceptions.Timeout:
-            logger.warning(f"HF model {model} timed out, trying fallback...")
-            continue
+            raise HTTPException(
+                status_code=502,
+                detail=f"HF API error {resp.status_code}: {resp.text[:200]}"
+            )
 
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"HF model {model} request error: {e}, trying fallback...")
-            continue
+        data = resp.json()
+    
+        if "choices" not in data:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected HF response: {data}"
+            )
 
-    raise HTTPException(
-        status_code=503,
-        detail="LLM summary service temporarily unavailable. Please try again in a few minutes."
-    )
+        return data["choices"][0]["message"]["content"]
+
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=504,
+            detail="HF request timed out"
+        )
+
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"HF request failed: {str(e)}"
+        )
+
 # ================= EXECUTIVE SUMMARY =================
 
 def compute_metrics(df):
@@ -2076,55 +2092,47 @@ async def generate_hf_summary(request: TableDataRequest):
         insights_text = "\n".join(insights)
 
         # Step 3 — LLM narrative generation
-        prompt = f"""You are a senior business intelligence analyst preparing an executive summary.
+        prompt = f"""You are a senior business data analyst.
 
-Dataset: {request.table_name}
+Convert the following analytical insights into exactly 10 concise executive summary bullet points.
 
-Key metrics:
-{json.dumps(metrics, indent=2)[:1500]}
-
-Detected insights:
+Insights:
 {insights_text}
 
-Task:
-Write exactly 7 executive summary bullet points for leadership.
-
-Guidelines:
-- Each bullet must start with "-"
-- Maximum 12 words
-- Focus on business impact
-- Include numbers where possible
-- Avoid filler language
-- One insight per bullet
-
-Return only the bullet points.
-"""
+Rules:
+- Each bullet must be one sentence
+- Maximum of 10 words per bullet
+- Start each line with "-"
+- Executive tone
+- Focus on business insights
+- Numbers and facts only, no filler words
+- Return only the bullet points, nothing else"""
 
         generated = call_hf_model(prompt)
 
-        if not generated:
-            raise HTTPException(status_code=502, detail="HF returned empty response")
+        # lines = [l.strip() for l in generated.split("\n") if l.strip()]
+        # bullets = [l for l in lines if l.startswith("-")]
+        # if not bullets:
+        #     bullets = [f"- {l}" for l in lines if len(l) > 20]
+        # bullets = bullets[:7]
+        # Debug begins 09/03 
+        import re
 
-        print("MODEL OUTPUT:")
-        print(generated)
-
-        # Parse LLM output
         lines = [l.strip() for l in generated.split("\n") if l.strip()]
 
         bullets = []
 
         for line in lines:
-            line = re.sub(r"^\d+[\.\)]\s*", "", line)   # remove numbering
-            line = re.sub(r"^[•\-]\s*", "", line)       # remove bullet symbols
+            line = re.sub(r"^\d+[\.\)]\s*", "", line)   # remove "1." or "2)"
+            line = re.sub(r"^[•\-]\s*", "", line)       # remove bullets
 
             if len(line) > 5:
                 bullets.append(f"- {line}")
 
         bullets = bullets[:7]
-
         if not bullets:
             bullets = [f"- {i}" for i in insights[:7]]
-
+    #Debugging output 09/03
         return {
             "success": True,
             "table_name": request.table_name,
@@ -2133,13 +2141,10 @@ Return only the bullet points.
             "insights_detected": insights
         }
 
-    except HTTPException:
-        raise  # pass through HF errors
-
     except Exception as e:
-        logger.error(f"Summary generation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ================= SINGLE QUESTION =================
 
 @app.post("/chat/analyze")
