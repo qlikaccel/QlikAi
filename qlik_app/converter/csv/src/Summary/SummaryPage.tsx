@@ -13,7 +13,6 @@ import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TableSortLabel from "@mui/material/TableSortLabel";
-import exportImg from "../assets/export2.png";
  
 type TableInfo = string | { name: string; [key: string]: any };
 type Row = Record<string, any>;
@@ -905,8 +904,8 @@ const downloadCSV = async () => {
   }, [filteredTables, masterMap, mainTable, relations]);
  
   const isSelectionMaster = !!(selectedTable && isMasterTable(selectedTable));
-  // Export allowed when either master is selected or the selected table has no related tables
-  const exportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
+  // Export button removed - Direct publish flow only
+  // const exportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
  
 
   // sam
@@ -1300,49 +1299,46 @@ const downloadCSV = async () => {
                             <div className="script-content">
                               <pre>{mquery}</pre>
                             </div>
-                            <button
-                              onClick={() => {
-                                const element = document.createElement("a");
-                                const file = new Blob([mquery], { type: "text/plain" });
-                                element.href = URL.createObjectURL(file);
-                                element.download = `${selectedTable || "query"}_mquery.m`;
-                                document.body.appendChild(element);
-                                element.click();
-                                document.body.removeChild(element);
-                              }}
-                              className="download-btn"
-                              title="Download M Query"
-                            >
-                              ⬇️ Download M Query
-                            </button>
-                          </>
-                        )}
-
-                        {/* Download .pbit + Publish buttons */}
-                        {mquery && (
-                          <>
-                            <button
-                              onClick={handlePublishMQuery}
-                              disabled={publishingMQuery}
-                              className="publish-pbi-btn"
-                              title="Publish Push dataset to Power BI Service (schema only — no file data)"
-                            >
-                              {publishingMQuery ? (
-                                <>
-                                  <span className="publish-spinner" />
-                                  Publishing…
-                                </>
-                              ) : (
-                                <>
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                                    <path d="M2 17l10 5 10-5"/>
-                                    <path d="M2 12l10 5 10-5"/>
-                                  </svg>
-                                  Publish MQuery to PowerBI
-                                </>
-                              )}
-                            </button>
+                            {/* Download and Publish buttons side by side */}
+                            <div className="mquery-button-group">
+                              <button
+                                onClick={() => {
+                                  const element = document.createElement("a");
+                                  const file = new Blob([mquery], { type: "text/plain" });
+                                  element.href = URL.createObjectURL(file);
+                                  element.download = `${selectedTable || "query"}_mquery.m`;
+                                  document.body.appendChild(element);
+                                  element.click();
+                                  document.body.removeChild(element);
+                                }}
+                                className="download-btn"
+                                title="Download M Query"
+                              >
+                                ⬇️ Download M Query
+                              </button>
+                              <button
+                                onClick={handlePublishMQuery}
+                                disabled={publishingMQuery}
+                                className="publish-pbi-btn"
+                                title="Publish Push dataset to Power BI Service (schema only — no file data)"
+                              >
+                                {publishingMQuery ? (
+                                  <>
+                                    <span className="publish-spinner" />
+                                    Publishing…
+                                  </>
+                                ) : (
+                                  <>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                      <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                      <path d="M2 17l10 5 10-5"/>
+                                      <path d="M2 12l10 5 10-5"/>
+                                    </svg>
+                                    Publish MQuery to PowerBI
+                                  </>
+                                )}
+                              </button>
+                            </div>
 
                             {publishStatus !== "idle" && publishMessage && (
                               <div
@@ -1582,21 +1578,7 @@ const downloadCSV = async () => {
                     {/* Hint shown when export is disabled because a related table is selected */}
 
                     {/* sam */}
-                    {exportAllowed ? (
-                      <button
-                        className="export-btn"
-                        disabled={tableLoading}
-                        title={"Continue to export selected table(s)"}
-                        onClick={() => prepareAndNavigateToExport()}
-                      >
-                        <img src={exportImg} alt="Export" />Continue to Export
-                      </button>
-                    ) : (
-                      selectedTable && isRelatedTable(selectedTable) && 
-                      (
-                        <div className="export-hint"></div>
-                      )
-                    )}
+                    {/* Continue to Export button removed - Direct publish flow only */}
                   </div>
                 </>
               )}

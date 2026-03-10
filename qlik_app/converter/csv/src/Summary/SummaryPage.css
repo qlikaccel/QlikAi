@@ -342,8 +342,11 @@ PAGE WRAP
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+  /* min-width: 120px; */
+  justify-content: center;
 }
- 
+
 .download-btn:hover {
   background-color: #005fa3;
 }
@@ -357,7 +360,6 @@ PAGE WRAP
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
   padding: 9px 18px;
   background: linear-gradient(135deg, #f0a500 0%, #e07b00 100%);
   color: #fff;
@@ -369,7 +371,9 @@ PAGE WRAP
   transition: all 0.2s ease;
   box-shadow: 0 2px 6px rgba(240, 165, 0, 0.35);
   letter-spacing: 0.02em;
-  width: fit-content;
+  flex: 1;
+  min-width: 120px;
+  justify-content: center;
 }
 
 .publish-pbi-btn:hover:not(:disabled) {
@@ -1504,6 +1508,7 @@ PAGE WRAP
   border-radius: 4px;
   padding: 12px;
   overflow: hidden;
+  height: 100%;
 }
 
 .display-section h4 {
@@ -1521,8 +1526,15 @@ PAGE WRAP
   border-radius: 3px;
   padding: 10px;
   margin-bottom: 8px;
-  max-height: 400px;
+  flex: 1;
   min-height: 0;
+}
+
+.mquery-button-group {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
 }
 
 .script-content pre {
