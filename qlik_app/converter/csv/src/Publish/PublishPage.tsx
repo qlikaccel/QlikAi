@@ -320,7 +320,8 @@ export default function PublishPage() {
         if (batchTables.length === 0) throw new Error("No table data available to publish");
 
         console.log(`📤 Publishing ${batchTables.length} tables as single dataset with relationships...`);
-        const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
+        // const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
+        const batchRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/process-batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -707,7 +708,8 @@ export default function PublishPage() {
         }
       }
 
-      const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
+      // const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
+      const res = await fetch("https://qliksense-stuv.onrender.com/api/migration/publish-semantic-model", {
         method: "POST",
         body: form,
       });
@@ -753,7 +755,8 @@ export default function PublishPage() {
         publish_mode: "desktop_cloud",
       });
 
-      const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
+      // const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
+      const res = await fetch(`https://qliksense-stuv.onrender.com/api/migration/publish-table?${params.toString()}`, {
         method: "POST",
       });
 
