@@ -471,12 +471,20 @@ async def fetch_loadscript_endpoint(
 
 @router.post("/parse-loadscript")
 async def parse_loadscript_endpoint(
-    loadscript: str = Query(..., description="Raw Qlik LoadScript to parse"),
+    request: dict,  # Accept JSON body with loadscript
 ):
     """
     Phase 5: Parse a raw Qlik LoadScript and extract structured table definitions.
     Returns tables, fields, data connections, transformations, variables.
+    
+    Request body format:
+    {
+        "loadscript": "your_qlik_loadscript_here"
+    }
     """
+    # Support both JSON body and query param for backward compatibility
+    loadscript = request.get("loadscript", "") if isinstance(request, dict) else str(request)
+    
     logger.info("=" * 80)
     logger.info("[parse_loadscript_endpoint] ENDPOINT: /parse-loadscript")
     logger.info("[parse_loadscript_endpoint] Script length: %d characters", len(loadscript))

@@ -788,13 +788,15 @@ export const parseLoadScript = async (loadscript: string) => {
     
     console.log("📍 Parsing LoadScript...");
     
-    const url = `${BASE_URL}/api/migration/parse-loadscript?loadscript=${encodeURIComponent(loadscript)}`;
+    // Use POST with body instead of URL query param (LoadScript can be very large - thousands of chars)
+    const url = `${BASE_URL}/api/migration/parse-loadscript`;
     
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({ loadscript }),
     });
 
     if (!response.ok) {
