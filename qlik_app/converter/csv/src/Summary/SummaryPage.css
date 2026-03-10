@@ -1494,7 +1494,7 @@ PAGE WRAP
 .loadscript-displays {
   display: flex;
   gap: 12px;
-  height: 350px;
+  height: 850px;
   flex-shrink: 0;
 }
 
