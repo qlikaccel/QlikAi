@@ -380,9 +380,8 @@
 import axios from "axios";
 
 // Use environment variable for production (set by Render), fallback to localhost for dev
-// const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-// const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-xd7f.onrender.com";
-const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
+const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
 
 // Convert FastAPI response → simple format
 const mapApps = (data: any[]) =>
@@ -679,8 +678,8 @@ export const downloadCSVFile = (
 // ✅ DOWNLOAD M QUERY - Convert Qlik to PowerBI M Query
 export const downloadMQuery = async (appId: string, tableName?: string) => {
   try {
-    // const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-      const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
+    const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      // const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
     
     console.log("📍 Fetching M Query for app:", appId, "table:", tableName);
     
@@ -738,8 +737,8 @@ export const downloadMQuery = async (appId: string, tableName?: string) => {
 // ✅ FETCH LOADSCRIPT - Get Qlik LoadScript from app (filtered by table)
 export const fetchLoadScript = async (appId: string, tableName?: string) => {
   try {
-    // const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-      const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
+    const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      // const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
     
     // Get credentials from sessionStorage
     const apiKey = sessionStorage.getItem("qlik_api_key");
@@ -783,8 +782,8 @@ export const fetchLoadScript = async (appId: string, tableName?: string) => {
 // ✅ PARSE LOADSCRIPT - Parse Qlik LoadScript
 export const parseLoadScript = async (loadscript: string) => {
   try {
-    // const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-      const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
+    const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      // const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
     
     console.log("📍 Parsing LoadScript...");
     
@@ -819,8 +818,8 @@ export const convertToMQuery = async (
   tableName?: string
 ) => {
   try {
-    // const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-      const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
+    const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      // const BASE_URL = import.meta.env.VITE_API_URL || "https://qliksense-stuv.onrender.com"
     
     console.log("📍 Converting to M Query for table:", tableName);
     

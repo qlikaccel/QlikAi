@@ -1494,8 +1494,8 @@ PAGE WRAP
 .loadscript-displays {
   display: flex;
   gap: 12px;
-  flex: 1;
-  min-height: 300px;
+  height: 350px;
+  flex-shrink: 0;
 }
 
 .display-section {
@@ -1508,7 +1508,6 @@ PAGE WRAP
   border-radius: 4px;
   padding: 12px;
   overflow: hidden;
-  height: 100%;
 }
 
 .display-section h4 {
