@@ -656,7 +656,10 @@ const downloadCSV = async () => {
       // Convert to M Query — POST body to avoid HTTP 431 (URL too large for big scripts).
       // base_path is sent so the backend generates the correct connector (e.g. SharePoint.Files()
       // for SharePoint URLs) rather than the generic File.Contents() pattern.
-      const convertResponse = await fetch("/api/migration/convert-to-mquery", {
+      const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+        ? 'http://127.0.0.1:8000'
+        : 'https://qliksense-stuv.onrender.com';
+      const convertResponse = await fetch(`${apiBase}/api/migration/convert-to-mquery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -698,7 +701,10 @@ const downloadCSV = async () => {
     setAiSummaryError("");
     setAiSummaryBullets([]);
     try {
-      const res = await fetch("/chat/summary-hf", {
+      const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+        ? 'http://127.0.0.1:8000'
+        : 'https://qliksense-stuv.onrender.com';
+      const res = await fetch(`${apiBase}/chat/summary-hf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ table_name: tableName, data: tableRows.slice(0, 500) }),
@@ -733,7 +739,10 @@ const downloadCSV = async () => {
       setPublishStatus("idle");
       setPublishMessage("Publishing to Power BI...");
 
-      const response = await fetch("/api/migration/publish-mquery", {
+      const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+        ? 'http://127.0.0.1:8000'
+        : 'https://qliksense-stuv.onrender.com';
+      const response = await fetch(`${apiBase}/api/migration/publish-mquery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
