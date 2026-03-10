@@ -3,7 +3,6 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, fetchLoadScript, parseLoadScript } from "../api/qlikApi";
 import Csvicon from "../assets/Csvicon.png";
-import exportImg from "../assets/export2.png";
 import { useWizard } from "../context/WizardContext";
 import SchemaModal from "../components/SchemaModal/SchemaModal";
 import Paper from "@mui/material/Paper";
@@ -914,7 +913,8 @@ const downloadCSV = async () => {
   }, [filteredTables, masterMap, mainTable, relations]);
  
   const isSelectionMaster = !!(selectedTable && isMasterTable(selectedTable));
-  const exportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
+  // Export button removed - Direct publish flow only
+  // const exportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
  
 
   // sam
@@ -1489,7 +1489,7 @@ const downloadCSV = async () => {
  
                   {/* BOTTOM RIGHT BUTTON - Export (single table or auto-include related tables for master) */}
                   <div className="bottom-actions">
-                    <button
+                    {/* <button
                       className="export-btn"
                       disabled={!exportAllowed || tableLoading}
                       title={!exportAllowed ? "Export disabled: select the master table (or a standalone table) to export" : "Continue to export selected table(s)"}
@@ -1582,7 +1582,7 @@ const downloadCSV = async () => {
                       }}
                     >
                       <img src={exportImg} alt="Export" />Continue to Export
-                    </button>
+                    </button> */}
  
                     {/* Hint shown when export is disabled because a related table is selected */}
 
