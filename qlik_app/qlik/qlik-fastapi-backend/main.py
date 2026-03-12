@@ -2525,6 +2525,114 @@ async def process_for_powerbi(
         raise HTTPException(status_code=500, detail=f"Power BI publish failed: {str(e)}")
 
 # ─────────── END ───────────
+@app.post("/powerbi/process-batch")
+async def process_batch_for_powerbi(payload: dict = Body(...)):
+    """
+    Publish multiple Qlik tables to Power BI.
+    
+    CRITICAL FIX: Each table MUST be published to its own dataset with its own schema!
+    
+    WHY: Tables have different columns. Combining rows from tables with different schemas
+    causes Power BI to reject them with "Column not found" errors.
+    
+    Example:
+    - Table 1 (Accommodation): [accommodation_name, destination, tourists]
+    - Table 2 (Transport): [transport_id, destination]
+    
+    If you combine rows, Table 2 rows won't have 'accommodation_name' column -> ERROR
+    """
+    try:
+        auth = get_auth_manager()
+        if not auth.is_token_valid():
+            raise HTTPException(status_code=401, detail="Not logged in. Please login first.")
+        
+        base_dataset_name = payload.get("dataset_name", "Qlik_Migrated_Dataset")
+        tables = payload.get("tables", [])
+        
+        if not tables:
+            raise HTTPException(status_code=400, detail="No tables provided")
+        
+        pbi = PowerBIService(access_token=auth.get_access_token())
+        
+        published_datasets = []
+        total_rows_pushed = 0
+        
+        # Publish each table as a separate dataset
+        for idx, table in enumerate(tables):
+            table_name = table.get("name", f"Table_{idx + 1}")
+            table_rows = table.get("rows", [])
+            
+            if not table_rows:
+                print(f"⚠️  Skipping table {idx + 1}/{len(tables)}: {table_name} (no rows)")
+                continue
+            
+            print(f"📤 Publishing table {idx + 1}/{len(tables)}: {table_name} ({len(table_rows)} rows)")
+            
+            # Create unique dataset name for each table
+            if len(tables) == 1:
+                dataset_name = base_dataset_name
+            else:
+                dataset_name = f"{base_dataset_name}_{table_name}"
+            
+            try:
+                # Infer schema from THIS table's rows only
+                table_schema = infer_schema_from_rows(table_rows)
+                
+                # Create/get dataset for this specific table
+                dataset_id, created = pbi.get_or_create_push_dataset(
+                    dataset_name,
+                    table_name,
+                    table_schema
+                )
+                
+                # Push rows for this table
+                push_result = pbi.push_rows(dataset_id, table_name, table_rows)
+                
+                published_datasets.append({
+                    "dataset_name": dataset_name,
+                    "dataset_id": dataset_id,
+                    "table_name": table_name,
+                    "rows_count": len(table_rows),
+                    "created": created
+                })
+                
+                total_rows_pushed += len(table_rows)
+                
+                print(f"   ✅ Successfully published {table_name}: {len(table_rows)} rows")
+                
+            except Exception as e:
+                print(f"   ❌ Failed to publish table {table_name}: {e}")
+                # Log but continue with remaining tables
+                published_datasets.append({
+                    "dataset_name": base_dataset_name,
+                    "table_name": table_name,
+                    "error": str(e),
+                    "status": "failed"
+                })
+        
+        if not published_datasets:
+            raise HTTPException(status_code=400, detail="Failed to publish any tables")
+        
+        workspace_url = f"https://app.powerbi.com/groups/{pbi.workspace_id}"
+        
+        return {
+            "success": True,
+            "message": f"✅ Published {len(published_datasets)} table(s) to Power BI",
+            "dataset_name": base_dataset_name,
+            "workspace_url": workspace_url,
+            "rows_pushed": total_rows_pushed,
+            "tables_count": len(tables),
+            "tables_published": len([d for d in published_datasets if "error" not in d]),
+            "published_datasets": published_datasets
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Batch publish error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Batch publish failed: {str(e)}")
 
 # ============= ADVANCED POWER BI ENDPOINT =============
 
@@ -2765,6 +2873,8 @@ async def download_pdf(payload: dict = Body(...)):
         app_name = payload.get("app_name", "Unknown App")
         table_name = payload.get("table_name", "Unknown Table")
         migration_status = payload.get("migration_status", "In Progress")
+        publishing_method = payload.get("publishing_method", "CSV_EXPORT")
+        tables_deployed = payload.get("tables_deployed", 1)
         
         # ==============================
         # CALCULATE METRICS & DIFFERENCES
@@ -2913,9 +3023,12 @@ async def download_pdf(payload: dict = Body(...)):
         elements.append(Spacer(1, 0.12 * inch))
         
         # Header Info - formatted nicely
+        # Format publishing method for display
+        publishing_method_display = "M Query" if publishing_method == "M_QUERY" else "CSV Export"
         header_info = f"""
         <b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
         <b>Application:</b> {app_name}<br/>
+        <b>Publishing Method:</b> {publishing_method_display} | <b>Tables Deployed:</b> {tables_deployed}<br/>
         <b>Table:</b> {table_name}<br/>
         <b>Source System:</b> Qlik Sense Cloud | <b>Target System:</b> Power BI Cloud<br/>
         <b>Status:</b> {migration_status}

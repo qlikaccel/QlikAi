@@ -125,7 +125,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import connectImg from "../assets/connect3.jpg";
 import discoveryImg from "../assets/discovery.png";
 import summaryImg from "../assets/summary3.png";
-import exportImg from "../assets/export2.png";
+import exportImg from "../assets/export.png";
 import publishImg from "../assets/Publish.png";
 
 const steps = [

@@ -744,7 +744,40 @@ PAGE WRAP
 .export-btn:active {
   background: #e65100;
 }
- 
+
+/* CONTINUE TO EXPORT BUTTON */
+.continue-export-btn {
+  padding: 10px 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.continue-export-btn:hover {
+  background: linear-gradient(135deg, #5568d3 0%, #6a3fa0 100%);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+  transform: translateY(-2px);
+}
+
+.continue-export-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(102, 126, 234, 0.4);
+}
+
+.continue-export-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, #a0aec0 0%, #cbd5e0 100%);
+  box-shadow: none;
+  transform: none;
+}
+
  
 .warning-box {
   background: #fff3cd;

@@ -855,14 +855,38 @@ const downloadCSV = async () => {
         throw new Error(result.detail || result.error || `HTTP ${response.status}: Publish failed`);
       }
 
+      // ✅ Store M Query publishing metadata for report generation
+      sessionStorage.setItem("migration_publishing_method", "M_QUERY");
+      sessionStorage.setItem("migration_dataset_name", result.dataset_name || selectedTable || "Qlik_Dataset");
+      sessionStorage.setItem("migration_dataset_id", result.dataset_id || "");
+      sessionStorage.setItem("migration_tables_deployed", String(result.tables_deployed || 1));
+      sessionStorage.setItem("migration_mquery_length", String(mquery.length || 0));
+
+      // Store metrics for report
+      if (rows && rows.length > 0) {
+        sessionStorage.setItem("migration_row_count", String(totalRows || rows.length));
+        sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
+      }
+
       setPublishStatus("success");
       setPublishMessage(
         result.message ||
         `Published "${result.dataset_name}" to Power BI (${result.tables_deployed} tables)`
       );
-      if (result.workspace_url) {
-        setTimeout(() => window.open(result.workspace_url, "_blank"), 1500);
-      }
+
+      // ✅ Navigate to PublishPage with M Query result (same as CSV export)
+      setTimeout(() => {
+        navigate("/publish", {
+          state: {
+            appId: appId,
+            tableCount: result.tables_deployed || 1,
+            totalRows: totalRows || (rows?.length || 0),
+            publishMethod: "M_QUERY",
+            publishResult: result,
+            selectedTable: selectedTable,
+          },
+        });
+      }, 800);
     } catch (error: any) {
       setPublishStatus("error");
       setPublishMessage(`Publish failed: ${error.message || "Unknown error"}`);
@@ -996,12 +1020,12 @@ const downloadCSV = async () => {
  
 
   // sam
-  // Helper: prepare export payload (single table or master + related tables) and navigate to /export
+  // Helper: prepare export payload (single table or master + related tables) and navigate to /publish
   const prepareAndNavigateToExport = async (tableToExport?: string) => {
     try {
       stopTimer?.("/summary");
       sessionStorage.setItem("summaryComplete", "true");
-      startTimer?.("/export");
+      startTimer?.("/publish");
  
       const sel = tableToExport || selectedTable || (sessionStorage.getItem("selectedTable") || "");
       if (!sel) {
@@ -1026,8 +1050,8 @@ const downloadCSV = async () => {
           const { generateSummaryFromData } = await import("../api/qlikApi");
           setSummary(generateSummaryFromData(masterRows, sel));
         } catch (e) {
-          console.warn("Failed to load table prior to export:", e);
-          alert("Failed to load table data for export. See console for details.");
+          console.warn("Failed to load table prior to publish:", e);
+          alert("Failed to load table data for publish. See console for details.");
           setTableLoading(false);
           return;
         } finally {
@@ -1046,8 +1070,24 @@ const downloadCSV = async () => {
           .filter(n => shareFields(sel, n));
       }
  
+      // Prepare CSV and DAX for the data
+      const headers = masterRows.length > 0 ? Object.keys(masterRows[0]) : [];
+      const csv = [
+        headers.join(","),
+        ...masterRows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
+      ].join("\n");
+
+      const cols = headers;
+      const daxLines = [] as string[];
+      daxLines.push(`-- DAX export skeleton for table: ${sel}`);
+      daxLines.push(`-- Columns:`);
+      cols.forEach((c) => daxLines.push(`-- ${c}`));
+      daxLines.push(`\n-- Sample measure`);
+      daxLines.push(`[${sel} Count] = COUNTROWS('${sel}')`);
+      const daxContent = daxLines.join("\n");
+
       if (!related || related.length === 0) {
-        // single-table export
+        // single-table export - navigate to export page
         navigate("/export", {
           state: {
             appId,
@@ -1055,6 +1095,9 @@ const downloadCSV = async () => {
             selectedTable: sel,
             rows: masterRows || [],
             totalRows: (masterRows || []).length || 0,
+            exportOptions: { combined: true, separate: false },
+            csvPayloads: { migration_csv: csv },
+            daxPayloads: { migration_dax: daxContent },
           },
         });
         return;
@@ -1063,9 +1106,13 @@ const downloadCSV = async () => {
       // master + related export: prefetch related tables
       setTableLoading(true);
       const selectedData: any[] = [];
+      const csvPayloads: Record<string, string> = { migration_csv_0: csv };
+      const daxPayloads: Record<string, string> = { migration_dax: daxContent };
+      
       selectedData.push({ name: sel, data: { name: sel, rows: masterRows || [], summary } });
  
-      for (const relName of related) {
+      for (let idx = 0; idx < related.length; idx++) {
+        const relName = related[idx];
         try {
           // Load related table fully (bounded to server max)
           const relMeta = await fetchTableDataSimple(appId, relName).catch(() => null);
@@ -1075,18 +1122,29 @@ const downloadCSV = async () => {
           const { generateSummaryFromData } = await import("../api/qlikApi");
           const relSummary = generateSummaryFromData(relRows, relName);
           selectedData.push({ name: relName, data: { name: relName, rows: relRows, summary: relSummary } });
+
+          // Generate CSV for related table
+          const relHeaders = relRows.length > 0 ? Object.keys(relRows[0]) : [];
+          const relCsv = [
+            relHeaders.join(","),
+            ...relRows.map((r: any) => relHeaders.map((h) => `"${r[h] ?? ""}"`).join(",")),
+          ].join("\n");
+          csvPayloads[`migration_csv_${idx + 1}`] = relCsv;
         } catch (e) {
           console.warn("Failed to load related table:", relName, e);
         }
       }
  
       setTableLoading(false);
- 
+
       navigate("/export", {
         state: {
           appId,
           appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
           selectedTables: selectedData,
+          exportOptions: { combined: true, separate: false },
+          csvPayloads,
+          daxPayloads,
         },
       });
     } catch (err) {
@@ -1621,105 +1679,14 @@ const downloadCSV = async () => {
  
                   {/* BOTTOM RIGHT BUTTON - Export (single table or auto-include related tables for master) */}
                   <div className="bottom-actions">
-                    {/* <button
-                      className="export-btn"
-                      disabled={!exportAllowed || tableLoading}
-                      title={!exportAllowed ? "Export disabled: select the master table (or a standalone table) to export" : "Continue to export selected table(s)"}
-                      onClick={async () => {
-                        try {
-                          stopTimer?.("/summary");
-                          sessionStorage.setItem("summaryComplete", "true");
-                          startTimer?.("/export");
- 
-                          const sel = selectedTable || sessionStorage.getItem("selectedTable") || "";
- 
-                          // If we don't have rows for the selected table yet, try to fetch them now
-                          let masterRows = rows;
-                          if ((!masterRows || masterRows.length === 0) && sel) {
-                            try {
-                              setTableLoading(true);
-                              const loaded = await fetchTableData(appId, sel);
-                              masterRows = loaded || [];
-                              setRows(masterRows);
-                              // regenerate summary for the newly loaded data
-                              const { generateSummaryFromData } = await import("../api/qlikApi");
-                              setSummary(generateSummaryFromData(masterRows, sel));
-                            } catch (e) {
-                              console.warn("Failed to load selected table prior to export:", e);
-                              alert("Failed to load table data for export. See console for details.");
-                              setTableLoading(false);
-                              return;
-                            } finally {
-                              setTableLoading(false);
-                            }
-                          }
- 
-                          const prefix = sel && sel.includes("_") ? sel.split("_")[0] : null;
-                          const candidateNames = (tables || []).map((t) => (typeof t === "string" ? t : t?.name)).filter(Boolean) as string[];
-                          let related: string[] = [];
-                          // Prefer relation-graph when available and the selected table is the detected main table
-                          if (mainTable && sel === mainTable && relations && relations[mainTable]) {
-                            related = relations[mainTable].slice();
-                          } else if (prefix) {
-                            // Only auto-include prefix-matching tables that actually share fields with the selected table
-                            related = candidateNames
-                              .filter(n => n.startsWith(prefix + "_") && n !== sel)
-                              .filter(n => shareFields(sel, n));
-                          }
- 
-                          if (!related || related.length === 0) {
-                            // No related tables — continue with single-table export
-                            navigate("/export", {
-                              state: {
-                                appId,
-                                appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
-                                selectedTable: sel,
-                                rows: masterRows || [],
-                                totalRows: (masterRows || []).length || 0,
-                              },
-                            });
-                            return;
-                          }
- 
-                          // Prefetch related tables (master first)
-                          setTableLoading(true);
-                          const selectedData: any[] = [];
-                          selectedData.push({ name: sel, data: { name: sel, rows: masterRows || [], summary } });
- 
-                          for (const relName of related) {
-                            try {
-                              const relRows = await fetchTableData(appId, relName);
-                              const { generateSummaryFromData } = await import("../api/qlikApi");
-                              const relSummary = generateSummaryFromData(relRows, relName);
-                              selectedData.push({ name: relName, data: { name: relName, rows: relRows, summary: relSummary } });
-                            } catch (e) {
-                              console.warn("Failed to load related table:", relName, e);
-                            }
-                          }
- 
-                          setTableLoading(false);
- 
-                          navigate("/export", {
-                            state: {
-                              appId,
-                              appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
-                              selectedTables: selectedData,
-                            },
-                          });
-                        } catch (err) {
-                          setTableLoading(false);
-                          console.error(err);
-                          alert("Failed to prepare related tables for export. See console for details.");
-                        }
-                      }}
+                    <button
+                      className="continue-export-btn"
+                      disabled={!selectedTable || tableLoading}
+                      onClick={() => prepareAndNavigateToExport()}
+                      title={!selectedTable ? "Select a table first" : "Proceed to Export page"}
                     >
-                      <img src={exportImg} alt="Export" />Continue to Export
-                    </button> */}
- 
-                    {/* Hint shown when export is disabled because a related table is selected */}
-
-                    {/* sam */}
-                    {/* Continue to Export button removed - Direct publish flow only */}
+                      Continue to Export
+                    </button>
                   </div>
                 </>
               )}
