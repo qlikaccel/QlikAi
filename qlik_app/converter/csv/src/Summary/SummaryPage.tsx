@@ -5,6 +5,7 @@ import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, fe
 import Csvicon from "../assets/Csvicon.png";
 import { useWizard } from "../context/WizardContext";
 import SchemaModal from "../components/SchemaModal/SchemaModal";
+import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
 import Paper from "@mui/material/Paper";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
@@ -58,11 +59,83 @@ export default function SummaryPage() {
   const [publishMessage, setPublishMessage] = useState<string>("");
   const [dataSourcePath, setDataSourcePath] = useState<string>("");
 
+  // LoadScript type detection and URL validation
+  const [isCsvLoadscript, setIsCsvLoadscript] = useState<boolean>(false);
+  const [isValidUrl, setIsValidUrl] = useState<boolean>(false);
+  const [urlValidationError, setUrlValidationError] = useState<string>("");
+
   // AI Executive Summary 
   const [aiSummaryBullets, setAiSummaryBullets] = useState<string[]>([]);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [_aiSummaryError, setAiSummaryError] = useState<string>("");
 
+  // Helper: Detect if loadscript is CSV-based or inline
+  const detectCsvLoadscript = (script: string): boolean => {
+    if (!script) return false;
+    const lower = script.toLowerCase();
+    // If it has INLINE keyword, it's definitely inline (not CSV)
+    if (/inline\s*\[/.test(lower)) return false;
+    // CSV/QVD-based if it has FROM with file paths/protocols
+    // Matches: FROM [lib://...], FROM [file://...], FROM 'lib://...', FROM lib://..., etc.
+    return /from\s+[\[\']?(?:lib:\/\/|file:\/\/|https?:\/\/|\/|[a-z]:[\\\/]).*?(?:\.csv|\.qvd|\.xlsx?|\.txt|\])/i.test(lower);
+  };
+
+  // Helper: Validate ONLY SharePoint URLs - STRICT validation
+  const validateSharePointUrl = (url: string): { isValid: boolean; error?: string } => {
+    if (!url || url.trim().length === 0) {
+      return { isValid: false, error: "URL cannot be empty" };
+    }
+
+    const trimmed = url.trim();
+
+    // ❌ Error 1: Must start with https://
+    if (!trimmed.toLowerCase().startsWith("https://")) {
+      return { isValid: false, error: "❌ Must start with https://" };
+    }
+
+    // ❌ Error 2: Must NOT start with http:// (only https)
+    if (trimmed.toLowerCase().startsWith("http://")) {
+      return { isValid: false, error: "❌ Must use HTTPS (not HTTP). Use: https://" };
+    }
+
+    // ❌ Error 3: Must contain .sharepoint.com
+    const hasSharePointDomain = trimmed.toLowerCase().includes(".sharepoint.com");
+    if (!hasSharePointDomain) {
+      // Check if ".com" is missing entirely
+      if (!trimmed.includes(".com")) {
+        return { isValid: false, error: "❌ Missing .com - Should end with .sharepoint.com" };
+      }
+      // Check if user only typed company name
+      if (!trimmed.toLowerCase().includes("sharepoint")) {
+        return { isValid: false, error: "❌ Missing 'sharepoint' - Should be: https://COMPANYNAME.sharepoint.com" };
+      }
+      // Generic sharepoint.com error
+      return { isValid: false, error: "❌ Invalid format. Should be: https://COMPANYNAME.sharepoint.com" };
+    }
+
+    // ❌ Error 4: Extract company name and validate it's not empty
+    const sharepointMatch = trimmed.match(/https:\/\/([^.]+)\.sharepoint\.com/i);
+    if (!sharepointMatch || !sharepointMatch[1]) {
+      return { isValid: false, error: "❌ Missing company name - Should be: https://COMPANYNAME.sharepoint.com" };
+    }
+
+    const companyName = sharepointMatch[1];
+
+    // ❌ Error 5: Company name cannot be empty or just special characters
+    if (companyName.length === 0 || !/[a-z0-9]/i.test(companyName)) {
+      return { isValid: false, error: "❌ Invalid company name - Should be: https://COMPANYNAME.sharepoint.com" };
+    }
+
+    // ✅ Valid SharePoint URL format
+    return { isValid: true };
+  };
+
+  // Helper: Validate various URL formats (SharePoint, OneDrive, HTTP, file paths, database URLs)
+  const isValidUrlFormat = (url: string): boolean => {
+    // Only allow SharePoint URLs
+    const validation = validateSharePointUrl(url);
+    return validation.isValid;
+  };
 
  
   // Helper: build relation graph from `tables` (uses fields when available)
@@ -522,6 +595,11 @@ export default function SummaryPage() {
         if (scriptResult.status === "success" || scriptResult.status === "partial_success") {
           const script = scriptResult.loadscript || "";
           setLoadscript(script);
+          
+          // Detect if CSV-based or inline loadscript
+          const isCsv = detectCsvLoadscript(script);
+          setIsCsvLoadscript(isCsv);
+          if (isCsv) setIsValidUrl(false); // Reset validation for new CSV script
           
           // Auto-parse the loadscript
           if (script) {
@@ -1021,7 +1099,12 @@ const downloadCSV = async () => {
 
  
   if (loading) {
-    return <div className="wrap">Loading…</div>;
+    return (
+      <LoadingOverlay
+        isVisible={loading}
+        message="Loading tables from QlikSense..."
+      />
+    );
   }
  
   return (
@@ -1104,106 +1187,117 @@ const downloadCSV = async () => {
         {selectedTable && (
           <>
  
-              {/* HEADER ONLY TITLE */}
+              {/* HEADER WITH TITLE + TABS ON LEFT, TIME ON RIGHT */}
             <div className="header">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",width: "100%" }}>
-                <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span>{selectedTable}</span>
-                  {isSelectionMaster && <span className="master-indicator">master</span>}
-                  <button
-                    onClick={() => setActiveTab("summary")}
-                    title="View Summary"
-                    style={{
-                      marginLeft: '12px',
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      backgroundColor: activeTab === "summary" ? '#667eea' : '#a0aec0',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = '#667eea';
-                      target.style.transform = 'scale(1.05)';
-                    }}
-                    onMouseLeave={(e) => {
-                      const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = activeTab === "summary" ? '#667eea' : '#a0aec0';
-                      target.style.transform = 'scale(1)';
-                    }}
-                  >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: "20px" }}>
+                {/* LEFT: Title + Master Badge + Tabs */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#1f2937', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {selectedTable}
+                    {isSelectionMaster && <span className="master-indicator" style={{ marginLeft: '0px' }}>master</span>}
+                  </h2>
+
+                  {/* MODERN TAB BAR */}
+                  <div style={{
+                    display: "flex",
+                    gap: "14px",
+                    borderBottom: "none",
+                    paddingBottom: "0px",
+                    marginLeft: '12px',
+                    // backgroundColor: '#f3f4f6',
+                    borderRadius: '6px',
+                    padding: '4px',
+                  }}>
+                    <button
+                      onClick={() => setActiveTab("summary")}
+                      style={{
+                        padding: '8px 14px',
+                        fontSize: '13px',
+                        fontWeight: activeTab === "summary" ? 600 : 500,
+                        color: activeTab === "summary" ? '#fff' : '#6b7280',
+                        backgroundColor: activeTab === "summary" ? '#667eea' : 'transparent',
+                        border: 'none',
+                        borderBottom: '3px solid #938d8d',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                        
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeTab !== "summary") {
+                          e.currentTarget.style.backgroundColor = 'rgba(102, 126, 234, 0.1)';
+                          e.currentTarget.style.color = '#4f46e5';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeTab !== "summary") {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.color = '#6b7280';
+                        }
+                      }}
+                    >
                       📊 Summary
-                  </button>
-                  <button
-                    onClick={() => setIsSchemaModalOpen(true)}
-                    style={{
-                      marginLeft: '8px',
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      backgroundColor: '#f59e0b',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = 'rgb(11 131 245)';
-                      target.style.transform = 'scale(1.05)';
-                    }}
-                    onMouseLeave={(e) => {
-                      const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = 'rgb(11 131 245)';
-                      target.style.transform = 'scale(1)';
-                    }}
-                  >
-                      Schema
-                  </button>
-            
-                  <button
-                    onClick={() => setActiveTab("mquery")}
-                    title="View M Query conversion"
-                    style={{
-                      marginLeft: '8px',
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      backgroundColor: activeTab === "mquery" ? '#059669' : '#10b981',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = '#059669';
-                      target.style.transform = 'scale(1.05)';
-                    }}
-                    onMouseLeave={(e) => {
-                      const target = e.currentTarget as HTMLButtonElement;
-                      target.style.backgroundColor = activeTab === "mquery" ? '#059669' : '#10b981';
-                      target.style.transform = 'scale(1)';
-                    }}
-                  >
-                      ⚙️ M Query
-                  </button>
-                </h2>
+                    </button>
+
+                    <button
+                      onClick={() => setActiveTab("mquery")}
+                      style={{
+                        padding: '8px 14px',
+                        fontSize: '13px',
+                        fontWeight: activeTab === "mquery" ? 600 : 500,
+                        color: activeTab === "mquery" ? '#fff' : '#6b7280',
+                        backgroundColor: activeTab === "mquery" ? '#059669' : 'transparent',
+                        border: 'none',
+                        borderRadius: '4px',
+                        borderBottom: '3px solid #938d8d',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeTab !== "mquery") {
+                          e.currentTarget.style.backgroundColor = 'rgba(5, 150, 105, 0.1)';
+                          e.currentTarget.style.color = '#069669';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeTab !== "mquery") {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.color = '#6b7280';
+                        }
+                      }}
+                    >
+                      📋 Query
+                    </button>
+
+                    <button
+                      onClick={() => setIsSchemaModalOpen(true)}
+                      style={{
+                        padding: '8px 14px',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        color: '#6b7280',
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        borderRadius: '4px',
+                        borderBottom: '3px solid #938d8d',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(245, 158, 11, 0.1)';
+                        e.currentTarget.style.color = '#f59e0b';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.color = '#6b7280';
+                      }}
+                    >
+                      🔷 Schema
+                    </button>
+                  </div>
+                </div>
+
+                {/* RIGHT: Analysis Time only */}
                 {pageLoadTime && (
                   <div className="timer-badge">Analysis Time: {pageLoadTime}</div>
                 )}
@@ -1248,30 +1342,38 @@ const downloadCSV = async () => {
                             <div className="script-content">
                               <pre>{loadscript}</pre>
                             </div>
-                            {/* DataSourcePath input — for CSV/QVD file sources */}
+                            {/* DataSourcePath input — for CSV/QVD file sources only */}
+                            {isCsvLoadscript && (
                             <div style={{
                               display: "flex",
                               flexDirection: "column",
                               gap: "4px",
                               marginBottom: "10px",
                               padding: "10px 12px",
-                              background: "#f0f9ff",
+                              background: isValidUrl ? "#ecfdf5" : "#fef2f2",
                               borderRadius: "6px",
-                              border: "1px solid #bae6fd",
+                              border: isValidUrl ? "1px solid #86efac" : "1px solid #fecaca",
                             }}>
                               <label style={{ fontSize: "12px", fontWeight: 600, color: "#0369a1" }}>
-                                📁 Data Source Path <span style={{ fontWeight: 400, color: "#64748b" }}>(optional)</span>
+                                📁 Data Source Path <span style={{ fontWeight: 400, color: "#64748b" }}>(required for CSV)</span>
                               </label>
                               <input
                                 type="text"
                                 value={dataSourcePath}
-                                onChange={(e) => setDataSourcePath(e.target.value)}
-                                placeholder="e.g. https://company.sharepoint.com  or  https://company.sharepoint.com/Shared Documents/MyFolder/"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDataSourcePath(val);
+                                  const validation = validateSharePointUrl(val);
+                                  setIsValidUrl(validation.isValid);
+                                  setUrlValidationError(validation.error || "");
+                                }}
+                                placeholder="e.g. https://company.sharepoint.com/Shared Documents/Data/"
                                 style={{
                                   padding: "6px 10px",
                                   fontSize: "12px",
                                   fontFamily: "monospace",
-                                  border: "1px solid #cbd5e1",
+                                  border: isValidUrl ? "1px solid #86efac" : "1px solid #fecaca",
+                                  transition: "border-color 0.3s ease",
                                   borderRadius: "4px",
                                   outline: "none",
                                   width: "100%",
@@ -1279,17 +1381,47 @@ const downloadCSV = async () => {
                                   background: "#fff",
                                 }}
                               />
+                              {dataSourcePath && (
+                                <span style={{ fontSize: "11px", color: isValidUrl ? "#059669" : "#dc2626", fontWeight: 500 }}>
+                                  {isValidUrl ? "✅ Valid SharePoint URL" : (urlValidationError || "❌ Invalid SharePoint URL")}
+                                </span>
+                              )}
                               <span style={{ fontSize: "11px", color: "#64748b", lineHeight: "1.4" }}>
-                                SharePoint site root or full folder path. e.g. https://company.sharepoint.com/Shared Documents/MyFolder/
-                                Used for CSV/QVD sources. Leave blank to keep the placeholder — you can define it as a Query Parameter in Power BI Desktop later.
+                                SharePoint URL only. Format: https://companyname.sharepoint.com
                               </span>
                             </div>
+                            )}
+
+                            {!isCsvLoadscript && (
+                            <div style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "4px",
+                              marginBottom: "10px",
+                              padding: "8px 12px",
+                              background: "#f0fdf4",
+                              borderRadius: "6px",
+                              border: "1px solid #bbf7d0",
+                            }}>
+                              <span style={{ fontSize: "11px", color: "#059669", fontWeight: 500 }}>
+                                ℹ️ Inline LoadScript - No URL required
+                              </span>
+                            </div>
+                            )}
 
                             <button
                               onClick={handleConvertToMQuery}
-                              disabled={convertingToMquery || !selectedTable}
+                              disabled={convertingToMquery || !selectedTable || (isCsvLoadscript && !isValidUrl)}
                               className="convert-btn"
-                              title={!selectedTable ? "Please select a table first" : "Convert to M Query"}
+                              title={
+                                !selectedTable ? "Please select a table first" :
+                                isCsvLoadscript && !isValidUrl ? "Please enter a valid data source URL for CSV loadscript" :
+                                "Convert to M Query"
+                              }
+                              style={{
+                                opacity: (isCsvLoadscript && !isValidUrl) ? 0.5 : 1,
+                                cursor: (isCsvLoadscript && !isValidUrl) ? "not-allowed" : "pointer",
+                              }}
                             >
                               {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to MQuery"}
                             </button>

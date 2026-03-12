@@ -1,5 +1,5 @@
 {
-  "name": "BoatDetails",
+  "name": "FactSales",
   "compatibilityLevel": 1550,
   "model": {
     "culture": "en-US",
@@ -11,12 +11,12 @@
     "sourceQueryCulture": "en-US",
     "tables": [
       {
-        "name": "VehicleDetails",
+        "name": "DimCustomer",
         "columns": [
           {
-            "name": "VehicleID",
+            "name": "CustomerID",
             "dataType": "string",
-            "sourceColumn": "VehicleID",
+            "sourceColumn": "CustomerID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -26,9 +26,9 @@
             ]
           },
           {
-            "name": "Brand",
+            "name": "CustomerName",
             "dataType": "string",
-            "sourceColumn": "Brand",
+            "sourceColumn": "CustomerName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -38,9 +38,9 @@
             ]
           },
           {
-            "name": "Model",
+            "name": "Gender",
             "dataType": "string",
-            "sourceColumn": "Model",
+            "sourceColumn": "Gender",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -50,9 +50,9 @@
             ]
           },
           {
-            "name": "VehicleType",
+            "name": "Age",
             "dataType": "string",
-            "sourceColumn": "VehicleType",
+            "sourceColumn": "Age",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -62,9 +62,82 @@
             ]
           },
           {
-            "name": "FuelType",
+            "name": "City",
             "dataType": "string",
-            "sourceColumn": "FuelType",
+            "sourceColumn": "City",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "Country",
+            "dataType": "string",
+            "sourceColumn": "Country",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "DimCustomer-Partition",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"DimCustomer.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"CustomerID\", type text},",
+                "        {\"CustomerName\", type text},",
+                "        {\"Gender\", type text},",
+                "        {\"Age\", Int64.Type},",
+                "        {\"City\", type text},",
+                "        {\"Country\", type text}",
+                "        }",
+                "    )",
+                "in",
+                "    TypedTable"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "DimDate",
+        "columns": [
+          {
+            "name": "Date",
+            "dataType": "string",
+            "sourceColumn": "Date",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -86,9 +159,9 @@
             ]
           },
           {
-            "name": "Price",
+            "name": "Month",
             "dataType": "string",
-            "sourceColumn": "Price",
+            "sourceColumn": "Month",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -98,9 +171,226 @@
             ]
           },
           {
-            "name": "Mileage",
+            "name": "MonthName",
             "dataType": "string",
-            "sourceColumn": "Mileage",
+            "sourceColumn": "MonthName",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "Quarter",
+            "dataType": "string",
+            "sourceColumn": "Quarter",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "DayOfWeek",
+            "dataType": "string",
+            "sourceColumn": "DayOfWeek",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "DimDate-Partition",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"DimDate.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"Date\", type date},",
+                "        {\"Year\", Int64.Type},",
+                "        {\"Month\", Int64.Type},",
+                "        {\"MonthName\", type text},",
+                "        {\"Quarter\", type text},",
+                "        {\"DayOfWeek\", type text}",
+                "        }",
+                "    )",
+                "in",
+                "    TypedTable"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "DimProduct",
+        "columns": [
+          {
+            "name": "ProductID",
+            "dataType": "string",
+            "sourceColumn": "ProductID",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "ProductName",
+            "dataType": "string",
+            "sourceColumn": "ProductName",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "Category",
+            "dataType": "string",
+            "sourceColumn": "Category",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "SubCategory",
+            "dataType": "string",
+            "sourceColumn": "SubCategory",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "UnitPrice",
+            "dataType": "string",
+            "sourceColumn": "UnitPrice",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "DimProduct-Partition",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"DimProduct.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"ProductID\", type text},",
+                "        {\"ProductName\", type text},",
+                "        {\"Category\", type text},",
+                "        {\"SubCategory\", type text},",
+                "        {\"UnitPrice\", type number}",
+                "        }",
+                "    )",
+                "in",
+                "    TypedTable"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "DimStore",
+        "columns": [
+          {
+            "name": "StoreID",
+            "dataType": "string",
+            "sourceColumn": "StoreID",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "StoreName",
+            "dataType": "string",
+            "sourceColumn": "StoreName",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "StoreType",
+            "dataType": "string",
+            "sourceColumn": "StoreType",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -120,135 +410,84 @@
                 "value": "Automatic"
               }
             ]
+          },
+          {
+            "name": "State",
+            "dataType": "string",
+            "sourceColumn": "State",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "Region",
+            "dataType": "string",
+            "sourceColumn": "Region",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
           }
         ],
         "partitions": [
           {
-            "name": "VehicleDetails-Partition",
+            "name": "DimStore-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = #table(",
-                "        type table [VehicleID = text, Brand = text, Model = text, VehicleType = text, FuelType = text, Year = text, Price = text, Mileage = text, City = text],",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"DimStore.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
                 "        {",
-                "        {\"V0001\", \"Tata\", \"Nexon\", \"Car\", \"Electric\", \"2023\", \"1550000\", \"0\", \"Mumbai\"},",
-                "        {\"V0002\", \"Tata\", \"Tiago\", \"Car\", \"Petrol\", \"2022\", \"650000\", \"15000\", \"Pune\"},",
-                "        {\"V0003\", \"Hyundai\", \"Creta\", \"Car\", \"Diesel\", \"2023\", \"1750000\", \"5000\", \"Chennai\"},",
-                "        {\"V0004\", \"Maruti\", \"Swift\", \"Car\", \"Petrol\", \"2021\", \"720000\", \"25000\", \"Bangalore\"},",
-                "        {\"V0005\", \"Kia\", \"Seltos\", \"Car\", \"Petrol\", \"2023\", \"1680000\", \"8000\", \"Hyderabad\"},",
-                "        {\"V0006\", \"Mahindra\", \"XUV300\", \"Car\", \"Diesel\", \"2022\", \"1450000\", \"12000\", \"Delhi\"},",
-                "        {\"V0007\", \"Tata\", \"Punch\", \"Car\", \"Petrol\", \"2023\", \"850000\", \"4000\", \"Kolkata\"},",
-                "        {\"V0008\", \"Hyundai\", \"Venue\", \"Car\", \"Petrol\", \"2021\", \"900000\", \"30000\", \"Kochi\"},",
-                "        {\"V0009\", \"Maruti\", \"Baleno\", \"Car\", \"Petrol\", \"2022\", \"820000\", \"18000\", \"Trichy\"},",
-                "        {\"V0010\", \"Toyota\", \"Innova\", \"Car\", \"Diesel\", \"2023\", \"2450000\", \"6000\", \"Coimbatore\"},",
-                "        {\"V0011\", \"Tata\", \"Nexon\", \"Car\", \"Electric\", \"2024\", \"1580000\", \"0\", \"Bangalore\"},",
-                "        {\"V0012\", \"MG\", \"ZS EV\", \"Car\", \"Electric\", \"2023\", \"2250000\", \"7000\", \"Chennai\"},",
-                "        {\"V0013\", \"Hyundai\", \"i20\", \"Car\", \"Petrol\", \"2022\", \"780000\", \"22000\", \"Salem\"},",
-                "        {\"V0014\", \"Maruti\", \"Alto\", \"Car\", \"Petrol\", \"2021\", \"420000\", \"35000\", \"Madurai\"},",
-                "        {\"V0015\", \"Kia\", \"Sonet\", \"Car\", \"Diesel\", \"2023\", \"1150000\", \"9000\", \"Trivandrum\"},",
-                "        {\"V0016\", \"Tata\", \"Harrier\", \"Car\", \"Diesel\", \"2022\", \"2150000\", \"14000\", \"Mumbai\"},",
-                "        {\"V0017\", \"Mahindra\", \"Thar\", \"Car\", \"Diesel\", \"2023\", \"1650000\", \"6000\", \"Delhi\"},",
-                "        {\"V0018\", \"Skoda\", \"Slavia\", \"Car\", \"Petrol\", \"2022\", \"1350000\", \"17000\", \"Pune\"},",
-                "        {\"V0019\", \"Volkswagen\", \"Virtus\", \"Car\", \"Petrol\", \"2023\", \"1420000\", \"8000\", \"Jaipur\"},",
-                "        {\"V0020\", \"Honda\", \"City\", \"Car\", \"Petrol\", \"2022\", \"1550000\", \"16000\", \"Indore\"},",
-                "        {\"V0021\", \"Tata\", \"Tigor\", \"Car\", \"Electric\", \"2023\", \"1350000\", \"0\", \"Ahmedabad\"},",
-                "        {\"V0022\", \"Maruti\", \"Brezza\", \"Car\", \"Petrol\", \"2023\", \"1180000\", \"9000\", \"Surat\"},",
-                "        {\"V0023\", \"Hyundai\", \"Verna\", \"Car\", \"Petrol\", \"2022\", \"1450000\", \"20000\", \"Noida\"},",
-                "        {\"V0024\", \"Toyota\", \"Glanza\", \"Car\", \"Petrol\", \"2021\", \"760000\", \"28000\", \"Lucknow\"},",
-                "        {\"V0025\", \"Tata\", \"Nexon\", \"Car\", \"Electric\", \"2023\", \"1550000\", \"0\", \"Mumbai\"},",
-                "        {\"V0026\", \"Kia\", \"Carens\", \"Car\", \"Diesel\", \"2022\", \"1750000\", \"19000\", \"Kochi\"},",
-                "        {\"V0027\", \"Maruti\", \"Ciaz\", \"Car\", \"Petrol\", \"2021\", \"980000\", \"32000\", \"Vijayawada\"},",
-                "        {\"V0028\", \"Hyundai\", \"Aura\", \"Car\", \"Petrol\", \"2023\", \"720000\", \"6000\", \"Erode\"},",
-                "        {\"V0029\", \"Tata\", \"Altroz\", \"Car\", \"Petrol\", \"2022\", \"890000\", \"21000\", \"Tiruppur\"},",
-                "        {\"V0030\", \"Honda\", \"Amaze\", \"Car\", \"Diesel\", \"2023\", \"950000\", \"10000\", \"Mysore\"},",
-                "        {\"V0031\", \"MG\", \"Hector\", \"Car\", \"Petrol\", \"2022\", \"1850000\", \"15000\", \"Gurgaon\"},",
-                "        {\"V0032\", \"Toyota\", \"Fortuner\", \"Car\", \"Diesel\", \"2023\", \"3800000\", \"8000\", \"Delhi\"},",
-                "        {\"V0033\", \"Hyundai\", \"Tucson\", \"Car\", \"Diesel\", \"2024\", \"2950000\", \"3000\", \"Bangalore\"},",
-                "        {\"V0034\", \"Tata\", \"Safari\", \"Car\", \"Diesel\", \"2022\", \"2450000\", \"18000\", \"Mumbai\"},",
-                "        {\"V0035\", \"Kia\", \"EV6\", \"Car\", \"Electric\", \"2023\", \"6200000\", \"4000\", \"Chennai\"},",
-                "        {\"V0036\", \"Mahindra\", \"XUV700\", \"Car\", \"Diesel\", \"2023\", \"2650000\", \"7000\", \"Pune\"},",
-                "        {\"V0037\", \"Maruti\", \"WagonR\", \"Car\", \"Petrol\", \"2021\", \"580000\", \"42000\", \"Salem\"},",
-                "        {\"V0038\", \"Hyundai\", \"Grand i10\", \"Car\", \"Petrol\", \"2022\", \"690000\", \"26000\", \"Cochin\"},",
-                "        {\"V0039\", \"Tata\", \"Tiago\", \"Car\", \"CNG\", \"2023\", \"720000\", \"9000\", \"Ahmedabad\"},",
-                "        {\"V0040\", \"Toyota\", \"Urban Cruiser\", \"Car\", \"Petrol\", \"2022\", \"1150000\", \"17000\", \"Bhopal\"},",
-                "        {\"V0041\", \"Honda\", \"Jazz\", \"Car\", \"Petrol\", \"2021\", \"820000\", \"30000\", \"Trichy\"},",
-                "        {\"V0042\", \"Skoda\", \"Kushaq\", \"Car\", \"Petrol\", \"2023\", \"1650000\", \"9000\", \"Pune\"},",
-                "        {\"V0043\", \"Volkswagen\", \"Taigun\", \"Car\", \"Petrol\", \"2022\", \"1580000\", \"14000\", \"Mumbai\"},",
-                "        {\"V0044\", \"Tata\", \"Nexon\", \"Car\", \"Diesel\", \"2021\", \"1350000\", \"26000\", \"Ranchi\"},",
-                "        {\"V0045\", \"Hyundai\", \"Alcazar\", \"Car\", \"Diesel\", \"2023\", \"2050000\", \"8000\", \"Delhi\"},",
-                "        {\"V0046\", \"Kia\", \"Carnival\", \"Car\", \"Diesel\", \"2022\", \"3100000\", \"16000\", \"Kochi\"},",
-                "        {\"V0047\", \"Maruti\", \"Ertiga\", \"Car\", \"Petrol\", \"2023\", \"1080000\", \"11000\", \"Madurai\"},",
-                "        {\"V0048\", \"Tata\", \"Tigor\", \"Car\", \"Petrol\", \"2021\", \"620000\", \"33000\", \"Vellore\"},",
-                "        {\"V0049\", \"Honda\", \"WR-V\", \"Car\", \"Petrol\", \"2022\", \"890000\", \"19000\", \"Salem\"},",
-                "        {\"V0050\", \"MG\", \"Comet\", \"Car\", \"Electric\", \"2024\", \"800000\", \"0\", \"Bangalore\"},",
-                "        {\"V0051\", \"Tata\", \"Nexon\", \"Car\", \"Electric\", \"2022\", \"1520000\", \"5000\", \"Pune\"},",
-                "        {\"V0052\", \"Hyundai\", \"Kona\", \"Car\", \"Electric\", \"2023\", \"2350000\", \"4000\", \"Chennai\"},",
-                "        {\"V0053\", \"Mahindra\", \"eVerito\", \"Car\", \"Electric\", \"2021\", \"1450000\", \"12000\", \"Nagpur\"},",
-                "        {\"V0054\", \"Tata\", \"Zest\", \"Car\", \"Diesel\", \"2019\", \"720000\", \"48000\", \"Trichy\"},",
-                "        {\"V0055\", \"Maruti\", \"Dzire\", \"Car\", \"Petrol\", \"2022\", \"780000\", \"21000\", \"Erode\"},",
-                "        {\"V0056\", \"Kia\", \"Rio\", \"Car\", \"Petrol\", \"2021\", \"680000\", \"35000\", \"Hosur\"},",
-                "        {\"V0057\", \"Toyota\", \"Etios\", \"Car\", \"Diesel\", \"2020\", \"820000\", \"52000\", \"Madurai\"},",
-                "        {\"V0058\", \"Hyundai\", \"Santro\", \"Car\", \"Petrol\", \"2021\", \"560000\", \"38000\", \"Karur\"},",
-                "        {\"V0059\", \"Tata\", \"Indica\", \"Car\", \"Diesel\", \"2018\", \"480000\", \"65000\", \"Tirunelveli\"},",
-                "        {\"V0060\", \"Honda\", \"Brio\", \"Car\", \"Petrol\", \"2019\", \"510000\", \"57000\", \"Thanjavur\"},",
-                "        {\"V0061\", \"Skoda\", \"Octavia\", \"Car\", \"Petrol\", \"2023\", \"2950000\", \"6000\", \"Chennai\"},",
-                "        {\"V0062\", \"Volkswagen\", \"Polo\", \"Car\", \"Petrol\", \"2020\", \"680000\", \"46000\", \"Coimbatore\"},",
-                "        {\"V0063\", \"MG\", \"Astor\", \"Car\", \"Petrol\", \"2022\", \"1450000\", \"17000\", \"Trivandrum\"},",
-                "        {\"V0064\", \"Tata\", \"Bolt\", \"Car\", \"Petrol\", \"2019\", \"520000\", \"58000\", \"Salem\"},",
-                "        {\"V0065\", \"Hyundai\", \"Elantra\", \"Car\", \"Petrol\", \"2021\", \"1950000\", \"24000\", \"Bangalore\"},",
-                "        {\"V0066\", \"Maruti\", \"Ignis\", \"Car\", \"Petrol\", \"2022\", \"620000\", \"18000\", \"Tiruppur\"},",
-                "        {\"V0067\", \"Kia\", \"Picanto\", \"Car\", \"Petrol\", \"2021\", \"540000\", \"36000\", \"Nagercoil\"},",
-                "        {\"V0068\", \"Toyota\", \"Yaris\", \"Car\", \"Petrol\", \"2020\", \"880000\", \"44000\", \"Trichy\"},",
-                "        {\"V0069\", \"Tata\", \"Nano\", \"Car\", \"Petrol\", \"2018\", \"210000\", \"75000\", \"Dindigul\"},",
-                "        {\"V0070\", \"Honda\", \"Civic\", \"Car\", \"Petrol\", \"2023\", \"2250000\", \"9000\", \"Chennai\"},",
-                "        {\"V0071\", \"Hyundai\", \"Ioniq5\", \"Car\", \"Electric\", \"2024\", \"4500000\", \"2000\", \"Bangalore\"},",
-                "        {\"V0072\", \"Tata\", \"Avinya\", \"Car\", \"Electric\", \"2024\", \"3000000\", \"0\", \"Pune\"},",
-                "        {\"V0073\", \"Mahindra\", \"BE6\", \"Car\", \"Electric\", \"2025\", \"2800000\", \"0\", \"Mumbai\"},",
-                "        {\"V0074\", \"MG\", \"Marvel R\", \"Car\", \"Electric\", \"2024\", \"3200000\", \"3000\", \"Delhi\"},",
-                "        {\"V0075\", \"Kia\", \"EV9\", \"Car\", \"Electric\", \"2024\", \"8000000\", \"1500\", \"Gurgaon\"},",
-                "        {\"V0076\", \"Hyundai\", \"Exter\", \"Car\", \"Petrol\", \"2023\", \"720000\", \"7000\", \"Salem\"},",
-                "        {\"V0077\", \"Tata\", \"Curvv\", \"Car\", \"Electric\", \"2024\", \"2200000\", \"0\", \"Chennai\"},",
-                "        {\"V0078\", \"Maruti\", \"Fronx\", \"Car\", \"Petrol\", \"2023\", \"950000\", \"12000\", \"Coimbatore\"},",
-                "        {\"V0079\", \"Toyota\", \"Rumion\", \"Car\", \"Petrol\", \"2023\", \"1050000\", \"11000\", \"Madurai\"},",
-                "        {\"V0080\", \"Honda\", \"Elevate\", \"Car\", \"Petrol\", \"2024\", \"1450000\", \"5000\", \"Bangalore\"},",
-                "        {\"V0081\", \"Tata\", \"Nexon\", \"Car\", \"Diesel\", \"2020\", \"1180000\", \"42000\", \"Trichy\"},",
-                "        {\"V0082\", \"Hyundai\", \"Verna\", \"Car\", \"Diesel\", \"2021\", \"1320000\", \"30000\", \"Chennai\"},",
-                "        {\"V0083\", \"Kia\", \"Seltos\", \"Car\", \"Diesel\", \"2022\", \"1620000\", \"19000\", \"Madurai\"},",
-                "        {\"V0084\", \"Mahindra\", \"Scorpio\", \"Car\", \"Diesel\", \"2023\", \"2350000\", \"10000\", \"Tirunelveli\"},",
-                "        {\"V0085\", \"Toyota\", \"Corolla\", \"Car\", \"Petrol\", \"2019\", \"980000\", \"58000\", \"Salem\"},",
-                "        {\"V0086\", \"Honda\", \"CR-V\", \"Car\", \"Petrol\", \"2020\", \"2150000\", \"45000\", \"Bangalore\"},",
-                "        {\"V0087\", \"Skoda\", \"Rapid\", \"Car\", \"Petrol\", \"2021\", \"1050000\", \"28000\", \"Chennai\"},",
-                "        {\"V0088\", \"Volkswagen\", \"Vento\", \"Car\", \"Diesel\", \"2020\", \"1120000\", \"39000\", \"Coimbatore\"},",
-                "        {\"V0089\", \"Tata\", \"Hexa\", \"Car\", \"Diesel\", \"2019\", \"1650000\", \"52000\", \"Madurai\"},",
-                "        {\"V0090\", \"Hyundai\", \"Santa Fe\", \"Car\", \"Diesel\", \"2022\", \"3150000\", \"14000\", \"Delhi\"},",
-                "        {\"V0091\", \"Kia\", \"EV6\", \"Car\", \"Electric\", \"2024\", \"6500000\", \"2000\", \"Bangalore\"},",
-                "        {\"V0092\", \"Tata\", \"Tiago\", \"Car\", \"Electric\", \"2023\", \"920000\", \"0\", \"Pune\"},",
-                "        {\"V0093\", \"MG\", \"ZS EV\", \"Car\", \"Electric\", \"2024\", \"2350000\", \"3000\", \"Chennai\"},",
-                "        {\"V0094\", \"Hyundai\", \"Kona\", \"Car\", \"Electric\", \"2022\", \"2280000\", \"8000\", \"Hyderabad\"},",
-                "        {\"V0095\", \"Mahindra\", \"XUV400\", \"Car\", \"Electric\", \"2023\", \"1850000\", \"6000\", \"Mumbai\"},",
-                "        {\"V0096\", \"Tata\", \"Punch\", \"Car\", \"Electric\", \"2024\", \"1350000\", \"0\", \"Bangalore\"},",
-                "        {\"V0097\", \"Citroen\", \"eC3\", \"Car\", \"Electric\", \"2023\", \"1250000\", \"4000\", \"Chennai\"},",
-                "        {\"V0098\", \"BMW\", \"i4\", \"Car\", \"Electric\", \"2024\", \"7200000\", \"1500\", \"Delhi\"},",
-                "        {\"V0099\", \"Audi\", \"Q8 e-tron\", \"Car\", \"Electric\", \"2024\", \"11800000\", \"800\", \"Mumbai\"},",
-                "        {\"V0100\", \"Mercedes\", \"EQS\", \"Car\", \"Electric\", \"2024\", \"15500000\", \"500\", \"Bangalore\"}",
-                "    }",
+                "        {\"StoreID\", type text},",
+                "        {\"StoreName\", type text},",
+                "        {\"StoreType\", type text},",
+                "        {\"City\", type text},",
+                "        {\"State\", type text},",
+                "        {\"Region\", type text}",
+                "        }",
                 "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       },
       {
-        "name": "TruckData",
+        "name": "FactSales",
         "columns": [
           {
-            "name": "TruckID",
+            "name": "SalesID",
             "dataType": "string",
-            "sourceColumn": "TruckID",
+            "sourceColumn": "SalesID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -258,9 +497,9 @@
             ]
           },
           {
-            "name": "TruckNumber",
+            "name": "CustomerID",
             "dataType": "string",
-            "sourceColumn": "TruckNumber",
+            "sourceColumn": "CustomerID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -270,9 +509,9 @@
             ]
           },
           {
-            "name": "DriverName",
+            "name": "ProductID",
             "dataType": "string",
-            "sourceColumn": "DriverName",
+            "sourceColumn": "ProductID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -282,9 +521,9 @@
             ]
           },
           {
-            "name": "RouteFrom",
+            "name": "StoreID",
             "dataType": "string",
-            "sourceColumn": "RouteFrom",
+            "sourceColumn": "StoreID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -294,9 +533,9 @@
             ]
           },
           {
-            "name": "RouteTo",
+            "name": "Quantity",
             "dataType": "string",
-            "sourceColumn": "RouteTo",
+            "sourceColumn": "Quantity",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -306,9 +545,9 @@
             ]
           },
           {
-            "name": "LoadType",
+            "name": "UnitPrice",
             "dataType": "string",
-            "sourceColumn": "LoadType",
+            "sourceColumn": "UnitPrice",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -318,9 +557,9 @@
             ]
           },
           {
-            "name": "Capacity_Tons",
+            "name": "Discount",
             "dataType": "string",
-            "sourceColumn": "Capacity_Tons",
+            "sourceColumn": "Discount",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -330,57 +569,9 @@
             ]
           },
           {
-            "name": "Status",
+            "name": "TotalAmount",
             "dataType": "string",
-            "sourceColumn": "Status",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "FuelType",
-            "dataType": "string",
-            "sourceColumn": "FuelType",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "LastServiceDate",
-            "dataType": "string",
-            "sourceColumn": "LastServiceDate",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Distance_KM",
-            "dataType": "string",
-            "sourceColumn": "Distance_KM",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "LoadWeight_Tons",
-            "dataType": "string",
-            "sourceColumn": "LoadWeight_Tons",
+            "sourceColumn": "TotalAmount",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -392,753 +583,84 @@
         ],
         "partitions": [
           {
-            "name": "TruckData-Partition",
+            "name": "FactSales-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = #table(",
-                "        type table [TruckID = text, TruckNumber = text, DriverName = text, RouteFrom = text, RouteTo = text, LoadType = text, Capacity_Tons = text, Status = text, FuelType = text, LastServiceDate = text, Distance_KM = text, LoadWeight_Tons = text],",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"FactSales.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
                 "        {",
-                "        {\"T001\", \"TN-01-AB-1234\", \"Ravi Kumar\", \"Chennai\", \"Bangalore\", \"Electronics\", \"20\", \"In Transit\", \"Diesel\", \"2025-01-10\", \"350\", \"18\"},",
-                "        {\"T002\", \"TN-02-CD-5678\", \"Suresh Babu\", \"Mumbai\", \"Pune\", \"FMCG\", \"15\", \"Delivered\", \"Diesel\", \"2025-01-05\", \"150\", \"14\"},",
-                "        {\"T003\", \"TN-03-EF-9012\", \"Arjun Singh\", \"Delhi\", \"Jaipur\", \"Textiles\", \"18\", \"In Transit\", \"Diesel\", \"2025-01-18\", \"280\", \"16\"},",
-                "        {\"T004\", \"TN-04-GH-3456\", \"Karthik Raj\", \"Hyderabad\", \"Chennai\", \"Steel\", \"25\", \"Maintenance\", \"Diesel\", \"2024-12-28\", \"620\", \"0\"},",
-                "        {\"T005\", \"TN-05-IJ-7890\", \"Manoj Patel\", \"Ahmedabad\", \"Surat\", \"Chemicals\", \"22\", \"Delivered\", \"Diesel\", \"2025-01-15\", \"210\", \"20\"},",
-                "        {\"T006\", \"TN-06-KL-1122\", \"Vijay Kumar\", \"Kolkata\", \"Bhubaneswar\", \"FoodGrains\", \"19\", \"In Transit\", \"Diesel\", \"2025-01-20\", \"440\", \"17\"},",
-                "        {\"T007\", \"TN-07-MN-3344\", \"Prakash Reddy\", \"Chennai\", \"Coimbatore\", \"Cement\", \"24\", \"Delivered\", \"Diesel\", \"2025-01-08\", \"510\", \"23\"},",
-                "        {\"T008\", \"TN-08-OP-5566\", \"Sanjay Sharma\", \"Lucknow\", \"Kanpur\", \"Electronics\", \"16\", \"In Transit\", \"Diesel\", \"2025-01-12\", \"90\", \"15\"},",
-                "        {\"T009\", \"TN-09-QR-7788\", \"Imran Khan\", \"Nagpur\", \"Indore\", \"Pharmaceuticals\", \"14\", \"Delivered\", \"Diesel\", \"2025-01-02\", \"380\", \"12\"},",
-                "        {\"T010\", \"TN-10-ST-9900\", \"Deepak Yadav\", \"Patna\", \"Ranchi\", \"FMCG\", \"17\", \"In Transit\", \"Diesel\", \"2025-01-22\", \"300\", \"16\"},",
-                "        {\"T011\", \"TN-11-UV-2233\", \"Ramesh Gupta\", \"Jaipur\", \"Udaipur\", \"Textiles\", \"21\", \"Delivered\", \"Diesel\", \"2025-01-09\", \"420\", \"19\"},",
-                "        {\"T012\", \"TN-12-WX-4455\", \"Naveen Kumar\", \"Bhopal\", \"Gwalior\", \"Machinery\", \"26\", \"In Transit\", \"Diesel\", \"2025-01-19\", \"610\", \"24\"},",
-                "        {\"T013\", \"TN-13-YZ-6677\", \"Anil Kumar\", \"Vijayawada\", \"Visakhapatnam\", \"Cement\", \"23\", \"Maintenance\", \"Diesel\", \"2024-12-20\", \"520\", \"0\"},",
-                "        {\"T014\", \"TN-14-AA-8899\", \"Rajesh Verma\", \"Kochi\", \"Trivandrum\", \"FoodGrains\", \"18\", \"Delivered\", \"Diesel\", \"2025-01-11\", \"230\", \"17\"},",
-                "        {\"T015\", \"TN-15-BB-1010\", \"Sunil Das\", \"Guwahati\", \"Shillong\", \"Electronics\", \"20\", \"In Transit\", \"Diesel\", \"2025-01-21\", \"180\", \"18\"}",
-                "    }",
+                "        {\"SalesID\", type text},",
+                "        {\"CustomerID\", type text},",
+                "        {\"ProductID\", type text},",
+                "        {\"StoreID\", type text},",
+                "        {\"Quantity\", Int64.Type},",
+                "        {\"UnitPrice\", type number},",
+                "        {\"Discount\", Int64.Type},",
+                "        {\"TotalAmount\", type number}",
+                "        }",
                 "    )",
                 "in",
-                "    Source"
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "name": "BoatDetails",
-        "columns": [
-          {
-            "name": "BoatID",
-            "dataType": "string",
-            "sourceColumn": "BoatID",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "BoatName",
-            "dataType": "string",
-            "sourceColumn": "BoatName",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "BoatType",
-            "dataType": "string",
-            "sourceColumn": "BoatType",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "CaptainName",
-            "dataType": "string",
-            "sourceColumn": "CaptainName",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Capacity_Persons",
-            "dataType": "string",
-            "sourceColumn": "Capacity_Persons",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "FuelType",
-            "dataType": "string",
-            "sourceColumn": "FuelType",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "MaxSpeed_Knots",
-            "dataType": "string",
-            "sourceColumn": "MaxSpeed_Knots",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Status",
-            "dataType": "string",
-            "sourceColumn": "Status",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "RouteFrom",
-            "dataType": "string",
-            "sourceColumn": "RouteFrom",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "RouteTo",
-            "dataType": "string",
-            "sourceColumn": "RouteTo",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "LastServiceDate",
-            "dataType": "string",
-            "sourceColumn": "LastServiceDate",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "TicketPrice",
-            "dataType": "string",
-            "sourceColumn": "TicketPrice",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          }
-        ],
-        "partitions": [
-          {
-            "name": "BoatDetails-Partition",
-            "mode": "import",
-            "source": {
-              "type": "m",
-              "expression": [
-                "let",
-                "    Source = #table(",
-                "        type table [BoatID = text, BoatName = text, BoatType = text, CaptainName = text, Capacity_Persons = text, FuelType = text, MaxSpeed_Knots = text, Status = text, RouteFrom = text, RouteTo = text, LastServiceDate = text, TicketPrice = text],",
-                "        {",
-                "        {\"BT001\", \"Sea Queen\", \"Ferry\", \"Ravi Kumar\", \"120\", \"Diesel\", \"25\", \"Running\", \"Chennai\", \"Pondicherry\", \"2025-01-10\", \"750\"},",
-                "        {\"BT002\", \"Ocean Star\", \"Cruise\", \"Arjun Singh\", \"300\", \"Diesel\", \"30\", \"Docked\", \"Mumbai\", \"Goa\", \"2025-01-05\", \"3500\"},",
-                "        {\"BT003\", \"Blue Wave\", \"Fishing\", \"Suresh Babu\", \"15\", \"Petrol\", \"18\", \"Running\", \"Kochi\", \"Lakshadweep\", \"2025-01-15\", \"0\"},",
-                "        {\"BT004\", \"Pearl Rider\", \"Speed Boat\", \"Karthik Raj\", \"10\", \"Petrol\", \"45\", \"Maintenance\", \"Goa\", \"Mumbai\", \"2024-12-28\", \"1500\"},",
-                "        {\"BT005\", \"River King\", \"Ferry\", \"Manoj Patel\", \"80\", \"Diesel\", \"22\", \"Running\", \"Kolkata\", \"Sundarbans\", \"2025-01-12\", \"500\"},",
-                "        {\"BT006\", \"Island Queen\", \"Cruise\", \"Naveen Kumar\", \"250\", \"Diesel\", \"28\", \"Running\", \"Chennai\", \"Andaman\", \"2025-01-20\", \"4200\"},",
-                "        {\"BT007\", \"Sea Breeze\", \"Yacht\", \"John Mathew\", \"20\", \"Petrol\", \"35\", \"Docked\", \"Kochi\", \"Goa\", \"2025-01-08\", \"8000\"},",
-                "        {\"BT008\", \"Wave Rider\", \"Speed Boat\", \"Sanjay Sharma\", \"12\", \"Petrol\", \"50\", \"Running\", \"Mumbai\", \"Alibaug\", \"2025-01-18\", \"1200\"},",
-                "        {\"BT009\", \"Coral Ship\", \"Cruise\", \"Imran Khan\", \"280\", \"Diesel\", \"27\", \"Running\", \"Vizag\", \"Chennai\", \"2025-01-02\", \"3900\"},",
-                "        {\"BT010\", \"Dolphin Ferry\", \"Ferry\", \"Deepak Yadav\", \"100\", \"Diesel\", \"23\", \"Docked\", \"Kochi\", \"Alleppey\", \"2025-01-22\", \"650\"},",
-                "        {\"BT011\", \"Sea Hunter\", \"Fishing\", \"Ramesh Gupta\", \"18\", \"Petrol\", \"20\", \"Running\", \"Mangalore\", \"Goa\", \"2025-01-09\", \"0\"},",
-                "        {\"BT012\", \"Royal Wave\", \"Yacht\", \"Anil Kumar\", \"25\", \"Diesel\", \"32\", \"Maintenance\", \"Goa\", \"Kochi\", \"2025-01-19\", \"9500\"},",
-                "        {\"BT013\", \"Aqua Star\", \"Ferry\", \"Rajesh Verma\", \"90\", \"Diesel\", \"24\", \"Running\", \"Chennai\", \"Nagapattinam\", \"2024-12-20\", \"600\"},",
-                "        {\"BT014\", \"Blue Pearl\", \"Cruise\", \"Sunil Das\", \"320\", \"Diesel\", \"29\", \"Docked\", \"Mumbai\", \"Dubai\", \"2025-01-11\", \"15000\"},",
-                "        {\"BT015\", \"Sea Falcon\", \"Speed Boat\", \"Vijay Kumar\", \"14\", \"Petrol\", \"48\", \"Running\", \"Pondicherry\", \"Chennai\", \"2025-01-21\", \"1300\"}",
-                "    }",
-                "    )",
-                "in",
-                "    Source"
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "name": "Cycles",
-        "columns": [
-          {
-            "name": "CycleID",
-            "dataType": "string",
-            "sourceColumn": "CycleID",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "CycleName",
-            "dataType": "string",
-            "sourceColumn": "CycleName",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "StartDate",
-            "dataType": "string",
-            "sourceColumn": "StartDate",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "EndDate",
-            "dataType": "string",
-            "sourceColumn": "EndDate",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Status",
-            "dataType": "string",
-            "sourceColumn": "Status",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          }
-        ],
-        "partitions": [
-          {
-            "name": "Cycles-Partition",
-            "mode": "import",
-            "source": {
-              "type": "m",
-              "expression": [
-                "let",
-                "    Source = #table(",
-                "        type table [CycleID = text, CycleName = text, StartDate = text, EndDate = text, Status = text],",
-                "        {",
-                "        {\"1\", \"Cycle A\", \"2024-01-01\", \"2024-01-10\", \"Completed\"},",
-                "        {\"2\", \"Cycle B\", \"2024-01-11\", \"2024-01-20\", \"Completed\"},",
-                "        {\"3\", \"Cycle C\", \"2024-01-21\", \"2024-01-30\", \"Active\"},",
-                "        {\"4\", \"Cycle D\", \"2024-02-01\", \"2024-02-10\", \"Planned\"},",
-                "        {\"5\", \"Cycle E\", \"2024-02-11\", \"2024-02-20\", \"Planned\"},",
-                "        {\"6\", \"Cycle F\", \"2024-02-21\", \"2024-02-28\", \"Active\"},",
-                "        {\"7\", \"Cycle G\", \"2024-03-01\", \"2024-03-10\", \"Completed\"},",
-                "        {\"8\", \"Cycle H\", \"2024-03-11\", \"2024-03-20\", \"Active\"},",
-                "        {\"9\", \"Cycle I\", \"2024-03-21\", \"2024-03-30\", \"Planned\"},",
-                "        {\"10\", \"Cycle J\", \"2024-04-01\", \"2024-04-10\", \"Completed\"},",
-                "        {\"11\", \"Cycle K\", \"2024-04-11\", \"2024-04-20\", \"Active\"},",
-                "        {\"12\", \"Cycle L\", \"2024-04-21\", \"2024-04-30\", \"Planned\"},",
-                "        {\"13\", \"Cycle M\", \"2024-05-01\", \"2024-05-10\", \"Completed\"},",
-                "        {\"14\", \"Cycle N\", \"2024-05-11\", \"2024-05-20\", \"Active\"},",
-                "        {\"15\", \"Cycle O\", \"2024-05-21\", \"2024-05-30\", \"Planned\"},",
-                "        {\"16\", \"Cycle P\", \"2024-06-01\", \"2024-06-10\", \"Completed\"},",
-                "        {\"17\", \"Cycle Q\", \"2024-06-11\", \"2024-06-20\", \"Active\"},",
-                "        {\"18\", \"Cycle R\", \"2024-06-21\", \"2024-06-30\", \"Planned\"},",
-                "        {\"19\", \"Cycle S\", \"2024-07-01\", \"2024-07-10\", \"Completed\"},",
-                "        {\"20\", \"Cycle T\", \"2024-07-11\", \"2024-07-20\", \"Active\"}",
-                "    }",
-                "    )",
-                "in",
-                "    Source"
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "name": "ev",
-        "columns": [
-          {
-            "name": "EVID",
-            "dataType": "string",
-            "sourceColumn": "EVID",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Brand",
-            "dataType": "string",
-            "sourceColumn": "Brand",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Model",
-            "dataType": "string",
-            "sourceColumn": "Model",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "EngineCC",
-            "dataType": "string",
-            "sourceColumn": "EngineCC",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "FuelType",
-            "dataType": "string",
-            "sourceColumn": "FuelType",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Year",
-            "dataType": "string",
-            "sourceColumn": "Year",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Price",
-            "dataType": "string",
-            "sourceColumn": "Price",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Mileage",
-            "dataType": "string",
-            "sourceColumn": "Mileage",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "City",
-            "dataType": "string",
-            "sourceColumn": "City",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          }
-        ],
-        "partitions": [
-          {
-            "name": "ev-Partition",
-            "mode": "import",
-            "source": {
-              "type": "m",
-              "expression": [
-                "let",
-                "    Source = #table(",
-                "        type table [EVID = text, Brand = text, Model = text, EngineCC = text, FuelType = text, Year = text, Price = text, Mileage = text, City = text],",
-                "        {",
-                "        {\"EV0001\", \"Tata\", \"Nexon\", \"Car\", \"Electric\", \"2023\", \"1550000\", \"0\", \"Mumbai\"},",
-                "        {\"EV0002\", \"Tata\", \"Tiago\", \"Car\", \"Petrol\", \"2022\", \"650000\", \"15000\", \"Pune\"},",
-                "        {\"EV0003\", \"Hyundai\", \"Creta\", \"Car\", \"Diesel\", \"2023\", \"1750000\", \"5000\", \"Chennai\"},",
-                "        {\"EV0004\", \"Maruti\", \"Swift\", \"Car\", \"Petrol\", \"2021\", \"720000\", \"25000\", \"Bangalore\"},",
-                "        {\"EV0005\", \"Kia\", \"Seltos\", \"Car\", \"Petrol\", \"2023\", \"1680000\", \"8000\", \"Hyderabad\"},",
-                "        {\"EV0006\", \"Mahindra\", \"XUV300\", \"Car\", \"Diesel\", \"2022\", \"1450000\", \"12000\", \"Delhi\"},",
-                "        {\"EV0007\", \"Tata\", \"Punch\", \"Car\", \"Petrol\", \"2023\", \"850000\", \"4000\", \"Kolkata\"}",
-                "    }",
-                "    )",
-                "in",
-                "    Source"
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "name": "CarDetails",
-        "columns": [
-          {
-            "name": "CarID",
-            "dataType": "string",
-            "sourceColumn": "CarID",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Brand",
-            "dataType": "string",
-            "sourceColumn": "Brand",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Model",
-            "dataType": "string",
-            "sourceColumn": "Model",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "EngineCC",
-            "dataType": "string",
-            "sourceColumn": "EngineCC",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "FuelType",
-            "dataType": "string",
-            "sourceColumn": "FuelType",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Year",
-            "dataType": "string",
-            "sourceColumn": "Year",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Price",
-            "dataType": "string",
-            "sourceColumn": "Price",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Mileage",
-            "dataType": "string",
-            "sourceColumn": "Mileage",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "City",
-            "dataType": "string",
-            "sourceColumn": "City",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          }
-        ],
-        "partitions": [
-          {
-            "name": "CarDetails-Partition",
-            "mode": "import",
-            "source": {
-              "type": "m",
-              "expression": [
-                "let",
-                "    Source = #table(",
-                "        type table [CarID = text, Brand = text, Model = text, EngineCC = text, FuelType = text, Year = text, Price = text, Mileage = text, City = text],",
-                "        {",
-                "        {\"C001\", \"Maruti\", \"Swift\", \"1197\", \"Petrol\", \"2023\", \"750000\", \"22\", \"Chennai\"},",
-                "        {\"C002\", \"Hyundai\", \"Creta\", \"1497\", \"Diesel\", \"2024\", \"1250000\", \"18\", \"Bangalore\"},",
-                "        {\"C003\", \"Honda\", \"City\", \"1498\", \"Petrol\", \"2023\", \"1150000\", \"19\", \"Hyderabad\"},",
-                "        {\"C004\", \"Tata\", \"Nexon\", \"1199\", \"Petrol\", \"2024\", \"980000\", \"20\", \"Pune\"},",
-                "        {\"C005\", \"Mahindra\", \"Thar\", \"1997\", \"Diesel\", \"2023\", \"1650000\", \"15\", \"Jaipur\"},",
-                "        {\"C006\", \"Toyota\", \"InnovaCrysta\", \"2393\", \"Diesel\", \"2022\", \"2200000\", \"13\", \"Coimbatore\"},",
-                "        {\"C007\", \"Kia\", \"Seltos\", \"1497\", \"Petrol\", \"2023\", \"1400000\", \"17\", \"Delhi\"},",
-                "        {\"C008\", \"Volkswagen\", \"Virtus\", \"1498\", \"Petrol\", \"2024\", \"1350000\", \"18\", \"Mumbai\"}",
-                "    }",
-                "    )",
-                "in",
-                "    Source"
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "name": "BikeDetails",
-        "columns": [
-          {
-            "name": "BikeID",
-            "dataType": "string",
-            "sourceColumn": "BikeID",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Brand",
-            "dataType": "string",
-            "sourceColumn": "Brand",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Model",
-            "dataType": "string",
-            "sourceColumn": "Model",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "EngineCC",
-            "dataType": "string",
-            "sourceColumn": "EngineCC",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "FuelType",
-            "dataType": "string",
-            "sourceColumn": "FuelType",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Year",
-            "dataType": "string",
-            "sourceColumn": "Year",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Price",
-            "dataType": "string",
-            "sourceColumn": "Price",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "Mileage",
-            "dataType": "string",
-            "sourceColumn": "Mileage",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "City",
-            "dataType": "string",
-            "sourceColumn": "City",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          }
-        ],
-        "partitions": [
-          {
-            "name": "BikeDetails-Partition",
-            "mode": "import",
-            "source": {
-              "type": "m",
-              "expression": [
-                "let",
-                "    Source = #table(",
-                "        type table [BikeID = text, Brand = text, Model = text, EngineCC = text, FuelType = text, Year = text, Price = text, Mileage = text, City = text],",
-                "        {",
-                "        {\"B001\", \"Yamaha\", \"R15\", \"155\", \"Petrol\", \"2023\", \"180000\", \"45\", \"Chennai\"},",
-                "        {\"B002\", \"RoyalEnfield\", \"Classic350\", \"349\", \"Petrol\", \"2022\", \"210000\", \"35\", \"Bangalore\"},",
-                "        {\"B003\", \"Bajaj\", \"Pulsar220\", \"220\", \"Petrol\", \"2021\", \"145000\", \"38\", \"Hyderabad\"},",
-                "        {\"B004\", \"KTM\", \"Duke390\", \"373\", \"Petrol\", \"2023\", \"295000\", \"28\", \"Pune\"},",
-                "        {\"B005\", \"Hero\", \"SplendorPlus\", \"97\", \"Petrol\", \"2022\", \"90000\", \"60\", \"Jaipur\"},",
-                "        {\"B006\", \"TVS\", \"ApacheRTR160\", \"160\", \"Petrol\", \"2023\", \"125000\", \"42\", \"Coimbatore\"},",
-                "        {\"B007\", \"Honda\", \"CB350\", \"348\", \"Petrol\", \"2022\", \"215000\", \"34\", \"Delhi\"},",
-                "        {\"B008\", \"Suzuki\", \"GixxerSF250\", \"249\", \"Petrol\", \"2023\", \"190000\", \"36\", \"Mumbai\"}",
-                "    }",
-                "    )",
-                "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       }
     ],
-    "relationships": [],
+    "relationships": [
+      {
+        "name": "FactSales_CustomerID_DimCustomer_CustomerID",
+        "fromTable": "FactSales",
+        "fromColumn": "CustomerID",
+        "toTable": "DimCustomer",
+        "toColumn": "CustomerID",
+        "crossFilteringBehavior": "oneDirection"
+      },
+      {
+        "name": "FactSales_ProductID_DimProduct_ProductID",
+        "fromTable": "FactSales",
+        "fromColumn": "ProductID",
+        "toTable": "DimProduct",
+        "toColumn": "ProductID",
+        "crossFilteringBehavior": "oneDirection"
+      },
+      {
+        "name": "FactSales_StoreID_DimStore_StoreID",
+        "fromTable": "FactSales",
+        "fromColumn": "StoreID",
+        "toTable": "DimStore",
+        "toColumn": "StoreID",
+        "crossFilteringBehavior": "oneDirection"
+      }
+    ],
     "expressions": [
       {
         "name": "DataSourcePath",
         "kind": "m",
         "expression": [
-          "\"\""
+          "\"https://sorimtechnologies.sharepoint.com\""
         ],
         "annotations": [
           {

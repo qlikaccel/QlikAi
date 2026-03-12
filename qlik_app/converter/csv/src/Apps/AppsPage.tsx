@@ -232,6 +232,8 @@ import { useEffect, useState } from "react";
 import { fetchApps, fetchTables } from "../api/qlikApi";
 import { useNavigate } from "react-router-dom";
 import { useWizard } from "../context/WizardContext";
+import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
+
 interface App {
   id: string;
   name: string;
@@ -318,7 +320,12 @@ export default function AppsPage() {
   };
 
   if (loading) {
-    return <div className="wrap">Loading apps…</div>;
+    return (
+      <LoadingOverlay
+        isVisible={loading}
+        message="Loading QlikSense applications..."
+      />
+    );
   }
 
 

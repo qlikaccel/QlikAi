@@ -70,6 +70,7 @@ from pydantic import BaseModel
 # Project imports
 from login_validation import router as login_router
 from migration_api import router as migration_router
+from mquery_converter import validate_sharepoint_url_strict
 from qlik_websocket_client import QlikWebSocketClient
 from qlik_client import QlikClient
 from simple_mquery_generator import SimpleMQueryGenerator
@@ -833,8 +834,33 @@ async def validate_tenant(payload: dict = Body(...)):
         raise HTTPException(status_code=401, detail=str(e))
 
 
-
-
+@app.post("/validate-sharepoint-url")
+async def validate_sharepoint_url(payload: dict = Body(...)):
+    """
+    Validate SharePoint URL - STRICT validation
+    Only accepts URLs in format: https://COMPANYNAME.sharepoint.com
+    
+    Returns specific error messages for:
+    - Missing https://
+    - Missing .com
+    - Missing company name
+    - Missing .sharepoint
+    """
+    sharepoint_url = payload.get("sharepoint_url", "").strip()
+    
+    if not sharepoint_url:
+        raise HTTPException(status_code=400, detail="SharePoint URL cannot be empty")
+    
+    is_valid, error_message = validate_sharepoint_url_strict(sharepoint_url)
+    
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_message)
+    
+    return {
+        "success": True,
+        "message": "✅ Valid SharePoint URL",
+        "url": sharepoint_url
+    }
 
 
 

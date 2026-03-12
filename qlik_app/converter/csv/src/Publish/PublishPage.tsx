@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./PublishPage.css";
+import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
 
 // Stepper Component
 interface StepperProps {
@@ -171,8 +172,8 @@ export default function PublishPage() {
     form.append("has_csv", hasCSV ? "true" : "false");
     form.append("has_dax", hasDAX ? "true" : "false");
 
-    // const res = await fetch("http://localhost:8000/powerbi/process", {
-    const res = await fetch("https://qliksense-stuv.onrender.com/powerbi/process", {
+    const res = await fetch("http://localhost:8000/powerbi/process", {
+    // const res = await fetch("https://qliksense-stuv.onrender.com/powerbi/process", {
     
       method: "POST",
       body: form,
@@ -212,8 +213,8 @@ export default function PublishPage() {
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
-      // const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
-      const authRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/acquire-token", {
+      const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      // const authRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/acquire-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -237,8 +238,8 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
-          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
-          const statusRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/status", {
+          const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          // const statusRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/status", {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -320,8 +321,8 @@ export default function PublishPage() {
         if (batchTables.length === 0) throw new Error("No table data available to publish");
 
         console.log(`📤 Publishing ${batchTables.length} tables as single dataset with relationships...`);
-        // const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
-        const batchRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/process-batch", {
+        const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
+        // const batchRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/process-batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -555,8 +556,8 @@ export default function PublishPage() {
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
 
       // Download PDF
-      // const response = await fetch('http://localhost:8000/report/download-pdf', {
-      const response = await fetch('https://qliksense-stuv.onrender.com/report/download-pdf', {
+      const response = await fetch('http://localhost:8000/report/download-pdf', {
+      // const response = await fetch('https://qliksense-stuv.onrender.com/report/download-pdf', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -708,8 +709,8 @@ export default function PublishPage() {
         }
       }
 
-      // const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
-      const res = await fetch("https://qliksense-stuv.onrender.com/api/migration/publish-semantic-model", {
+      const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
+      // const res = await fetch("https://qliksense-stuv.onrender.com/api/migration/publish-semantic-model", {
         method: "POST",
         body: form,
       });
@@ -755,8 +756,8 @@ export default function PublishPage() {
         publish_mode: "desktop_cloud",
       });
 
-      // const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
-      const res = await fetch(`https://qliksense-stuv.onrender.com/api/migration/publish-table?${params.toString()}`, {
+      const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
+      // const res = await fetch(`https://qliksense-stuv.onrender.com/api/migration/publish-table?${params.toString()}`, {
         method: "POST",
       });
 
@@ -801,32 +802,10 @@ export default function PublishPage() {
 
       {/* LOADING MESSAGE - Show only while publishing and no result yet */}
       {publishing && !result && (
-        <div style={{ 
-          textAlign: "center", 
-          padding: "40px 20px",
-          fontSize: "18px",
-          color: "#555"
-        }}>
-          <div style={{ marginBottom: "20px", fontSize: "48px" }}>⏳</div>
-          <div>Publishing your dataset to Power BI...</div>
-          <div style={{ fontSize: "14px", marginTop: "10px", color: "#999" }}>
-            This may take a few moments.
-          </div>
-          {publishStartTime && (
-            <div style={{ 
-              marginTop: "20px", 
-              fontSize: "18px", 
-              fontWeight: "bold",
-              color: "#0078d4",
-              padding: "12px 20px",
-              backgroundColor: "#e7f3ff",
-              borderRadius: "5px",
-              display: "inline-block"
-            }}>
-              ⏱️ Publishing time: {formatDuration(elapsedTime)}
-            </div>
-          )}
-        </div>
+        <LoadingOverlay
+          isVisible={publishing && !result}
+          message="Publishing your dataset to Power BI..."
+        />
       )}
 
       {/* FORM SECTION - HIDDEN */}

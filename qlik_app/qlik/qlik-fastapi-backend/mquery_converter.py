@@ -2045,6 +2045,60 @@ def _strip_qlik_qualifier(col_name: str) -> str:
     return col_name
 
 
+def validate_sharepoint_url_strict(url: str) -> tuple[bool, str]:
+    """
+    Strict SharePoint URL validation
+    Returns: (is_valid: bool, error_message: str)
+    
+    Validates:
+    - Must start with https://
+    - Must contain .sharepoint.com domain
+    - Must have a non-empty company name
+    - Rejects OneDrive and other URLs
+    
+    Error cases:
+    - Missing https://
+    - Missing .com
+    - Missing company name
+    - Missing .sharepoint component
+    """
+    if not url or not isinstance(url, str) or not url.strip():
+        return False, "URL cannot be empty"
+    
+    trimmed = url.strip()
+    trimmed_lower = trimmed.lower()
+    
+    # Error 1: Must start with https://
+    if not trimmed_lower.startswith("https://"):
+        if trimmed_lower.startswith("http://"):
+            return False, "❌ Must use HTTPS (not HTTP). Use: https://"
+        return False, "❌ Must start with https://"
+    
+    # Error 2: Must contain .sharepoint.com
+    if ".sharepoint.com" not in trimmed_lower:
+        # Check specifics for better error message
+        if ".com" not in trimmed_lower:
+            return False, "❌ Missing .com - Should end with .sharepoint.com"
+        if "sharepoint" not in trimmed_lower:
+            return False, "❌ Missing 'sharepoint' - Should be: https://COMPANYNAME.sharepoint.com"
+        return False, "❌ Invalid format. Should be: https://COMPANYNAME.sharepoint.com"
+    
+    # Error 3: Extract company name and check it's not empty
+    import re
+    sharepoint_match = re.match(r'https://([^.]+)\.sharepoint\.com', trimmed, re.IGNORECASE)
+    if not sharepoint_match or not sharepoint_match.group(1):
+        return False, "❌ Missing company name - Should be: https://COMPANYNAME.sharepoint.com"
+    
+    company_name = sharepoint_match.group(1)
+    
+    # Error 4: Company name must contain valid characters
+    if not company_name or len(company_name) == 0 or not re.search(r'[a-z0-9]', company_name, re.IGNORECASE):
+        return False, "❌ Invalid company name - Should be: https://COMPANYNAME.sharepoint.com"
+    
+    # ✅ Valid
+    return True, ""
+
+
 def _is_sharepoint_url(url: str) -> bool:
     """Check if a URL is a SharePoint URL (includes OneDrive for Business)."""
     cleaned = url.strip().strip('"').strip("'").lower()
