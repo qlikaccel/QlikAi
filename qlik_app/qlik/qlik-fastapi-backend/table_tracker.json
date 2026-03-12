@@ -683,5 +683,27 @@
       "added_at": "2026-03-10T17:18:30.962319",
       "added_timestamp": 1773163110.9623191
     }
+  },
+  "0955ffe1-7e3b-4ba4-9bbf-936d7ad5f1de": {
+    "Accommodation": {
+      "added_at": "2026-03-11T06:08:32.628185",
+      "added_timestamp": 1773209312.6281855
+    },
+    "Destinations": {
+      "added_at": "2026-03-11T06:08:32.628185",
+      "added_timestamp": 1773209312.6281855
+    },
+    "Tourists": {
+      "added_at": "2026-03-11T06:08:32.628185",
+      "added_timestamp": 1773209312.6281855
+    },
+    "Transport": {
+      "added_at": "2026-03-11T06:08:32.628185",
+      "added_timestamp": 1773209312.6281855
+    },
+    "Tourism_Fact": {
+      "added_at": "2026-03-11T06:08:32.628185",
+      "added_timestamp": 1773209312.6281855
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useWizard } from "../context/WizardContext";
 import "./PublishPage.css";
 
 // Stepper Component
@@ -54,6 +55,7 @@ const STEPPER_STEPS = [
 export default function PublishPage() {
   const navigate = useNavigate();
   const { state } = useLocation() as any;
+  const { getLastElapsed } = useWizard();
 
   // Get data from sessionStorage (lightweight metadata) — prefer navigation `state` for large payloads
   const tableName = sessionStorage.getItem("migration_selected_table") || "";
@@ -87,7 +89,17 @@ export default function PublishPage() {
     }
   })();
 
-  const [customTableName, setCustomTableName] = useState(tableName);
+  // Extract single vs multi-select variables from state for info display
+  const isMultiSelect = state?.selectedTables && state?.selectedTables.length > 0;
+  let selectedTable = state?.selectedTable || sessionStorage.getItem("selectedTable");
+  let rows = state?.rows || [];
+
+  // Export page state
+  const [pageLoadTime, setPageLoadTime] = useState<string | null>(null);
+  // Skip export options if coming from ExportPage (exportComplete already set in sessionStorage)
+  const [showExportOptions, setShowExportOptions] = useState(sessionStorage.getItem("exportComplete") !== "true");
+  const [exportOptionsState, setExportOptionsState] = useState<{ combined: boolean }>({ combined: exportOptions?.combined ?? true });
+  const [showError, setShowError] = useState(false);
   const [datasetURL, setDatasetURL] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -110,15 +122,101 @@ export default function PublishPage() {
   const [publishedTableName, setPublishedTableName] = useState<string>("");
   const [csvData, setCSVData] = useState<string>("");
   const [daxData, setDAXData] = useState<string>("");
-  // Preview shows the first N rows (no pagination on Publish page)
+  const [customTableName, setCustomTableName] = useState(tableName);
 
-  // Auto-publish on page load
+  // Capture page load time from WizardContext
   useEffect(() => {
-    const timer = setTimeout(() => {
-      handlePublish();
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
+    const elapsed = getLastElapsed?.();
+    if (elapsed) {
+      setPageLoadTime(elapsed);
+    }
+  }, [getLastElapsed]);
+
+  // Save metadata immediately on load
+  useEffect(() => {
+    if (!isMultiSelect && rows && rows.length > 0) {
+      // Single-select: Save lightweight metadata
+      sessionStorage.setItem("migration_selected_table", selectedTable || "");
+      sessionStorage.setItem("migration_appName", appName);
+      sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
+      const totalFromState = state?.totalRows ?? null;
+      sessionStorage.setItem("migration_row_count", String(totalFromState ?? rows.length));
+      sessionStorage.setItem("migration_table_count", "1");
+    } else if (isMultiSelect && selectedTablesToPublish.length > 0) {
+      // Multi-select: Save metadata ONLY
+      const meta = selectedTablesToPublish.map((t: any) => ({
+        name: t.name,
+        rowCount: t.data?.rows?.length || 0,
+        columns: t.data?.rows && t.data.rows.length > 0 ? Object.keys(t.data.rows[0]) : [],
+      }));
+
+      sessionStorage.setItem("migration_selected_tables_meta", JSON.stringify(meta));
+      sessionStorage.setItem("migration_appName", appName);
+      sessionStorage.setItem("migration_table_count", String(selectedTablesToPublish.length));
+
+      // Save first table's columns and row count
+      if (selectedTablesToPublish[0]?.data?.rows && selectedTablesToPublish[0].data.rows.length > 0) {
+        sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(selectedTablesToPublish[0].data.rows[0])));
+        const totalRows = selectedTablesToPublish.reduce((s: number, t: any) => s + (t.data?.rows?.length || 0), 0);
+        sessionStorage.setItem("migration_row_count", String(totalRows));
+      }
+    }
+  }, [selectedTable, rows, selectedTablesToPublish, appName, isMultiSelect]);
+
+  // ✅ Handle M Query publishing - show completion page directly
+  useEffect(() => {
+    if (state?.publishMethod === "M_QUERY" && state?.publishResult) {
+      console.log("✅ M Query publishing detected - showing completion page");
+      console.log("Publishing Result:", state.publishResult);
+      
+      const publishResult = state.publishResult;
+      const datasetName = publishResult.dataset_name || state.selectedTable || "Qlik_Dataset";
+      const workspaceUrl = publishResult.workspace_url || "https://app.powerbi.com";
+      
+      // Set UI state to show completion
+      setPublishedTableName(datasetName);
+      setDatasetURL(workspaceUrl);
+      setResult({ 
+        dataset: {
+          workspace_id: workspaceUrl.split('/groups/')[1] || "",
+          id: publishResult.dataset_id || "",
+          name: datasetName,
+        },
+        mquery: true, // Flag that this is M Query
+        publishResult: publishResult
+      });
+      setStatusBoxes({ columns: true, powerbi: true, finished: true });
+      setCurrentStep(5);
+      setPublishing(false);
+      
+      // Set timing
+      const now = new Date();
+      setPublishEndTime(now);
+      setPublishDuration(0);
+      
+      // Hide export options since M Query publishing is complete
+      setShowExportOptions(false);
+    }
+  }, [state?.publishMethod, state?.publishResult]);
+
+  // Auto-publish on page load (but only after showing export options if needed)
+  // Skip if M Query is detected
+  useEffect(() => {
+    // Skip auto-publish if M Query publishing is detected
+    if (state?.publishMethod === "M_QUERY" && state?.publishResult) {
+      return;
+    }
+    
+    // Auto-publish if:
+    // 1. Export options are hidden (coming from Export page with exportComplete set), OR
+    // 2. CSV/DAX data is prepared and user clicked the button to hide export options
+    if (!showExportOptions && hasCSV && hasDAX) {
+      const timer = setTimeout(() => {
+        handlePublish();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [showExportOptions, hasCSV, hasDAX, state?.publishMethod, state?.publishResult]);
 
   const formatDuration = (durationMs: number) => {
     const totalSeconds = Math.floor(durationMs / 1000);
@@ -549,7 +647,9 @@ export default function PublishPage() {
         qlik_metrics: qlikMetrics,
         powerbi_metrics: powerbiMetrics,
         sync_timestamp: new Date().toISOString(),
-        migration_status: "Completed"
+        migration_status: "Completed",
+        publishing_method: result?.mquery ? "M_QUERY" : "CSV_EXPORT",
+        tables_deployed: tableCount > 0 ? tableCount : (state?.selectedTables ? state.selectedTables.length : 1)
       };
 
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
@@ -794,6 +894,122 @@ export default function PublishPage() {
     <div className="publish-container">
       <h2 className="publish-header">📤 Publish to Power BI</h2>
 
+      {/* EXPORT OPTIONS SECTION - Show first to let user select export format */}
+      {showExportOptions && (
+        <div className="export-wrap" style={{ maxWidth: "900px", margin: "0 auto" }}>
+          {/* HEADER WITH TIMER */}
+          <div className="header-with-timer">
+            <h2>📤 Export Data</h2>
+            <span className="analysis-time">Analysis Time: {pageLoadTime || "00s"}</span>
+          </div>
+
+          {/* INFO BOXES */}
+          <div className="info-grid">
+            <div className="info-box">
+              <span className="label">Application</span>
+              <span className="value">{appName}</span>
+            </div>
+
+            <div className="info-box">
+              <span className="label">Table Name</span>
+              <span className="value">{isMultiSelect ? (selectedTablesToPublish[0]?.name || "") : selectedTable}</span>
+            </div>
+
+            <div className="info-box">
+              <span className="label">Total Rows</span>
+              <span className="value">{isMultiSelect ? selectedTablesToPublish.reduce((s: number, t: any) => s + (t.data?.rows?.length || 0), 0) : (state?.totalRows ?? rows?.length ?? 0)}</span>
+            </div>
+
+            <div className="info-box">
+              <span className="label">Tables Exported</span>
+              <span className="value">{isMultiSelect ? selectedTablesToPublish.length : 1}</span>
+            </div>
+          </div>
+
+          {/* EXPORT OPTIONS */}
+          <div className="export-options-grid">
+            <div className="export-section">
+              <div className="export-header powerbi">
+                Export To PowerBI
+              </div>
+
+              <div className="checkbox-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={exportOptionsState.combined}
+                    onChange={() => {
+                      setExportOptionsState({ ...exportOptionsState, combined: !exportOptionsState.combined });
+                    }}
+                  />
+                  <strong> 📄 Export as CSV / DAX </strong>
+                </label>
+              </div>
+            </div>
+
+            <div className="export-section disabled-section">
+              <div className="export-header ssrs">
+                Export To SSRS
+              </div>
+
+              <div className="checkbox-row">
+                <label>
+                  <input type="checkbox" disabled />
+                  <strong> Select All</strong>
+                </label>
+              </div>
+
+              <div className="checkbox-row">
+                <label>
+                  <input type="checkbox" disabled />
+                  📄 Export as CSV
+                </label>
+              </div>
+
+              <div className="checkbox-row">
+                <label>
+                  <input type="checkbox" disabled />
+                  📊 Export as DAX
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* CONTINUE BUTTON */}
+          <div className="page-actions">
+            {showError && (
+              <div className="error-message">
+                ⚠️ Please select an export option to continue
+              </div>
+            )}
+            <button
+              className="continue-btn"
+              disabled={!exportOptionsState.combined}
+              onClick={() => {
+                if (exportOptionsState.combined) {
+                  setShowError(false);
+                  // Mark CSV/DAX as selected
+                  sessionStorage.setItem("migration_has_csv", "true");
+                  sessionStorage.setItem("migration_has_dax", "true");
+                  sessionStorage.setItem("exportComplete", "true");
+
+                  // Hide export options and proceed with publish
+                  setShowExportOptions(false);
+                } else {
+                  setShowError(true);
+                }
+              }}
+              title={!exportOptionsState.combined ? "Select an export option to continue" : "Publish to PowerBI"}
+            >
+              {exportOptionsState.combined ? "✅ Publish to PowerBI" : "⚠️ Select Export Option"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* PUBLISHING SECTION - Show after export options are confirmed */}
+      {!showExportOptions && (
+        <>
       {/* STEPPER - Show while publishing and after completion */}
       {(publishing || result) && (
         <Stepper currentStep={currentStep} steps={STEPPER_STEPS} />
@@ -1011,20 +1227,25 @@ export default function PublishPage() {
             >
               Open in Power BI
             </button>
-            <button
-              onClick={generateXmlaSemanticModel}
-              className="btn btn-small btn-primary"
-              disabled={xmlaSemanticLoading}
-            >
-              {xmlaSemanticLoading ? "Enabling Semantic..." : "Enable Semantic Model (XMLA)"}
-            </button>
-            <button
-              onClick={generateDesktopCloudBundle}
-              className="btn btn-small btn-primary"
-              disabled={desktopBundleLoading}
-            >
-              {desktopBundleLoading ? "Building Bundle..." : "Desktop + Cloud Bundle"}
-            </button>
+            {/* Hide XMLA and Desktop+Cloud buttons for M Query */}
+            {!result?.mquery && (
+              <>
+                <button
+                  onClick={generateXmlaSemanticModel}
+                  className="btn btn-small btn-primary"
+                  disabled={xmlaSemanticLoading}
+                >
+                  {xmlaSemanticLoading ? "Enabling Semantic..." : "Enable Semantic Model (XMLA)"}
+                </button>
+                <button
+                  onClick={generateDesktopCloudBundle}
+                  className="btn btn-small btn-primary"
+                  disabled={desktopBundleLoading}
+                >
+                  {desktopBundleLoading ? "Building Bundle..." : "Desktop + Cloud Bundle"}
+                </button>
+              </>
+            )}
             <button
               onClick={downloadDataset}
               className="btn btn-small btn-warning"
@@ -1341,6 +1562,8 @@ export default function PublishPage() {
           </div>
         </div>
       </div>
+        </>
+      )}
 
       {/* BACK BUTTON */}
       <div className="publish-footer">
