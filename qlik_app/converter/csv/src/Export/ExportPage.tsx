@@ -10,6 +10,7 @@ interface SelectedTableData {
 }
 
 interface SelectedTable {
+  actualRowCount: number;
   name: string;
   data: SelectedTableData;
 }
@@ -67,12 +68,13 @@ export default function ExportPage() {
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
       const totalFromState = state?.totalRows ?? null;
-      sessionStorage.setItem("migration_row_count", String(totalFromState ?? rows.length));      // single table -> table_count = 1
-      sessionStorage.setItem("migration_table_count", "1");    } else if (isMultiSelect && selectedTables.length > 0) {
+      sessionStorage.setItem("migration_row_count", String(totalFromState ?? rows.length));
+      sessionStorage.setItem("migration_table_count", String(state?.totalTablesCount ?? 1));
+    } else if (isMultiSelect && selectedTables.length > 0) {
       // Multi-select: Save metadata ONLY (do NOT serialize full row arrays — causes quota errors)
       const meta = selectedTables.map((t) => ({
         name: t.name,
-        rowCount: t.data?.rows?.length || 0,
+        rowCount: t.actualRowCount ?? t.data?.rows?.length ?? 0,
         columns: t.data?.rows && t.data.rows.length > 0 ? Object.keys(t.data.rows[0]) : [],
       }));
 
@@ -80,11 +82,11 @@ export default function ExportPage() {
       sessionStorage.setItem("migration_appName", appName);
       sessionStorage.setItem("migration_table_count", String(selectedTables.length));
 
-      // Save first table's columns and row count for display on Publish page
+      // Save first table's columns and total row count for display on Publish page
       if (selectedTables[0]?.data?.rows && selectedTables[0].data.rows.length > 0) {
         sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(selectedTables[0].data.rows[0])));
-        // store aggregated row count for multi-table exports (sum of all selected tables' rows)
-        const totalRows = selectedTables.reduce((s, t) => s + (t.data?.rows?.length || 0), 0);
+        // Use accurate total rows: sum of all actualRowCount values
+        const totalRows = selectedTables.reduce((s, t) => s + (t.actualRowCount ?? t.data?.rows?.length ?? 0), 0);
         sessionStorage.setItem("migration_row_count", String(totalRows));
       }
     }
@@ -237,7 +239,12 @@ export default function ExportPage() {
 
           <div className="info-box">
             <span className="label">Total Rows</span>
-            <span className="value">{isMultiSelect ? selectedTables.reduce((s, t) => s + (t.data?.rows?.length || 0), 0) : (state?.totalRows ?? rows?.length ?? 0)}</span>
+            <span className="value">
+              {isMultiSelect 
+                ? selectedTables.reduce((s, t) => s + (t.actualRowCount ?? t.data?.rows?.length ?? 0), 0)
+                : (state?.totalRows ?? rows?.length ?? 0)
+              }
+            </span>
           </div>
 
           <div className="info-box">
@@ -397,7 +404,7 @@ export default function ExportPage() {
                 // Navigate and pass in-memory CSV/DAX to Publish so we don't rely on sessionStorage for large strings
                 // compute totalRows to pass to Publish (prefer explicit navigation state or compute from rows/selectedTables)
                 const totalRowsForPublish = isMultiSelect
-                  ? selectedTables.reduce((s, t) => s + (t.data?.rows?.length || 0), 0)
+                  ? selectedTables.reduce((s, t) => s + (t.actualRowCount ?? t.data?.rows?.length ?? 0), 0)
                   : (state?.totalRows ?? rows?.length ?? 0);
 
                 navigate("/publish", { 

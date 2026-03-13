@@ -2528,18 +2528,10 @@ async def process_for_powerbi(
 @app.post("/powerbi/process-batch")
 async def process_batch_for_powerbi(payload: dict = Body(...)):
     """
-    Publish multiple Qlik tables to Power BI.
+    Publish multiple Qlik tables to Power BI as a SINGLE dataset with multiple tables.
     
-    CRITICAL FIX: Each table MUST be published to its own dataset with its own schema!
-    
-    WHY: Tables have different columns. Combining rows from tables with different schemas
-    causes Power BI to reject them with "Column not found" errors.
-    
-    Example:
-    - Table 1 (Accommodation): [accommodation_name, destination, tourists]
-    - Table 2 (Transport): [transport_id, destination]
-    
-    If you combine rows, Table 2 rows won't have 'accommodation_name' column -> ERROR
+    UPDATED: All tables are now combined into ONE dataset in Power BI.
+    Each table maintains its own schema with proper column definitions.
     """
     try:
         auth = get_auth_manager()
@@ -2554,10 +2546,11 @@ async def process_batch_for_powerbi(payload: dict = Body(...)):
         
         pbi = PowerBIService(access_token=auth.get_access_token())
         
-        published_datasets = []
-        total_rows_pushed = 0
+        # Step 1: Build schema for all tables
+        dataset_tables_schema = []
+        all_rows_by_table = {}
+        total_rows = 0
         
-        # Publish each table as a separate dataset
         for idx, table in enumerate(tables):
             table_name = table.get("name", f"Table_{idx + 1}")
             table_rows = table.get("rows", [])
@@ -2566,64 +2559,100 @@ async def process_batch_for_powerbi(payload: dict = Body(...)):
                 print(f"⚠️  Skipping table {idx + 1}/{len(tables)}: {table_name} (no rows)")
                 continue
             
-            print(f"📤 Publishing table {idx + 1}/{len(tables)}: {table_name} ({len(table_rows)} rows)")
+            print(f"📦 Preparing table {idx + 1}/{len(tables)}: {table_name} ({len(table_rows)} rows)")
             
-            # Create unique dataset name for each table
-            if len(tables) == 1:
-                dataset_name = base_dataset_name
+            # Infer schema from this table's rows
+            table_schema = infer_schema_from_rows(table_rows)
+            
+            # Add to dataset schema
+            dataset_tables_schema.append({
+                "name": table_name,
+                "columns": table_schema
+            })
+            
+            all_rows_by_table[table_name] = table_rows
+            total_rows += len(table_rows)
+        
+        if not dataset_tables_schema:
+            raise HTTPException(status_code=400, detail="No tables with data to publish")
+        
+        print(f"📊 Creating single dataset '{base_dataset_name}' with {len(dataset_tables_schema)} tables...")
+        
+        # Step 2: Create the dataset with all tables at once using Power BI API
+        try:
+            import requests
+            import json
+            
+            # Build complete dataset payload with all tables
+            dataset_payload = {
+                "name": base_dataset_name,
+                "defaultMode": "Push",
+                "tables": dataset_tables_schema
+            }
+            
+            # Power BI API constant
+            PBI_API_ROOT = "https://api.powerbi.com/v1.0/myorg"
+            
+            # Create dataset via Power BI API
+            if pbi.use_personal_workspace:
+                create_url = f"{PBI_API_ROOT}/datasets?defaultRetentionPolicy=None"
             else:
-                dataset_name = f"{base_dataset_name}_{table_name}"
+                create_url = f"{PBI_API_ROOT}/groups/{pbi.workspace_id}/datasets?defaultRetentionPolicy=None"
             
+            print(f"🌐 POST to: {create_url}")
+            create_response = requests.post(
+                create_url,
+                headers=pbi._headers(),
+                data=json.dumps(dataset_payload),
+                timeout=60
+            )
+            
+            if create_response.status_code not in (200, 201):
+                raise Exception(f"Failed to create multi-table dataset: {create_response.status_code} {create_response.text}")
+            
+            dataset_id = create_response.json().get("id")
+            print(f"✅ Multi-table dataset created: {dataset_id}")
+            
+        except Exception as e:
+            print(f"❌ Failed to create dataset: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create dataset: {str(e)}")
+        
+        # Step 3: Push rows for each table into the single dataset
+        pushed_tables = []
+        for table_name, table_rows in all_rows_by_table.items():
             try:
-                # Infer schema from THIS table's rows only
-                table_schema = infer_schema_from_rows(table_rows)
-                
-                # Create/get dataset for this specific table
-                dataset_id, created = pbi.get_or_create_push_dataset(
-                    dataset_name,
-                    table_name,
-                    table_schema
-                )
-                
-                # Push rows for this table
+                print(f"📤 Pushing {len(table_rows)} rows to table '{table_name}'...")
                 push_result = pbi.push_rows(dataset_id, table_name, table_rows)
                 
-                published_datasets.append({
-                    "dataset_name": dataset_name,
-                    "dataset_id": dataset_id,
+                pushed_tables.append({
                     "table_name": table_name,
                     "rows_count": len(table_rows),
-                    "created": created
+                    "status": "success"
                 })
                 
-                total_rows_pushed += len(table_rows)
-                
-                print(f"   ✅ Successfully published {table_name}: {len(table_rows)} rows")
+                print(f"   ✅ Successfully pushed {len(table_rows)} rows to {table_name}")
                 
             except Exception as e:
-                print(f"   ❌ Failed to publish table {table_name}: {e}")
-                # Log but continue with remaining tables
-                published_datasets.append({
-                    "dataset_name": base_dataset_name,
+                print(f"   ❌ Failed to push rows to table {table_name}: {e}")
+                pushed_tables.append({
                     "table_name": table_name,
+                    "rows_count": len(table_rows),
                     "error": str(e),
                     "status": "failed"
                 })
-        
-        if not published_datasets:
-            raise HTTPException(status_code=400, detail="Failed to publish any tables")
         
         workspace_url = f"https://app.powerbi.com/groups/{pbi.workspace_id}"
         
         return {
             "success": True,
-            "message": f"✅ Published {len(published_datasets)} table(s) to Power BI",
+            "message": f"✅ Published {len(pushed_tables)} table(s) to single dataset '{base_dataset_name}'",
             "dataset_name": base_dataset_name,
+            "dataset_id": dataset_id,
             "workspace_url": workspace_url,
-            "rows_pushed": total_rows_pushed,
+            "rows_pushed": total_rows,
             "tables_count": len(tables),
-            "tables_published": len([d for d in published_datasets if "error" not in d]),
-            "published_datasets": published_datasets
+            "tables_published": len([t for t in pushed_tables if t.get("status") == "success"]),
+            "published_tables": pushed_tables
         }
     
     except HTTPException:

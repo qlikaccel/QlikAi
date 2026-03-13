@@ -814,12 +814,67 @@ const downloadCSV = async () => {
 
     try {
       setPublishingMQuery(true);
+
+      // Calculate total rows from ALL related tables (master + all related)
+      // Fetch actual row counts from server metadata for each table
+      let masterRowCount = totalRows || (rows?.length || 0);
+      let relatedTables: string[] = [];
+      let relatedTablesCount = 1; // Start with selected table
+      
+      // Get list of related tables
+      if (selectedTable && relations[selectedTable]) {
+        relatedTables = relations[selectedTable].slice();
+        relatedTablesCount = 1 + relatedTables.length;
+      } else if (mainTable && relations[mainTable]) {
+        relatedTables = relations[mainTable].slice();
+        relatedTablesCount = 1 + relatedTables.length;
+      }
+      
+      // Fetch actual row counts for ALL related tables and sum them
+      let totalRowsAllTables = masterRowCount;
+      for (const relTable of relatedTables) {
+        try {
+          const relMeta = await fetchTableDataSimple(appId, relTable).catch(() => null);
+          const relRowCount = relMeta?.row_count || relMeta?.rowCount || relMeta?.no_of_rows || 0;
+          totalRowsAllTables += relRowCount;
+          console.log(`📊 Related table "${relTable}": ${relRowCount} rows`);
+        } catch (e) {
+          console.warn(`Failed to fetch row count for related table: ${relTable}`, e);
+        }
+      }
+      
+      console.log(`📊 Master table "${selectedTable}": ${masterRowCount} rows`);
+      console.log(`📊 Total rows (master + all related): ${totalRowsAllTables} rows`);
+
+      // 🚀 IMMEDIATE NAVIGATION - Navigate to publish page first to show workflow
+      navigate("/publish", {
+        state: {
+          appId: appId,
+          selectedTable: selectedTable,
+          publishMethod: "M_QUERY",
+          showWorkflow: true, // Flag to show the 5-step workflow animation
+          // Pass metrics for success page display - use accurate counts
+          tableCount: relatedTablesCount, // Master table + related tables involved
+          totalRows: totalRowsAllTables, // Accurate total rows from server metadata
+          rowCount: totalRowsAllTables, // For display in success section
+          columns: rows && rows.length > 0 ? Object.keys(rows[0]) : [],
+          mqueryData: {
+            dataset_name: selectedTable || "Qlik_Dataset",
+            combined_mquery: mquery || "",
+            raw_script: mquery ? "" : loadscript,
+            data_source_path: dataSourcePath?.trim() || "",
+          },
+        },
+      });
+
+      // Fetch and publish in the background - PublishPage will handle the workflow
       setPublishStatus("idle");
       setPublishMessage("Publishing to Power BI...");
 
       const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
         ? 'http://127.0.0.1:8000'
         : 'https://qliksense-stuv.onrender.com';
+      
       const response = await fetch(`${apiBase}/api/migration/publish-mquery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -855,38 +910,11 @@ const downloadCSV = async () => {
         throw new Error(result.detail || result.error || `HTTP ${response.status}: Publish failed`);
       }
 
-      // ✅ Store M Query publishing metadata for report generation
-      sessionStorage.setItem("migration_publishing_method", "M_QUERY");
-      sessionStorage.setItem("migration_dataset_name", result.dataset_name || selectedTable || "Qlik_Dataset");
-      sessionStorage.setItem("migration_dataset_id", result.dataset_id || "");
-      sessionStorage.setItem("migration_tables_deployed", String(result.tables_deployed || 1));
-      sessionStorage.setItem("migration_mquery_length", String(mquery.length || 0));
-
-      // Store metrics for report
-      if (rows && rows.length > 0) {
-        sessionStorage.setItem("migration_row_count", String(totalRows || rows.length));
-        sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(rows[0])));
-      }
-
       setPublishStatus("success");
       setPublishMessage(
         result.message ||
         `Published "${result.dataset_name}" to Power BI (${result.tables_deployed} tables)`
       );
-
-      // ✅ Navigate to PublishPage with M Query result (same as CSV export)
-      setTimeout(() => {
-        navigate("/publish", {
-          state: {
-            appId: appId,
-            tableCount: result.tables_deployed || 1,
-            totalRows: totalRows || (rows?.length || 0),
-            publishMethod: "M_QUERY",
-            publishResult: result,
-            selectedTable: selectedTable,
-          },
-        });
-      }, 800);
     } catch (error: any) {
       setPublishStatus("error");
       setPublishMessage(`Publish failed: ${error.message || "Unknown error"}`);
@@ -1015,8 +1043,8 @@ const downloadCSV = async () => {
   }, [filteredTables, masterMap, mainTable, relations]);
  
   const isSelectionMaster = !!(selectedTable && isMasterTable(selectedTable));
-  // Export button removed - Direct publish flow only
-  // const exportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
+  // Button is enabled only for master table or standalone tables (not for related-only tables)
+  const isExportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
  
 
   // sam
@@ -1035,13 +1063,15 @@ const downloadCSV = async () => {
  
       // If requested table isn't currently loaded, fetch its rows now
       let masterRows = rows;
+      let masterRowCount = (rows || []).length; // Track actual row count from server
+      
       if ((tableToExport && tableToExport !== selectedTable) || (!masterRows || masterRows.length === 0)) {
         try {
           setTableLoading(true);
           // Request full table rows (use meta to determine exact count)
           const meta = await fetchTableDataSimple(appId, sel).catch(() => null);
-          const totalRows = meta?.row_count || meta?.rowCount || meta?.no_of_rows || 0;
-          const loadLimit = totalRows > 0 ? Math.min(totalRows, SERVER_FETCH_MAX) : SERVER_FETCH_MAX;
+          masterRowCount = meta?.row_count || meta?.rowCount || meta?.no_of_rows || 0;
+          const loadLimit = masterRowCount > 0 ? Math.min(masterRowCount, SERVER_FETCH_MAX) : SERVER_FETCH_MAX;
           const loaded = await fetchTableData(appId, sel, loadLimit);
           masterRows = loaded || [];
           // keep UI selection in sync
@@ -1056,6 +1086,14 @@ const downloadCSV = async () => {
           return;
         } finally {
           setTableLoading(false);
+        }
+      } else {
+        // Table is already loaded - get its actual row count from metadata
+        try {
+          const meta = await fetchTableDataSimple(appId, sel).catch(() => null);
+          masterRowCount = meta?.row_count || meta?.rowCount || meta?.no_of_rows || (masterRows || []).length;
+        } catch (e) {
+          masterRowCount = (masterRows || []).length;
         }
       }
  
@@ -1094,7 +1132,8 @@ const downloadCSV = async () => {
             appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
             selectedTable: sel,
             rows: masterRows || [],
-            totalRows: (masterRows || []).length || 0,
+            totalRows: masterRowCount,
+            totalTablesCount: 1,
             exportOptions: { combined: true, separate: false },
             csvPayloads: { migration_csv: csv },
             daxPayloads: { migration_dax: daxContent },
@@ -1109,7 +1148,12 @@ const downloadCSV = async () => {
       const csvPayloads: Record<string, string> = { migration_csv_0: csv };
       const daxPayloads: Record<string, string> = { migration_dax: daxContent };
       
-      selectedData.push({ name: sel, data: { name: sel, rows: masterRows || [], summary } });
+      // Store master table with its actual row count
+      selectedData.push({ 
+        name: sel, 
+        data: { name: sel, rows: masterRows || [], summary },
+        actualRowCount: masterRowCount  // Store server-reported row count
+      });
  
       for (let idx = 0; idx < related.length; idx++) {
         const relName = related[idx];
@@ -1121,7 +1165,12 @@ const downloadCSV = async () => {
           const relRows = await fetchTableData(appId, relName, relLimit);
           const { generateSummaryFromData } = await import("../api/qlikApi");
           const relSummary = generateSummaryFromData(relRows, relName);
-          selectedData.push({ name: relName, data: { name: relName, rows: relRows, summary: relSummary } });
+          
+          selectedData.push({ 
+            name: relName, 
+            data: { name: relName, rows: relRows, summary: relSummary },
+            actualRowCount: relTotal  // Store server-reported row count for related table
+          });
 
           // Generate CSV for related table
           const relHeaders = relRows.length > 0 ? Object.keys(relRows[0]) : [];
@@ -1137,12 +1186,18 @@ const downloadCSV = async () => {
  
       setTableLoading(false);
 
+      // Calculate total rows using ACTUAL server-reported counts, not just loaded rows
+      const totalAllRows = selectedData.reduce((sum, table) => sum + (table.actualRowCount || table.data?.rows?.length || 0), 0);
+      const totalTablesCount = selectedData.length; // Includes master + all related tables
+
       navigate("/export", {
         state: {
           appId,
           appName: location.state?.appName || sessionStorage.getItem("appName") || appId,
           selectedTables: selectedData,
-          exportOptions: { combined: true, separate: false },
+          totalRows: totalAllRows,
+          totalTablesCount: totalTablesCount,
+          exportOptions: { combined: true, separate: true },
           csvPayloads,
           daxPayloads,
         },
@@ -1681,9 +1736,9 @@ const downloadCSV = async () => {
                   <div className="bottom-actions">
                     <button
                       className="continue-export-btn"
-                      disabled={!selectedTable || tableLoading}
+                      disabled={!isExportAllowed || tableLoading}
                       onClick={() => prepareAndNavigateToExport()}
-                      title={!selectedTable ? "Select a table first" : "Proceed to Export page"}
+                      title={!selectedTable ? "Select a table first" : isRelatedTable(selectedTable) ? "Select master table or standalone table to export" : "Proceed to Export page"}
                     >
                       Continue to Export
                     </button>

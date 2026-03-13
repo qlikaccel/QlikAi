@@ -3,7 +3,6 @@ import ConnectPage from "../pages/Connect/ConnectPage";
 import AppsPage from "../Apps/AppsPage";
 import SummaryPage from "../Summary/SummaryPage";
 import MultiMigrationPage from "../MultiMigration/MultiMigrationPage";
-import LoadScriptConverterPage from "../LoadScriptConverter/LoadScriptConverterPage";
 import ExportPage from "../Export/ExportPage";
 import PublishPage from "../Publish/PublishPage";
 
@@ -16,7 +15,6 @@ export default function AppRoutes() {
       <Route path="/summary" element={<SummaryPage />} />
       <Route path="/export" element={<ExportPage />} />
       <Route path="/multi-migrate" element={<MultiMigrationPage />} />
-      <Route path="/loadscript-converter" element={<LoadScriptConverterPage />} />
       <Route path="/publish" element={<PublishPage />} />
     </Routes>
   );

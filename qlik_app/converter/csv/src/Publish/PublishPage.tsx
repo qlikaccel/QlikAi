@@ -63,14 +63,15 @@ export default function PublishPage() {
   const appName = sessionStorage.getItem("migration_appName") || sessionStorage.getItem("appName") || "Unknown";
   const hasCSV = sessionStorage.getItem("migration_has_csv") === "true";
   const hasDAX = sessionStorage.getItem("migration_has_dax") === "true";
+  // READ ACCURATE ROW COUNT: ExportPage already saved the correct total to sessionStorage
   const sessionRowCount = Number(sessionStorage.getItem("migration_row_count") || "0");
-  // Prefer navigation state (totalRows or selectedTables) — fall back to sessionStorage
-  const navTotalRows = state?.totalRows ?? (state?.selectedTables ? state.selectedTables.reduce((s: number, t: any) => s + (t.data?.rows?.length || 0), 0) : 0);
-  const rowCount = navTotalRows || sessionRowCount;
+  // Prefer navigation state totalRows first, then fall back to the accurate sessionRowCount that ExportPage saved
+  const rowCount = state?.totalRows ?? sessionRowCount;
   const columns = JSON.parse(sessionStorage.getItem("migration_columns") || "[]");
 
   // Check if multi-table mode (use metadata key first)
-  const tableCount = Number(sessionStorage.getItem("migration_table_count") || "0");
+  // Prefer navigation state tableCount first (for M-Query flow), then fall back to sessionStorage (for CSV/DAX flow)
+  const tableCount = state?.tableCount ?? Number(sessionStorage.getItem("migration_table_count") || "0");
   const isMultiTableMode = tableCount > 0;
 
   // Get export options from navigation state
@@ -83,8 +84,12 @@ export default function PublishPage() {
       const metaJson = sessionStorage.getItem("migration_selected_tables_meta") || sessionStorage.getItem("migration_selected_tables");
       if (!metaJson) return [];
       const parsed = JSON.parse(metaJson);
-      // If metadata (array of {name,rowCount,...}) convert to expected shape
-      return parsed.map((p: any) => ({ name: p.name || p.table || "", data: { name: p.name || p.table || "", rows: [] } }));
+      // If metadata (array of {name,rowCount,...}) convert to expected shape and restore actualRowCount
+      return parsed.map((p: any) => ({ 
+        name: p.name || p.table || "", 
+        data: { name: p.name || p.table || "", rows: [] },
+        actualRowCount: p.rowCount || 0  // Restore server-reported row count from metadata
+      }));
     } catch (e) {
       return [];
     }
@@ -147,7 +152,7 @@ export default function PublishPage() {
       // Multi-select: Save metadata ONLY
       const meta = selectedTablesToPublish.map((t: any) => ({
         name: t.name,
-        rowCount: t.data?.rows?.length || 0,
+        rowCount: t.actualRowCount ?? (t.data?.rows?.length || 0),
         columns: t.data?.rows && t.data.rows.length > 0 ? Object.keys(t.data.rows[0]) : [],
       }));
 
@@ -158,15 +163,123 @@ export default function PublishPage() {
       // Save first table's columns and row count
       if (selectedTablesToPublish[0]?.data?.rows && selectedTablesToPublish[0].data.rows.length > 0) {
         sessionStorage.setItem("migration_columns", JSON.stringify(Object.keys(selectedTablesToPublish[0].data.rows[0])));
-        const totalRows = selectedTablesToPublish.reduce((s: number, t: any) => s + (t.data?.rows?.length || 0), 0);
+        const totalRows = selectedTablesToPublish.reduce((s: number, t: any) => s + (t.actualRowCount ?? (t.data?.rows?.length || 0)), 0);
         sessionStorage.setItem("migration_row_count", String(totalRows));
       }
     }
   }, [selectedTable, rows, selectedTablesToPublish, appName, isMultiSelect]);
 
-  // ✅ Handle M Query publishing - show completion page directly
+  // ✅ Handle M Query publishing - show workflow steps while publishing
   useEffect(() => {
-    if (state?.publishMethod === "M_QUERY" && state?.publishResult) {
+    if (state?.publishMethod === "M_QUERY" && state?.showWorkflow) {
+      console.log("✅ M Query publishing - showing workflow steps");
+      
+      // Start the workflow animation
+      setShowExportOptions(false);
+      setCurrentStep(0); // Start at step 0
+      setPublishing(true);
+
+      // Realistic workflow progression with longer delays between steps
+      // Each step waits ~1-1.2 seconds for actual processing
+      const steps = [
+        { delay: 500, step: 1, label: "Prepare Data" },
+        { delay: 1500, step: 2, label: "Authenticate" },
+        { delay: 2500, step: 3, label: "Publish Dataset" },
+        { delay: 3500, step: 4, label: "Generate URL" },
+      ];
+
+      // Execute workflow steps
+      const timers = steps.map((s) =>
+        setTimeout(() => {
+          console.log(`Step ${s.step}: ${s.label}`);
+          setCurrentStep(s.step);
+        }, s.delay)
+      );
+
+      // Start the actual publishing API call AFTER step 4 begins
+      const publishTimer = setTimeout(async () => {
+        try {
+          const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+            ? 'http://127.0.0.1:8000'
+            : 'https://qliksense-stuv.onrender.com';
+
+          const mqueryData = state.mqueryData || {};
+          const publishStartTime = new Date();
+          
+          const response = await fetch(`${apiBase}/api/migration/publish-mquery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(mqueryData),
+          });
+
+          let result: any = {};
+          const rawText = await response.text();
+          try {
+            result = rawText ? JSON.parse(rawText) : {};
+          } catch {}
+
+          if (!response.ok || !result.success) {
+            throw new Error(result.detail || result.error || `HTTP ${response.status}: Publish failed`);
+          }
+
+          // Wait a moment before showing completion
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Complete the workflow - step 5
+          setCurrentStep(5);
+          
+          // Set success result with proper metrics
+          const datasetName = result.dataset_name || state.selectedTable || "Qlik_Dataset";
+          const workspaceUrl = result.workspace_url || "https://app.powerbi.com";
+          const publishEndTime = new Date();
+          const duration = publishEndTime.getTime() - publishStartTime.getTime();
+          
+          setPublishedTableName(datasetName);
+          setDatasetURL(workspaceUrl);
+          setResult({
+            dataset: {
+              workspace_id: workspaceUrl.split('/groups/')[1] || "",
+              id: result.dataset_id || "",
+              name: datasetName,
+            },
+            mquery: true,
+            publishResult: result,
+            // Store metrics from initial state for display
+            tableCount: state.tableCount || result.tables_deployed || 1,
+            rowCount: state.rowCount || state.totalRows || 0,
+          });
+          setStatusBoxes({ columns: true, powerbi: true, finished: true });
+          setPublishing(false);
+          
+          // Set timing
+          setPublishEndTime(publishEndTime);
+          setPublishDuration(duration);
+
+          // Store metadata
+          sessionStorage.setItem("migration_publishing_method", "M_QUERY");
+          sessionStorage.setItem("migration_dataset_name", datasetName);
+          sessionStorage.setItem("migration_dataset_id", result.dataset_id || "");
+          sessionStorage.setItem("migration_tables_deployed", String(result.tables_deployed || state.tableCount || 1));
+          sessionStorage.setItem("migration_row_count", String(state.rowCount || state.totalRows || 0));
+        } catch (error: any) {
+          console.error("M Query publishing failed:", error);
+          setPublishing(false);
+          setCurrentStep(3); // Show error at step 3
+          alert(`Publishing failed: ${error.message}`);
+        }
+      }, 4000);
+
+      // Cleanup timers on unmount
+      return () => {
+        timers.forEach(clearTimeout);
+        clearTimeout(publishTimer);
+      };
+    }
+  }, [state?.publishMethod, state?.showWorkflow]);
+
+  // ✅ Handle M Query publishing - show completion page directly (legacy)
+  useEffect(() => {
+    if (state?.publishMethod === "M_QUERY" && state?.publishResult && !state?.showWorkflow) {
       console.log("✅ M Query publishing detected - showing completion page");
       console.log("Publishing Result:", state.publishResult);
       
@@ -198,13 +311,13 @@ export default function PublishPage() {
       // Hide export options since M Query publishing is complete
       setShowExportOptions(false);
     }
-  }, [state?.publishMethod, state?.publishResult]);
+  }, [state?.publishMethod, state?.publishResult, state?.showWorkflow]);
 
   // Auto-publish on page load (but only after showing export options if needed)
   // Skip if M Query is detected
   useEffect(() => {
     // Skip auto-publish if M Query publishing is detected
-    if (state?.publishMethod === "M_QUERY" && state?.publishResult) {
+    if (state?.publishMethod === "M_QUERY") {
       return;
     }
     
@@ -217,7 +330,7 @@ export default function PublishPage() {
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [showExportOptions, hasCSV, hasDAX, state?.publishMethod, state?.publishResult]);
+  }, [showExportOptions, hasCSV, hasDAX, state?.publishMethod]);
 
   const formatDuration = (durationMs: number) => {
     const totalSeconds = Math.floor(durationMs / 1000);
@@ -270,8 +383,8 @@ export default function PublishPage() {
     form.append("has_csv", hasCSV ? "true" : "false");
     form.append("has_dax", hasDAX ? "true" : "false");
 
-    const res = await fetch("http://localhost:8000/powerbi/process", {
-    // const res = await fetch("https://qliksense-stuv.onrender.com/powerbi/process", {
+    // const res = await fetch("http://localhost:8000/powerbi/process", {
+    const res = await fetch("https://qliksense-stuv.onrender.com/powerbi/process", {
     
       method: "POST",
       body: form,
@@ -311,8 +424,8 @@ export default function PublishPage() {
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
-      const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
-      // const authRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/acquire-token", {
+      // const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      const authRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/acquire-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -336,8 +449,8 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
-          const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
-          // const statusRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/status", {
+          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          const statusRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/status", {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -419,8 +532,8 @@ export default function PublishPage() {
         if (batchTables.length === 0) throw new Error("No table data available to publish");
 
         console.log(`📤 Publishing ${batchTables.length} tables as single dataset with relationships...`);
-        const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
-        // const batchRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/process-batch", {
+        // const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
+        const batchRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/process-batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -656,8 +769,8 @@ export default function PublishPage() {
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
 
       // Download PDF
-      const response = await fetch('http://localhost:8000/report/download-pdf', {
-      // const response = await fetch('https://qliksense-stuv.onrender.com/report/download-pdf', {
+      // const response = await fetch('http://localhost:8000/report/download-pdf', {
+      const response = await fetch('https://qliksense-stuv.onrender.com/report/download-pdf', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -809,8 +922,8 @@ export default function PublishPage() {
         }
       }
 
-      const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
-      // const res = await fetch("https://qliksense-stuv.onrender.com/api/migration/publish-semantic-model", {
+      // const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
+      const res = await fetch("https://qliksense-stuv.onrender.com/api/migration/publish-semantic-model", {
         method: "POST",
         body: form,
       });
@@ -856,8 +969,8 @@ export default function PublishPage() {
         publish_mode: "desktop_cloud",
       });
 
-      const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
-      // const res = await fetch(`https://qliksense-stuv.onrender.com/api/migration/publish-table?${params.toString()}`, {
+      // const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
+      const res = await fetch(`https://qliksense-stuv.onrender.com/api/migration/publish-table?${params.toString()}`, {
         method: "POST",
       });
 
@@ -918,7 +1031,7 @@ export default function PublishPage() {
 
             <div className="info-box">
               <span className="label">Total Rows</span>
-              <span className="value">{isMultiSelect ? selectedTablesToPublish.reduce((s: number, t: any) => s + (t.data?.rows?.length || 0), 0) : (state?.totalRows ?? rows?.length ?? 0)}</span>
+              <span className="value">{rowCount}</span>
             </div>
 
             <div className="info-box">
@@ -1167,6 +1280,26 @@ export default function PublishPage() {
             </div>
           )}
 
+          {/* M QUERY FORMAT INFO */}
+          {result?.mquery && (
+            <div style={{ 
+              backgroundColor: "#fef3c7", 
+              border: "2px solid #f59e0b", 
+              borderRadius: "10px", 
+              padding: "16px", 
+              marginBottom: "20px",
+              textAlign: "center"
+            }}>
+              <strong style={{ color: "#d97706", fontSize: "16px" }}>
+                🔍 M Query Format
+              </strong>
+              <div style={{ fontSize: "13px", color: "#92400e", marginTop: "8px" }}>
+                ✅ Power BI M Query: Complete LoadScript conversion<br/>
+                ✅ Ready for Power Query Editor in Power BI Desktop
+              </div>
+            </div>
+          )}
+
           {/* INFO BOXES (show master table details) */}
           <div className="info-boxes">
             <div className="info-box">
@@ -1183,11 +1316,15 @@ export default function PublishPage() {
             </div>
             <div className="info-box">
               <div className="info-box-label">Total Rows</div>
-              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{rowCount}</div>
+              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>
+                {result?.mquery ? (result.rowCount || 0) : rowCount}
+              </div>
             </div>
             <div className="info-box">
               <div className="info-box-label">Tables Exported</div>
-              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>{tableCount > 0 ? tableCount : (isMultiTableMode ? tableCount : 1)}</div>
+              <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>
+                {result?.mquery ? (result.tableCount || 1) : (tableCount > 0 ? tableCount : (isMultiTableMode ? tableCount : 1))}
+              </div>
             </div>
             <div className="info-box">
               <div className="info-box-label">Status</div>
