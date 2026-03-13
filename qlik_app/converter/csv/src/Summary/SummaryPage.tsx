@@ -840,6 +840,7 @@ const downloadCSV = async () => {
       console.log(`📊 Total rows (master + all related): ${totalRowsAllTables} rows`);
 
       // 🚀 IMMEDIATE NAVIGATION - Navigate to publish page first to show workflow
+      // ✅ All publishing is handled in PublishPage - only one API call there!
       navigate("/publish", {
         state: {
           appId: appId,
@@ -859,59 +860,9 @@ const downloadCSV = async () => {
           },
         },
       });
-
-      // Fetch and publish in the background - PublishPage will handle the workflow
-      setPublishStatus("idle");
-      setPublishMessage("Publishing to Power BI...");
-
-      const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
-        ? 'http://127.0.0.1:8000'
-        : 'https://qliksense-stuv.onrender.com';
-      
-      const response = await fetch(`${apiBase}/api/migration/publish-mquery`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dataset_name:         selectedTable || "Qlik_Dataset",
-          combined_mquery:      mquery || "",
-          raw_script:           mquery ? "" : loadscript,
-          data_source_path:     dataSourcePath?.trim() || "",
-        }),
-      });
-
-      let result: any = {};
-      const rawText = await response.text();
-      try { result = rawText ? JSON.parse(rawText) : {}; } catch {}
-
-      // Device code auth required (PPU workspace)
-      if (result.auth_required) {
-        setPublishStatus("error");
-        setPublishMessage(
-          `Login required for Power BI PPU workspace:\n` +
-          `1. Open: ${result.device_code_url}\n` +
-          `2. Enter code: ${result.user_code}\n` +
-          `3. Sign in, then click Publish again.`
-        );
-        // Open login URL automatically
-        if (result.device_code_url) {
-          window.open(result.device_code_url, "_blank");
-        }
-        return;
-      }
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.detail || result.error || `HTTP ${response.status}: Publish failed`);
-      }
-
-      setPublishStatus("success");
-      setPublishMessage(
-        result.message ||
-        `Published "${result.dataset_name}" to Power BI (${result.tables_deployed} tables)`
-      );
     } catch (error: any) {
       setPublishStatus("error");
-      setPublishMessage(`Publish failed: ${error.message || "Unknown error"}`);
-    } finally {
+      setPublishMessage(`Failed to prepare publishing: ${error.message || "Unknown error"}`);
       setPublishingMQuery(false);
     }
   };

@@ -2062,6 +2062,119 @@ def _tables_m_to_extractor_format(tables_m: List[Dict[str, Any]]) -> List[Dict[s
     return result
 
 
+def _remove_ambiguous_relationships(relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Remove redundant relationships that create ambiguous paths in Power BI.
+    
+    Handles TWO cases:
+    1. DUPLICATE EDGES: Same relationship generated twice (from_table, to_table, from_column, to_column all match)
+    2. AMBIGUOUS PATHS: Multiple different routes between same tables
+    
+    Example Error:
+      'There are ambiguous paths between Tourism_Fact and Destinations:
+       Tourism_Fact->Destinations and Tourism_Fact->Accommodation->Destinations'
+    """
+    if not relationships:
+        logger.info("[relationship_dedup] No relationships to deduplicate")
+        return []
+    
+    logger.info("[relationship_dedup] 🔍 Starting deduplication on %d relationships", len(relationships))
+    
+    # STEP 1: Remove exact duplicate relationships (same from/to/column pairs)
+    # This handles cases where the relationship inference detects the same edge twice
+    seen = set()
+    unique_rels = []
+    duplicates_removed = 0
+    
+    for rel in relationships:
+        key = (rel["fromTable"], rel["fromColumn"], rel["toTable"], rel["toColumn"])
+        if key not in seen:
+            seen.add(key)
+            unique_rels.append(rel)
+            logger.info("[relationship_dedup] Added: %s.%s → %s.%s", 
+                       rel["fromTable"], rel["fromColumn"], rel["toTable"], rel["toColumn"])
+        else:
+            logger.warning(
+                "[relationship_dedup] ⚠️  DUPLICATE EDGE REMOVED: %s.%s → %s.%s",
+                rel["fromTable"], rel["fromColumn"], rel["toTable"], rel["toColumn"]
+            )
+            duplicates_removed += 1
+    
+    if duplicates_removed > 0:
+        logger.info("[relationship_dedup] Removed %d exact duplicate edge(s)", duplicates_removed)
+    
+    relationships = unique_rels
+    
+    # STEP 2: Remove redundant relationships (direct when indirect path exists)
+    def find_all_paths(start_table, end_table, adjacency, visited=None, depth=0):
+        """Find all paths from start_table to end_table."""
+        if visited is None:
+            visited = set()
+        
+        if depth > 10:  # Prevent infinite loops
+            return []
+        
+        if start_table == end_table and depth > 0:
+            return [[end_table]]
+        
+        if start_table in visited:
+            return []
+        
+        visited.add(start_table)
+        paths = []
+        
+        if start_table in adjacency:
+            for next_table in adjacency[start_table]:
+                sub_paths = find_all_paths(next_table, end_table, adjacency, visited.copy(), depth + 1)
+                for path in sub_paths:
+                    paths.append([start_table] + path)
+        
+        return paths
+    
+    # Build graph of all relationships
+    adjacency = {}
+    for rel in relationships:
+        from_table = rel["fromTable"]
+        to_table = rel["toTable"]
+        if from_table not in adjacency:
+            adjacency[from_table] = []
+        adjacency[from_table].append(to_table)
+    
+    # Identify redundant relationships
+    redundant_indices = set()
+    
+    for idx, rel in enumerate(relationships):
+        from_table = rel["fromTable"]
+        to_table = rel["toTable"]
+        
+        # Temporarily remove this relationship from the graph
+        if to_table in adjacency.get(from_table, []):
+            adjacency[from_table].remove(to_table)
+        
+        # Check if there's still a path from from_table to to_table
+        indirect_paths = find_all_paths(from_table, to_table, adjacency)
+        
+        # If indirect path exists, this direct relationship is redundant
+        if indirect_paths:
+            logger.warning(
+                "[relationship_dedup] ⚠️  INDIRECT PATH FOUND - REMOVING direct edge: %s.%s → %s.%s",
+                from_table, rel["fromColumn"], to_table, rel["toColumn"]
+            )
+            redundant_indices.add(idx)
+        
+        # Add the relationship back for next iteration
+        if from_table in adjacency:
+            adjacency[from_table].append(to_table)
+    
+    # Return only non-redundant relationships
+    filtered_rels = [rel for idx, rel in enumerate(relationships) if idx not in redundant_indices]
+    
+    logger.info("[relationship_dedup] ✅ Final: Removed %d indirect path relationship(s). Returning %d relationships.", 
+                len(redundant_indices), len(filtered_rels))
+    
+    return filtered_rels
+
+
 def _infer_relationships_from_tables(tables_m: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Auto-infer Power BI relationships from tables_m using RelationshipExtractor
@@ -2098,7 +2211,7 @@ def _infer_relationships_from_tables(tables_m: List[Dict[str, Any]]) -> List[Dic
     normalized = RelationshipNormalizer.normalize_list(valid_rels)
 
     # Convert to BIM-compatible dicts
-    return [
+    bim_rels = [
         {
             "fromTable":              n.from_table,
             "fromColumn":             n.from_column,
@@ -2109,6 +2222,12 @@ def _infer_relationships_from_tables(tables_m: List[Dict[str, Any]]) -> List[Dic
         }
         for n in normalized
     ]
+    
+    # ✅ NEW: Remove ambiguous relationships that create multiple paths
+    # This prevents Power BI "ambiguous paths" errors
+    deduplicated = _remove_ambiguous_relationships(bim_rels)
+    
+    return deduplicated
 
 class PublishMQueryRequest(_BaseModel):
     dataset_name:         str  = "Qlik_Migrated_Dataset"

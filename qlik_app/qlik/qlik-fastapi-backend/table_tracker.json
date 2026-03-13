@@ -276,5 +276,57 @@
       "added_at": "2026-03-12T12:42:16.595041",
       "added_timestamp": 1773319336.595041
     }
+  },
+  "ff05729d-fb2e-4af2-bbfb-d4bc420b2886": {
+    "admissions_fact": {
+      "added_at": "2026-03-13T20:07:48.218682",
+      "added_timestamp": 1773432468.218682
+    },
+    "dates": {
+      "added_at": "2026-03-13T20:07:48.218682",
+      "added_timestamp": 1773432468.218682
+    },
+    "hospitals": {
+      "added_at": "2026-03-13T20:07:48.218682",
+      "added_timestamp": 1773432468.218682
+    },
+    "diseases": {
+      "added_at": "2026-03-13T20:07:48.218682",
+      "added_timestamp": 1773432468.218682
+    },
+    "doctors": {
+      "added_at": "2026-03-13T20:07:48.218682",
+      "added_timestamp": 1773432468.218682
+    },
+    "patients": {
+      "added_at": "2026-03-13T20:07:48.218682",
+      "added_timestamp": 1773432468.218682
+    }
+  },
+  "d405466b-acdb-4fba-b51e-356e9ccde11f": {
+    "hospital_admissions_fact": {
+      "added_at": "2026-03-13T20:31:37.979775",
+      "added_timestamp": 1773433897.979775
+    },
+    "hospital_dates": {
+      "added_at": "2026-03-13T20:31:37.979775",
+      "added_timestamp": 1773433897.979775
+    },
+    "hospital_hospitals": {
+      "added_at": "2026-03-13T20:31:37.979775",
+      "added_timestamp": 1773433897.979775
+    },
+    "hospital_diseases": {
+      "added_at": "2026-03-13T20:31:37.979775",
+      "added_timestamp": 1773433897.979775
+    },
+    "hospital_doctors": {
+      "added_at": "2026-03-13T20:31:37.979775",
+      "added_timestamp": 1773433897.979775
+    },
+    "hospital_patients": {
+      "added_at": "2026-03-13T20:31:37.979775",
+      "added_timestamp": 1773433897.979775
+    }
   }
 }
