@@ -121,10 +121,8 @@ export default function PublishPage() {
   const [bundlePathCopied, setBundlePathCopied] = useState(false);
 
   const [copied, setCopied] = useState(false);
-  const [publishStartTime, setPublishStartTime] = useState<Date | null>(null);
   const [publishEndTime, setPublishEndTime] = useState<Date | null>(null);
   const [publishDuration, setPublishDuration] = useState<number>(0);
-  const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [publishedTableName, setPublishedTableName] = useState<string>("");
   const [csvData, setCSVData] = useState<string>("");
   const [daxData, setDAXData] = useState<string>("");
@@ -340,19 +338,6 @@ export default function PublishPage() {
     return `${String(minutes).padStart(2, '0')}m:${String(seconds).padStart(2, '0')}s:${String(milliseconds).padStart(3, '0')}ms`;
   };
 
-  // Timer for publishing duration
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (publishing && publishStartTime && !result) {
-      interval = setInterval(() => {
-        const now = new Date();
-        const elapsed = now.getTime() - publishStartTime.getTime();
-        setElapsedTime(elapsed);
-      }, 100);
-    }
-    return () => clearInterval(interval);
-  }, [publishing, publishStartTime, result]);
-
   // Monitor CSV/DAX data updates
   useEffect(() => {
     if (csvData) console.log("✅ CSV Data updated:", csvData.length, "characters");
@@ -415,7 +400,6 @@ export default function PublishPage() {
   const handlePublish = async () => {
     try {
       const startTime = new Date();
-      setPublishStartTime(startTime);
       setPublishing(true);
       setCurrentStep(0);
 

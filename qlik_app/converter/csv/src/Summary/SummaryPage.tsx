@@ -130,14 +130,7 @@ export default function SummaryPage() {
     return { isValid: true };
   };
 
-  // Helper: Validate various URL formats (SharePoint, OneDrive, HTTP, file paths, database URLs)
-  const isValidUrlFormat = (url: string): boolean => {
-    // Only allow SharePoint URLs
-    const validation = validateSharePointUrl(url);
-    return validation.isValid;
-  };
-
- 
+  
   // Helper: build relation graph from `tables` (uses fields when available)
   const buildRelations = (tableList: TableInfo[]) => {
     const map: Record<string, Set<string>> = {};
