@@ -1,4 +1,3 @@
-
 import "./SummaryPage.css";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -15,17 +14,17 @@ import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TableSortLabel from "@mui/material/TableSortLabel";
-
+ 
 type TableInfo = string | { name: string; [key: string]: any };
 type Row = Record<string, any>;
-
-
-
+ 
+ 
+ 
 export default function SummaryPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const pageStartTimeRef = useRef<number | null>(null);
-
+ 
   const [appId, setAppId] = useState<string>("");
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [filteredTables, setFilteredTables] = useState<TableInfo[]>([]);
@@ -40,13 +39,12 @@ export default function SummaryPage() {
   // Maximum rows we'll request from the backend in a single call (matches backend limit)
   // Raised to match backend cap so large tables (e.g. 12k+) are fully retrieved
   const SERVER_FETCH_MAX = 200000;
-
+ 
   // Relationship / star-schema helpers
   const [mainTable, setMainTable] = useState<string | null>(null); // detected hub table
   const [relations, setRelations] = useState<Record<string, string[]>>({}); // name -> related table names
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
-  const [isERModalOpen, setIsERModalOpen] = useState(false); // ER Diagram modal
-  const [activeTab, setActiveTab] = useState<"summary" | "mquery" | "er">("summary");
+  const [activeTab, setActiveTab] = useState<"summary" | "mquery">("summary");
 
   // LoadScript and MQuery Display States
   const [loadscript, setLoadscript] = useState<string>("");
@@ -59,20 +57,22 @@ export default function SummaryPage() {
   const [publishingMQuery, setPublishingMQuery] = useState(false);
   const [publishStatus, setPublishStatus] = useState<"idle" | "success" | "error">("idle");
   const [publishMessage, setPublishMessage] = useState<string>("");
-  const [dataSourcePath, setDataSourcePath] = useState<string>("https://sorimtechnologies.sharepoint.com");
+  const [dataSourcePath, setDataSourcePath] = useState<string>("");
 
   // LoadScript type detection and URL validation
   const [isCsvLoadscript, setIsCsvLoadscript] = useState<boolean>(false);
-  const [isValidUrl, setIsValidUrl] = useState<boolean>(true);
+  const [isValidUrl, setIsValidUrl] = useState<boolean>(false);
   const [urlValidationError, setUrlValidationError] = useState<string>("");
 
-  // AI Executive Summary
+  // AI Executive Summary 
   const [aiSummaryBullets, setAiSummaryBullets] = useState<string[]>([]);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [_aiSummaryError, setAiSummaryError] = useState<string>("");
 
   // URL autocomplete history
-  // (removed - not needed for testing)
+  const [urlHistory, setUrlHistory] = useState<string[]>([]);
+  const [showUrlSuggestions, setShowUrlSuggestions] = useState(false);
+  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
 
   // Helper: Detect if loadscript is CSV-based or inline
   const detectCsvLoadscript = (script: string): boolean => {
@@ -81,6 +81,7 @@ export default function SummaryPage() {
     // If it has INLINE keyword, it's definitely inline (not CSV)
     if (/inline\s*\[/.test(lower)) return false;
     // CSV/QVD-based if it has FROM with file paths/protocols
+    // Matches: FROM [lib://...], FROM [file://...], FROM 'lib://...', FROM lib://..., etc.
     return /from\s+[\[\']?(?:lib:\/\/|file:\/\/|https?:\/\/|\/|[a-z]:[\\\/]).*?(?:\.csv|\.qvd|\.xlsx?|\.txt|\])/i.test(lower);
   };
 
@@ -92,49 +93,63 @@ export default function SummaryPage() {
 
     const trimmed = url.trim();
 
+    // ❌ Error 1: Must start with https://
     if (!trimmed.toLowerCase().startsWith("https://")) {
       return { isValid: false, error: "❌ Must start with https://" };
     }
 
-    if (trimmed.toLowerCase().startsWith("http://") && !trimmed.toLowerCase().startsWith("https://")) {
+    // ❌ Error 2: Must NOT start with http:// (only https)
+    if (trimmed.toLowerCase().startsWith("http://")) {
       return { isValid: false, error: "❌ Must use HTTPS (not HTTP). Use: https://" };
     }
 
+    // ❌ Error 3: Must contain .sharepoint.com
     const hasSharePointDomain = trimmed.toLowerCase().includes(".sharepoint.com");
     if (!hasSharePointDomain) {
+      // Check if ".com" is missing entirely
       if (!trimmed.includes(".com")) {
         return { isValid: false, error: "❌ Missing .com - Should end with .sharepoint.com" };
       }
+      // Check if user only typed company name
       if (!trimmed.toLowerCase().includes("sharepoint")) {
         return { isValid: false, error: "❌ Missing 'sharepoint' - Should be: https://COMPANYNAME.sharepoint.com" };
       }
+      // Generic sharepoint.com error
       return { isValid: false, error: "❌ Invalid format. Should be: https://COMPANYNAME.sharepoint.com" };
     }
 
-    // Updated regex to capture company name before .sharepoint.com
-    const sharepointMatch = trimmed.match(/https:\/\/([a-z0-9\-]+)\.sharepoint\.com/i);
+    // ❌ Error 4: Extract company name and validate it's not empty
+    const sharepointMatch = trimmed.match(/https:\/\/([^.]+)\.sharepoint\.com/i);
     if (!sharepointMatch || !sharepointMatch[1]) {
       return { isValid: false, error: "❌ Missing company name - Should be: https://COMPANYNAME.sharepoint.com" };
     }
 
     const companyName = sharepointMatch[1];
 
-    if (companyName.length === 0) {
+    // ❌ Error 5: Company name cannot be empty or just special characters
+    if (companyName.length === 0 || !/[a-z0-9]/i.test(companyName)) {
       return { isValid: false, error: "❌ Invalid company name - Should be: https://COMPANYNAME.sharepoint.com" };
     }
 
+    // ✅ Valid SharePoint URL format
     return { isValid: true };
   };
 
-
+  
   // Helper: build relation graph from `tables` (uses fields when available)
   const buildRelations = (tableList: TableInfo[]) => {
     const map: Record<string, Set<string>> = {};
-
+ 
     const normalizeFields = (t: TableInfo): Set<string> => {
+      // if (!t) return new Set<string>();
+      // if (typeof t === "string") return new Set<string>();
+      // const fields = (t as any).fields || (t as any).columns || [];
+      // return new Set<string>((fields || []).map((f: any) => String(f).toLowerCase()));
+
+        // Normalize to a set of lower-cased field *names* (handles both string and object shapes)
       const out = new Set<string>();
       if (!t || typeof t === "string") return out;
-
+ 
       const raw = (t as any).fields || (t as any).columns || [];
       for (const f of (raw || [])) {
         if (!f) continue;
@@ -142,15 +157,18 @@ export default function SummaryPage() {
           out.add(f.toLowerCase());
           continue;
         }
-
+ 
+        // field may be an object returned from the backend (has name / qName / qIsKey / src_tables)
         const fname = (f.name || f.qName || f.field || f.key || "").toString();
         if (fname) out.add(fname.toLowerCase());
       }
       return out;
+
+
     };
-
+ 
     const names = (tableList || []).map((t) => (typeof t === 'string' ? t : t?.name || '')).filter(Boolean);
-
+ 
     const fieldSets: Record<string, Set<string>> = {};
     for (const t of tableList) {
       const name = typeof t === 'string' ? t : t?.name || '';
@@ -158,7 +176,7 @@ export default function SummaryPage() {
       fieldSets[name] = normalizeFields(t);
       map[name] = new Set();
     }
-
+ 
     // Two tables are related if they share at least one field name (case-insensitive)
     for (let i = 0; i < names.length; i++) {
       for (let j = i + 1; j < names.length; j++) {
@@ -170,7 +188,7 @@ export default function SummaryPage() {
         for (const f of setA) {
           if (setB.has(f)) {
             shared++;
-            break;
+            break; // one shared field is enough to consider them related
           }
         }
         if (shared > 0) {
@@ -179,30 +197,42 @@ export default function SummaryPage() {
         }
       }
     }
-
+ 
+    // Convert sets -> arrays
     const out: Record<string, string[]> = {};
     for (const k of Object.keys(map)) {
       out[k] = Array.from(map[k]);
     }
     return out;
   };
-
+ 
   // Helper: check whether two tables share at least one field (case-insensitive)
   const shareFields = (aName: string, bName: string) => {
     if (!aName || !bName) return false;
     const find = (n: string) => (tables || []).find(t => (typeof t === 'string' ? t : t?.name) === n) as any;
     const a = find(aName);
     const b = find(bName);
+    // const fieldsA: string[] = a && typeof a !== 'string' ? (a.fields || a.columns || []) : [];
+    // const fieldsB: string[] = b && typeof b !== 'string' ? (b.fields || b.columns || []) : [];
 
-    const getNames = (tbl: any) => {
+    
+  //   if (!fieldsA.length || !fieldsB.length) return false;
+  //   const setA = new Set(fieldsA.map(f => String(f).toLowerCase()));
+  //   for (const f of fieldsB) {
+  //     if (setA.has(String(f).toLowerCase())) return true;
+  //   }
+  //   return false;
+  // };
+
+     const getNames = (tbl: any) => {
       const raw = tbl && typeof tbl !== 'string' ? (tbl.fields || tbl.columns || []) : [];
       return (raw || []).map((x: any) => (typeof x === 'string' ? x : (x.name || x.qName || String(x))).toLowerCase());
     };
-
+ 
     const fieldsA = getNames(a);
     const fieldsB = getNames(b);
     if (!fieldsA.length || !fieldsB.length) return false;
-
+ 
     const setA = new Set(fieldsA);
     for (const f of fieldsB) {
       if (setA.has(f)) return true;
@@ -211,6 +241,12 @@ export default function SummaryPage() {
   };
 
 
+
+
+ 
+  // Multi-select removed — clicking a master table will automatically include related tables when exporting
+  // (Manual multi-select UI was removed per UX request)
+ 
   // Track page load start time
   useEffect(() => {
     pageStartTimeRef.current = Date.now();
@@ -222,29 +258,33 @@ export default function SummaryPage() {
   }, [activeTab]);
 
   // Load URL history from localStorage on component mount
-  // (removed - not needed for testing)
-
-  // Validate hardcoded SharePoint URL on component mount
   useEffect(() => {
-    const validation = validateSharePointUrl(dataSourcePath);
-    setIsValidUrl(validation.isValid);
-    setUrlValidationError(validation.error || "");
+    const stored = localStorage.getItem("sharepoint_url_history");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setUrlHistory(parsed);
+        }
+      } catch (e) {
+        // Ignore parsing errors
+      }
+    }
   }, []);
-
   // Data-table controls
   const [tableQuery, setTableQuery] = useState<string>("");
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   // Search for table list on the left panel
   const [tableListQuery, setTableListQuery] = useState<string>("");
-
+ 
   // Derived pagination lists with search + sorting
   const [orderBy, setOrderBy] = useState<string>("");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
-
+ 
   const processedRows = useMemo(() => {
     let out = rows || [];
-
+ 
     // search filter
     if (tableQuery.trim()) {
       const q = tableQuery.toLowerCase();
@@ -254,7 +294,7 @@ export default function SummaryPage() {
         )
       );
     }
-
+ 
     // sorting
     if (orderBy) {
       out = out.slice().sort((a: any, b: any) => {
@@ -273,18 +313,19 @@ export default function SummaryPage() {
         return 0;
       });
     }
-
+ 
     return out;
   }, [rows, tableQuery, orderBy, order]);
-
+ 
   // For server-side paging use `totalRows` reported by backend; fall back to local data length
   const totalEntries = totalRows && totalRows > 0 ? totalRows : processedRows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
   const current = Math.min(currentPage, totalPages);
   const startIndex = totalEntries ? (current - 1) * pageSize : 0;
   const endIndex = Math.min(startIndex + pageSize, totalEntries);
+  // `processedRows` already contains the data for the current page (server-side), so render it directly
   const visibleRows = processedRows;
-
+ 
   const handleRequestSort = (property: string) => {
     if (orderBy === property) {
       setOrder((o) => (o === "asc" ? "desc" : "asc"));
@@ -293,7 +334,7 @@ export default function SummaryPage() {
       setOrder("asc");
     }
   };
-
+ 
   const pageNumbers = useMemo<(number | string)[]>(() => {
     const nums: (number | string)[] = [];
     const max = totalPages;
@@ -311,8 +352,10 @@ export default function SummaryPage() {
     }
     return nums;
   }, [totalPages, current]);
-
+ 
   useEffect(() => {
+    // Reset to first page only when page size or search query changes.
+    // Do NOT reset when `rows` changes (server-side paging uses `rows` to hold the current page).
     setCurrentPage(1);
   }, [pageSize, tableQuery]);
 
@@ -335,14 +378,15 @@ export default function SummaryPage() {
 
     loadPage();
   }, [currentPage, pageSize, selectedTable, appId]);
-
+ 
   // Filter the left-side table list when the user types in the table search box
   useEffect(() => {
     if (!tableListQuery) {
+      // Already sorted by recency, no need to reverse
       setFilteredTables((tables || []).slice());
       return;
     }
-
+ 
     const q = tableListQuery.toLowerCase();
     const filtered = (tables || [])
       .filter((t) => {
@@ -350,41 +394,45 @@ export default function SummaryPage() {
         return String(name).toLowerCase().includes(q);
       })
       .slice();
+    // Already sorted by recency, no need to reverse
     setFilteredTables(filtered);
   }, [tableListQuery, tables]);
-
+ 
   // 1 → GET APP ID FROM NAVIGATION STATE
   useEffect(() => {
     const state = location.state as any;
     const passedAppId = state?.appId || sessionStorage.getItem("appSelected");
-
+ 
     if (!passedAppId) {
       alert("No app selected. Please go back and select an app.");
       navigate("/apps");
       return;
     }
-
+ 
     setAppId(passedAppId);
   }, [location, navigate]);
-
+ 
   // 2 → LOAD TABLE LIST
   const { stopTimer, startTimer, getLastElapsed } = useWizard();
-
+ 
   useEffect(() => {
     if (!appId) return;
-
+ 
+    // ensure we have an active timer for /summary (covers direct navigation)
     if (sessionStorage.getItem("lastTimerTarget") !== "/summary") {
       startTimer?.("/summary");
     }
-
-    fetchTables(appId)
+     
+      fetchTables(appId)
       .then((data) => {
+        // Remove Qlik Cloud "@syn" system tables from the UI (user requested)
         const cleaned = (data || []).filter((t: any) => {
           const name = typeof t === 'string' ? t : t?.name || '';
           if (!name) return false;
           return !name.toLowerCase().startsWith('@syn');
         });
-
+ 
+        // Sort table list by creation/added timestamp (newest first).
         const getTimestamp = (t: any) => {
           if (!t || typeof t === 'string') return 0;
           const candidates = ['added_timestamp','created','createdAt','created_at','createdDate','modifiedDate','lastModifiedDate','lastReloadTime','lastReload'];
@@ -399,30 +447,35 @@ export default function SummaryPage() {
           }
           return 0;
         };
-
+ 
         const sorted = (cleaned || []).slice().sort((x: any, y: any) => {
           const tx = getTimestamp(x);
           const ty = getTimestamp(y);
-          if (tx !== ty) return ty - tx;
-
+          if (tx !== ty) return ty - tx; // newest first
+ 
+          // Prefer explicitly flagged 'is_new' items
           const xi = (typeof x === 'string') ? false : !!x.is_new;
           const yi = (typeof y === 'string') ? false : !!y.is_new;
           if (xi && !yi) return -1;
           if (!xi && yi) return 1;
-
+ 
+          // fallback to case-insensitive alphabetical order
           const nx = typeof x === 'string' ? x : x?.name || '';
           const ny = typeof y === 'string' ? y : y?.name || '';
           return String(nx).localeCompare(String(ny), undefined, { sensitivity: 'base' });
         });
-
+ 
         setTables(sorted);
+        // Build relation graph (by shared field names) and detect hub (main) table
         const rel = buildRelations(sorted);
         setRelations(rel);
-
+ 
+        // Choose main table (hub) — prefer explicit names with relations, otherwise highest degree
         const degreeOf = (n: string) => (rel[n] || []).length || 0;
         const nameOf = (t: any) => (typeof t === 'string' ? t : t?.name || '');
-
+ 
         let detectedMain: string | null = null;
+        // 1) explicit master-like name that has >=1 relation
         for (const t of sorted) {
           const n = nameOf(t);
           if (!n) continue;
@@ -431,7 +484,8 @@ export default function SummaryPage() {
             break;
           }
         }
-
+ 
+        // 2) otherwise choose table with largest number of related tables
         if (!detectedMain) {
           let bestName: string | null = null;
           let bestDeg = -1;
@@ -442,6 +496,7 @@ export default function SummaryPage() {
               bestDeg = deg;
               bestName = n;
             } else if (deg === bestDeg && deg > 0) {
+              // tie-breaker: prefer table with more fields
               const fcount = typeof t === 'string' ? 0 : (t?.fields || []).length || 0;
               const found = sorted.find((s: TableInfo) => nameOf(s) === bestName);
               const currentFcount = typeof found === 'string' ? 0 : ((found as any)?.fields || []).length || 0;
@@ -450,13 +505,18 @@ export default function SummaryPage() {
           }
           if (bestName && bestDeg > 0) detectedMain = bestName;
         }
-
+ 
+        // 3) fallback: prefer explicit master-like even without relations, else most-recent
         if (!detectedMain) {
           const explicit = sorted.find((t: any) => /\b(master|fact|main)\b/i.test(nameOf(t)));
           if (explicit) detectedMain = nameOf(explicit);
         }
-
+ 
+        // Only mark a detected mainTable when it either has related tables (degree>0)
+        // or when an explicit name contains master/fact/main. Do NOT auto-promote a table
+        // with no relationships to avoid confusing the UI.
         if (detectedMain) {
+          // verify degree>0 OR explicit name
           const degree = (rel[detectedMain] || []).length || 0;
           const isExplicit = /\b(master|fact|main)\b/i.test(detectedMain);
           if (degree > 0 || isExplicit) {
@@ -467,10 +527,12 @@ export default function SummaryPage() {
         } else {
           setMainTable(null);
         }
-
+ 
+        // Display list already sorted by recency, no need to reverse
         setFilteredTables(sorted);
         console.log("All tables fetched (sorted by recency, @syn filtered). Detected main:", detectedMain, "relations:", rel);
-
+ 
+        // AUTO-LOAD: open the detected main table (if any), otherwise first table
         if (detectedMain) {
           loadData(detectedMain);
         } else if (sorted && sorted.length > 0) {
@@ -481,11 +543,12 @@ export default function SummaryPage() {
       .catch(() => {})
       .finally(() => {
         setLoading(false);
+        // Don't stop timer yet - wait for table data to load
       });
   }, [appId, stopTimer, startTimer]);
-
-
-
+ 
+ 
+ 
   // 3 → LOAD DATA FOR SELECTED TABLE
   const formatElapsed = (msTotal: number) => {
     const minutes = Math.floor(msTotal / 60000);
@@ -494,23 +557,28 @@ export default function SummaryPage() {
     const pad = (n: number, width = 2) => String(n).padStart(width, "0");
     return `${pad(minutes)}m : ${pad(seconds)}s : ${pad(centis)}ms`;
   };
-
+ 
   const loadData = async (tableName: string) => {
     if (!tableName || tableName === selectedTable) return;
-
+ 
     setSelectedTable(tableName);
     setTableLoading(true);
     setRows([]);
     setSummary(null);
+ // added lines to refresh summary and AI bullets when switching tables
     setAiSummaryBullets([]);
     setAiSummaryError("");
+    //setAiSummaryLoading(true);
+    // start timing this table's data load
     startTimer?.(`/summary/data/${tableName}`);
-
+ 
     try {
+      // First read table metadata so we can request a single page and know total rows
       const meta = await fetchTableDataSimple(appId, tableName).catch(() => null);
       const total = meta?.row_count || meta?.rowCount || meta?.no_of_rows || 0;
       setTotalRows(total || 0);
 
+      // Fetch the first page (server-side paging). If total is unknown (0), fetch a single pageSize.
       const firstPageLimit = Math.min(pageSize, total > 0 ? total : pageSize);
       if (total > SERVER_FETCH_MAX) {
         console.warn(`Table ${tableName} contains ${total} rows — UI will page on demand (server capped at ${SERVER_FETCH_MAX})`);
@@ -520,34 +588,38 @@ export default function SummaryPage() {
       setRows(data || []);
       setCurrentPage(1);
 
+      // Persist selection (store only current page to avoid huge sessionStorage)
       try {
         sessionStorage.setItem("selectedTable", tableName);
         sessionStorage.setItem("selectedRows", JSON.stringify(data || []));
       } catch (e) {
         // ignore storage errors
       }
-
+ 
+      // 2️⃣ SUMMARY DATA - Calculate locally from the fetched data
+      // This avoids backend dependency and works with any data format
       const { generateSummaryFromData } = await import("../api/qlikApi");
       const summary = generateSummaryFromData(data, tableName);
       setSummary(summary);
 
+      // AI Executive Summary via Mistral 7B
       fetchAiSummary(data, tableName);
 
+      // 3️⃣ AUTO-FETCH LOADSCRIPT for selected table
       try {
         console.log("📍 Auto-fetching LoadScript for table:", tableName);
         const scriptResult = await fetchLoadScript(appId, tableName);
-
+        
         if (scriptResult.status === "success" || scriptResult.status === "partial_success") {
           const script = scriptResult.loadscript || "";
           setLoadscript(script);
-
+          
+          // Detect if CSV-based or inline loadscript
           const isCsv = detectCsvLoadscript(script);
           setIsCsvLoadscript(isCsv);
-          if (isCsv) {
-            const validation = validateSharePointUrl(dataSourcePath);
-            setIsValidUrl(validation.isValid);
-          }
-
+          if (isCsv) setIsValidUrl(false); // Reset validation for new CSV script
+          
+          // Auto-parse the loadscript
           if (script) {
             try {
               const parseResult = await parseLoadScript(script);
@@ -559,16 +631,18 @@ export default function SummaryPage() {
               console.warn("Auto-parse failed, keeping raw loadscript", parseError);
             }
           }
-
+          
           console.log("✅ LoadScript auto-loaded for table:", tableName);
         }
       } catch (scriptError) {
         console.warn("⚠️ Could not auto-fetch LoadScript:", scriptError);
+        // Don't fail the whole operation if LoadScript fetch fails
       }
-
+      
     } catch (e) {
       console.error("❌ Error loading table data:", e);
-
+     
+      // Show helpful error message
       const errorMessage = e instanceof Error ? e.message : String(e);
       alert(
         `Failed to load table "${tableName}".\n\n` +
@@ -580,30 +654,36 @@ export default function SummaryPage() {
       );
     } finally {
       setTableLoading(false);
-
+ 
+      // Prefer the specific table/data load elapsed if available
       const tableElapsed = stopTimer?.(`/summary/data/${tableName}`);
       if (tableElapsed) {
         console.debug(`Table ${tableName} load time:`, tableElapsed);
         setPageLoadTime(tableElapsed);
       } else {
+        // Fallback: show navigation/load time for the Summary page if available
         const navElapsed = getLastElapsed?.("/summary");
         if (navElapsed) {
           setPageLoadTime(navElapsed);
         } else if (pageStartTimeRef.current) {
+          // As a last resort, show local elapsed since page mount
           const totalTime = Date.now() - pageStartTimeRef.current;
           setPageLoadTime(formatElapsed(totalTime));
         }
       }
     }
   };
-
+ 
+  // related-table prefetch is handled when exporting a master table (no per-table cache required here)
+ 
   // CSV DOWNLOAD
-  const downloadCSV = async () => {
+const downloadCSV = async () => {
     if (!rows.length && !totalRows) {
       alert("No data");
       return;
     }
 
+    // If the table contains more rows than the current page, download the full table via backend export
     if (totalRows && totalRows > rows.length) {
       try {
         const csv = await exportTableAsCSV(appId, selectedTable);
@@ -620,15 +700,16 @@ export default function SummaryPage() {
       }
     }
 
+    // Fallback: download current page
     const headers = Object.keys(rows[0] || {});
     const csv = [
       headers.join(","),
       ...rows.map((r) => headers.map((h) => `"${r[h] ?? ""}"`).join(",")),
     ].join("\n");
-
+ 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = window.URL.createObjectURL(blob);
-
+ 
     const a = document.createElement("a");
     a.href = url;
     a.download = `${selectedTable || "data"}.csv`;
@@ -655,6 +736,7 @@ export default function SummaryPage() {
 
       console.log("📍 Converting LoadScript to M Query for table:", selectedTable);
 
+      // If we don't have parsed script, parse it first
       let scriptToConvert = parsedScript;
       if (!scriptToConvert) {
         console.log("Parsing LoadScript first...");
@@ -667,6 +749,9 @@ export default function SummaryPage() {
         }
       }
 
+      // Convert to M Query — POST body to avoid HTTP 431 (URL too large for big scripts).
+      // base_path is sent so the backend generates the correct connector (e.g. SharePoint.Files()
+      // for SharePoint URLs) rather than the generic File.Contents() pattern.
       const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
         ? 'http://127.0.0.1:8000'
         : 'https://qliksense-stuv.onrender.com';
@@ -675,7 +760,7 @@ export default function SummaryPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           parsed_script_json: JSON.stringify(scriptToConvert),
-          table_name: "",
+          table_name: "",           // empty = convert all tables
           base_path: dataSourcePath.trim() || "",
         }),
       });
@@ -688,6 +773,8 @@ export default function SummaryPage() {
         throw new Error(convertResult.message || "Failed to convert to M Query");
       }
 
+      // M expressions are fully generated by the backend with the correct connector —
+      // no client-side [DataSourcePath] string replacement needed.
       const finalMQuery = convertResult.m_query || "";
       setMquery(finalMQuery);
       console.log(
@@ -720,7 +807,7 @@ export default function SummaryPage() {
       });
       const rawText = await res.text();
       let result: any = {};
-      try { result = rawText ? JSON.parse(rawText) : {}; } catch {
+      try { result = rawText ? JSON.parse(rawText) : {}; } catch { 
         setAiSummaryError(`Server error: ${rawText.slice(0, 200) || "Empty response"}`);
         return;
       }
@@ -746,10 +833,13 @@ export default function SummaryPage() {
     try {
       setPublishingMQuery(true);
 
+      // Calculate total rows from ALL related tables (master + all related)
+      // Fetch actual row counts from server metadata for each table
       let masterRowCount = totalRows || (rows?.length || 0);
       let relatedTables: string[] = [];
-      let relatedTablesCount = 1;
-
+      let relatedTablesCount = 1; // Start with selected table
+      
+      // Get list of related tables
       if (selectedTable && relations[selectedTable]) {
         relatedTables = relations[selectedTable].slice();
         relatedTablesCount = 1 + relatedTables.length;
@@ -757,7 +847,8 @@ export default function SummaryPage() {
         relatedTables = relations[mainTable].slice();
         relatedTablesCount = 1 + relatedTables.length;
       }
-
+      
+      // Fetch actual row counts for ALL related tables and sum them
       let totalRowsAllTables = masterRowCount;
       for (const relTable of relatedTables) {
         try {
@@ -769,26 +860,35 @@ export default function SummaryPage() {
           console.warn(`Failed to fetch row count for related table: ${relTable}`, e);
         }
       }
-
+      
       console.log(`📊 Master table "${selectedTable}": ${masterRowCount} rows`);
       console.log(`📊 Total rows (master + all related): ${totalRowsAllTables} rows`);
 
+      // 🚀 Save DataSourcePath to URL history for autocomplete (for CSV-based LoadScripts)
       if (isCsvLoadscript && isValidUrl && dataSourcePath.trim()) {
-        // URL validation passed
+        const updatedHistory = [dataSourcePath, ...urlHistory.filter(url => url !== dataSourcePath)].slice(0, 10);
+        setUrlHistory(updatedHistory);
+        localStorage.setItem("sharepoint_url_history", JSON.stringify(updatedHistory));
       }
 
+      // 🚀 Store publishing method for UI control (hide export step, hide CSV/DAX box)
       sessionStorage.setItem("publishMethod", "M_QUERY");
+      
+      // 🚀 Mark export as complete to enable Publish button in stepper (same logic as CSV/DAX workflow)
       sessionStorage.setItem("exportComplete", "true");
 
+      // 🚀 IMMEDIATE NAVIGATION - Navigate to publish page first to show workflow
+      // ✅ All publishing is handled in PublishPage - only one API call there!
       navigate("/publish", {
         state: {
           appId: appId,
           selectedTable: selectedTable,
           publishMethod: "M_QUERY",
-          showWorkflow: true,
-          tableCount: relatedTablesCount,
-          totalRows: totalRowsAllTables,
-          rowCount: totalRowsAllTables,
+          showWorkflow: true, // Flag to show the 5-step workflow animation
+          // Pass metrics for success page display - use accurate counts
+          tableCount: relatedTablesCount, // Master table + related tables involved
+          totalRows: totalRowsAllTables, // Accurate total rows from server metadata
+          rowCount: totalRowsAllTables, // For display in success section
           columns: rows && rows.length > 0 ? Object.keys(rows[0]) : [],
           mqueryData: {
             dataset_name: selectedTable || "Qlik_Dataset",
@@ -805,7 +905,7 @@ export default function SummaryPage() {
     }
   };
 
-  // Compute master table per-prefix
+  // Compute master table per-prefix (heuristic: prefer name containing "fact/master/main", else use largest field count)
   const masterMap = useMemo(() => {
     const map = new Map<string, string>();
     const groups: Record<string, any[]> = {};
@@ -816,90 +916,102 @@ export default function SummaryPage() {
       groups[prefix] = groups[prefix] || [];
       groups[prefix].push(t);
     });
-
+ 
     Object.keys(groups).forEach((prefix) => {
       const group = groups[prefix];
       if (!group || group.length <= 1) return;
-
+ 
       const candidates = group.map((g: any) => {
         const name = typeof g === "string" ? g : g?.name || "";
         const fields = typeof g === "string" ? 0 : (g?.fields || []).length || 0;
         return { name, fields };
       });
-
+ 
+      // explicit override: if a table named exactly 'Ford_Vehicle_Fact' exists use it as the master
       const fordExplicit = candidates.find((c: any) => c.name.toLowerCase() === 'ford_vehicle_fact');
       if (fordExplicit) {
         map.set(prefix, fordExplicit.name);
         return;
       }
-
+ 
+      // prefer explicit names (Fact / Master / Main)
       const explicit = candidates.find((c: any) => /fact|master|main/i.test(c.name));
       if (explicit) {
         map.set(prefix, explicit.name);
         return;
       }
-
+ 
+      // fallback to table with most fields
       candidates.sort((a: any, b: any) => (b.fields || 0) - (a.fields || 0));
       map.set(prefix, candidates[0].name);
     });
-
+ 
     return map;
   }, [tables]);
-
+ 
   const isMasterTable = (name: string) => {
     if (!name) return false;
+    // If we detected a mainTable via relationships, prefer that
     if (mainTable) return name === mainTable || name.toLowerCase() === "ford_vehicle_fact";
-
+ 
     const lower = name.toLowerCase();
+    // Explicit override: treat Ford_Vehicle_Fact as master (case-insensitive)
     if (lower === "ford_vehicle_fact") return true;
     const prefix = name.includes("_") ? name.split("_")[0] : null;
     if (!prefix) return false;
     return masterMap.get(prefix) === name;
   };
-
+ 
   const isRelatedTable = (name: string) => {
     if (!name) return false;
+    // If relations were computed, use them (relation to detected main table)
     if (mainTable && relations && relations[mainTable]) {
       return relations[mainTable].includes(name);
     }
-
+ 
+    // Fallback: prefix-based relationship (legacy behavior)
     const prefix = name.includes("_") ? name.split("_")[0] : null;
     if (!prefix) return false;
     const master = masterMap.get(prefix);
     if (!master || master === name) return false;
-
+ 
+    // Only mark as related if the candidate actually shares at least one field with the master
     if (shareFields(master, name)) return true;
-
+ 
     return false;
   };
-
+ 
   const sortedFilteredTables = useMemo(() => {
     const arr = (filteredTables || []).slice();
-
+ 
+    // If we detected a main table, place it first, then its related tables, then the rest
     if (mainTable) {
       arr.sort((a, b) => {
         const an = typeof a === 'string' ? a : a?.name || '';
         const bn = typeof b === 'string' ? b : b?.name || '';
-
+ 
         if (an === mainTable && bn !== mainTable) return -1;
         if (bn === mainTable && an !== mainTable) return 1;
-
+ 
         const relSet = new Set(relations[mainTable] || []);
         const aRel = relSet.has(an);
         const bRel = relSet.has(bn);
         if (aRel && !bRel) return -1;
         if (!aRel && bRel) return 1;
-
+ 
+        // Leave other master tables (from masterMap) above unrelated tables
         const aMaster = isMasterTable(an);
         const bMaster = isMasterTable(bn);
         if (aMaster && !bMaster) return -1;
         if (!aMaster && bMaster) return 1;
-
+ 
+        // final fallback: alphabetical
         return an.localeCompare(bn);
       });
       return arr;
     }
-
+ 
+    // No detected main table: fallback to previous master-first alphabetical order
     arr.sort((a, b) => {
       const an = typeof a === 'string' ? a : a?.name || '';
       const bn = typeof b === 'string' ? b : b?.name || '';
@@ -911,34 +1023,40 @@ export default function SummaryPage() {
     });
     return arr;
   }, [filteredTables, masterMap, mainTable, relations]);
-
+ 
   const isSelectionMaster = !!(selectedTable && isMasterTable(selectedTable));
+  // Button is enabled only for master table or standalone tables (not for related-only tables)
   const isExportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
+ 
 
-  // Helper: prepare export payload and navigate to /publish
+  // sam
+  // Helper: prepare export payload (single table or master + related tables) and navigate to /publish
   const prepareAndNavigateToExport = async (tableToExport?: string) => {
     try {
       stopTimer?.("/summary");
       sessionStorage.setItem("summaryComplete", "true");
       startTimer?.("/publish");
-
+ 
       const sel = tableToExport || selectedTable || (sessionStorage.getItem("selectedTable") || "");
       if (!sel) {
         alert("No table selected for export.");
         return;
       }
-
+ 
+      // If requested table isn't currently loaded, fetch its rows now
       let masterRows = rows;
-      let masterRowCount = (rows || []).length;
-
+      let masterRowCount = (rows || []).length; // Track actual row count from server
+      
       if ((tableToExport && tableToExport !== selectedTable) || (!masterRows || masterRows.length === 0)) {
         try {
           setTableLoading(true);
+          // Request full table rows (use meta to determine exact count)
           const meta = await fetchTableDataSimple(appId, sel).catch(() => null);
           masterRowCount = meta?.row_count || meta?.rowCount || meta?.no_of_rows || 0;
           const loadLimit = masterRowCount > 0 ? Math.min(masterRowCount, SERVER_FETCH_MAX) : SERVER_FETCH_MAX;
           const loaded = await fetchTableData(appId, sel, loadLimit);
           masterRows = loaded || [];
+          // keep UI selection in sync
           setSelectedTable(sel);
           setRows(masterRows);
           const { generateSummaryFromData } = await import("../api/qlikApi");
@@ -952,6 +1070,7 @@ export default function SummaryPage() {
           setTableLoading(false);
         }
       } else {
+        // Table is already loaded - get its actual row count from metadata
         try {
           const meta = await fetchTableDataSimple(appId, sel).catch(() => null);
           masterRowCount = meta?.row_count || meta?.rowCount || meta?.no_of_rows || (masterRows || []).length;
@@ -959,7 +1078,7 @@ export default function SummaryPage() {
           masterRowCount = (masterRows || []).length;
         }
       }
-
+ 
       const prefix = sel && sel.includes("_") ? sel.split("_")[0] : null;
       const candidateNames = (tables || []).map((t) => (typeof t === "string" ? t : t?.name)).filter(Boolean) as string[];
       let related: string[] = [];
@@ -970,7 +1089,8 @@ export default function SummaryPage() {
           .filter(n => n.startsWith(prefix + "_") && n !== sel)
           .filter(n => shareFields(sel, n));
       }
-
+ 
+      // Prepare CSV and DAX for the data
       const headers = masterRows.length > 0 ? Object.keys(masterRows[0]) : [];
       const csv = [
         headers.join(","),
@@ -986,11 +1106,15 @@ export default function SummaryPage() {
       daxLines.push(`[${sel} Count] = COUNTROWS('${sel}')`);
       const daxContent = daxLines.join("\n");
 
+      // 🚀 Save DataSourcePath to URL history for autocomplete (for CSV-based LoadScripts)
       if (isCsvLoadscript && isValidUrl && dataSourcePath.trim()) {
-        // URL validation passed
+        const updatedHistory = [dataSourcePath, ...urlHistory.filter(url => url !== dataSourcePath)].slice(0, 10);
+        setUrlHistory(updatedHistory);
+        localStorage.setItem("sharepoint_url_history", JSON.stringify(updatedHistory));
       }
 
       if (!related || related.length === 0) {
+        // single-table export - navigate to export page
         navigate("/export", {
           state: {
             appId,
@@ -1006,34 +1130,38 @@ export default function SummaryPage() {
         });
         return;
       }
-
+ 
+      // master + related export: prefetch related tables
       setTableLoading(true);
       const selectedData: any[] = [];
       const csvPayloads: Record<string, string> = { migration_csv_0: csv };
       const daxPayloads: Record<string, string> = { migration_dax: daxContent };
-
-      selectedData.push({
-        name: sel,
+      
+      // Store master table with its actual row count
+      selectedData.push({ 
+        name: sel, 
         data: { name: sel, rows: masterRows || [], summary },
-        actualRowCount: masterRowCount
+        actualRowCount: masterRowCount  // Store server-reported row count
       });
-
+ 
       for (let idx = 0; idx < related.length; idx++) {
         const relName = related[idx];
         try {
+          // Load related table fully (bounded to server max)
           const relMeta = await fetchTableDataSimple(appId, relName).catch(() => null);
           const relTotal = relMeta?.row_count || relMeta?.rowCount || relMeta?.no_of_rows || 0;
           const relLimit = relTotal > 0 ? Math.min(relTotal, SERVER_FETCH_MAX) : SERVER_FETCH_MAX;
           const relRows = await fetchTableData(appId, relName, relLimit);
           const { generateSummaryFromData } = await import("../api/qlikApi");
           const relSummary = generateSummaryFromData(relRows, relName);
-
-          selectedData.push({
-            name: relName,
+          
+          selectedData.push({ 
+            name: relName, 
             data: { name: relName, rows: relRows, summary: relSummary },
-            actualRowCount: relTotal
+            actualRowCount: relTotal  // Store server-reported row count for related table
           });
 
+          // Generate CSV for related table
           const relHeaders = relRows.length > 0 ? Object.keys(relRows[0]) : [];
           const relCsv = [
             relHeaders.join(","),
@@ -1044,11 +1172,12 @@ export default function SummaryPage() {
           console.warn("Failed to load related table:", relName, e);
         }
       }
-
+ 
       setTableLoading(false);
 
+      // Calculate total rows using ACTUAL server-reported counts, not just loaded rows
       const totalAllRows = selectedData.reduce((sum, table) => sum + (table.actualRowCount || table.data?.rows?.length || 0), 0);
-      const totalTablesCount = selectedData.length;
+      const totalTablesCount = selectedData.length; // Includes master + all related tables
 
       navigate("/export", {
         state: {
@@ -1070,6 +1199,7 @@ export default function SummaryPage() {
   };
 
 
+ 
   if (loading) {
     return (
       <LoadingOverlay
@@ -1078,7 +1208,7 @@ export default function SummaryPage() {
       />
     );
   }
-
+ 
   return (
     <div className="summary-layout">
       {/* LEFT – TABLE NAMES */}
@@ -1091,8 +1221,8 @@ export default function SummaryPage() {
             </div>
           )}
         </div>
-
-        {/* Table list search */}
+ 
+        {/* Table list search (searches the list of table names) */}
         <div className="table-search">
           <input
             type="search"
@@ -1102,20 +1232,22 @@ export default function SummaryPage() {
             className="table-search-input"
           />
         </div>
-
+ 
+ 
+ 
         {tables.length === 0 && (
           <p className="no-tables">No tables found</p>
         )}
-
+ 
         {sortedFilteredTables.map((t, i) => {
           const tableName = typeof t === "string" ? t : t?.name;
           const isNew = typeof t === "string" ? false : t?.is_new;
           if (!tableName) return null;
-
+ 
           const master = isMasterTable(tableName);
           const related = isRelatedTable(tableName);
           const cls = `${tableName === selectedTable ? "table-item active" : "table-item"}${master ? " master-row" : ""}${related && !master ? " related-row" : ""}`;
-
+ 
           return (
             <div
               key={i}
@@ -1127,6 +1259,7 @@ export default function SummaryPage() {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tableName}</span>
               </span>
 
+              {/* sam */}
               {/* Inline export button for standalone or master tables (hidden for related-only tables) */}
               {!related && (
                 <button
@@ -1137,13 +1270,14 @@ export default function SummaryPage() {
                   {/* <img src={exportImg} alt="Export" style={{ width: 16 }} /> */}
                 </button>
               )}
+ 
 
               {isNew && <span className="new-badge">NEW</span>}
             </div>
           );
         })}
       </div>
-
+ 
       {/* RIGHT – SUMMARY + DATA */}
       <div className="right-panel">
         {!selectedTable && (
@@ -1151,10 +1285,11 @@ export default function SummaryPage() {
             <p>👈 Select a table on the left to view its data</p>
           </div>
         )}
-
+        
         {selectedTable && (
           <>
-            {/* HEADER WITH TITLE + TABS ON LEFT, TIME ON RIGHT */}
+ 
+              {/* HEADER WITH TITLE + TABS ON LEFT, TIME ON RIGHT */}
             <div className="header">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: "20px" }}>
                 {/* LEFT: Title + Master Badge + Tabs */}
@@ -1171,6 +1306,7 @@ export default function SummaryPage() {
                     borderBottom: "none",
                     paddingBottom: "0px",
                     marginLeft: '12px',
+                    // backgroundColor: '#f3f4f6',
                     borderRadius: '6px',
                     padding: '4px',
                   }}>
@@ -1187,6 +1323,7 @@ export default function SummaryPage() {
                         borderRadius: '4px',
                         cursor: 'pointer',
                         transition: 'all 0.3s ease',
+                        
                       }}
                       onMouseEnter={(e) => {
                         if (activeTab !== "summary") {
@@ -1234,8 +1371,7 @@ export default function SummaryPage() {
                       📋 Query
                     </button>
 
-                    {/* Schema Button → opens SchemaModal */}
-                    {/* <button
+                    <button
                       onClick={() => setIsSchemaModalOpen(true)}
                       style={{
                         padding: '8px 14px',
@@ -1259,37 +1395,6 @@ export default function SummaryPage() {
                       }}
                     >
                       🔷 Schema
-                    </button> */}
-
-                    {/* ER Diagram Tab → displays as tab content */}
-                    <button
-                      onClick={() => setActiveTab("er")}
-                      style={{
-                        padding: '8px 14px',
-                        fontSize: '13px',
-                        fontWeight: activeTab === "er" ? 600 : 500,
-                        color: activeTab === "er" ? '#fff' : '#6b7280',
-                        backgroundColor: activeTab === "er" ? '#7c3aed' : 'transparent',
-                        border: 'none',
-                        borderRadius: '4px',
-                        borderBottom: '3px solid #938d8d',
-                        cursor: 'pointer',
-                        transition: 'all 0.3s ease',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (activeTab !== "er") {
-                          e.currentTarget.style.backgroundColor = 'rgba(124, 58, 237, 0.1)';
-                          e.currentTarget.style.color = '#7c3aed';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (activeTab !== "er") {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                          e.currentTarget.style.color = '#6b7280';
-                        }
-                      }}
-                    >
-                      🔷 ER Diagram
                     </button>
                   </div>
                 </div>
@@ -1309,6 +1414,7 @@ export default function SummaryPage() {
                   <div className="summary-div pie-chart-div">
                     <SummaryReport summary={summary} rows={rows} aiBullets={aiSummaryBullets} aiLoading={aiSummaryLoading} />
                   </div>
+
                 </div>
               )}
 
@@ -1357,15 +1463,33 @@ export default function SummaryPage() {
                               <div style={{ position: "relative" }}>
                                 <input
                                   type="text"
-                                  // value={dataSourcePath}
-                                  value="https://sorimtechnologies.sharepoint.com"
+                                  value={dataSourcePath}
                                   onChange={(e) => {
-                                    const val = "https://sorimtechnologies.sharepoint.com";
-                                    console.log("Data source path input changed:", val);
+                                    const val = e.target.value;
                                     setDataSourcePath(val);
                                     const validation = validateSharePointUrl(val);
                                     setIsValidUrl(validation.isValid);
                                     setUrlValidationError(validation.error || "");
+                                    
+                                    // Filter suggestions based on input
+                                    if (val.trim().length > 0) {
+                                      const filtered = urlHistory.filter(url => 
+                                        url.toLowerCase().includes(val.toLowerCase())
+                                      );
+                                      setFilteredSuggestions(filtered);
+                                      setShowUrlSuggestions(filtered.length > 0);
+                                    } else {
+                                      setShowUrlSuggestions(false);
+                                    }
+                                  }}
+                                  onFocus={() => {
+                                    if (urlHistory.length > 0) {
+                                      setFilteredSuggestions(urlHistory);
+                                      setShowUrlSuggestions(true);
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    setTimeout(() => setShowUrlSuggestions(false), 200);
                                   }}
                                   placeholder="e.g. https://company.sharepoint.com/Shared Documents/Data/"
                                   style={{
@@ -1381,34 +1505,77 @@ export default function SummaryPage() {
                                     background: "#fff",
                                   }}
                                 />
-
-                                {dataSourcePath && (
-                                  <span style={{ fontSize: "11px", color: isValidUrl ? "#059669" : "#dc2626", fontWeight: 500 }}>
-                                    {isValidUrl ? "✅ Valid SharePoint URL" : (urlValidationError || "❌ Invalid SharePoint URL")}
-                                  </span>
+                                
+                                {/* Autocomplete dropdown */}
+                                {showUrlSuggestions && filteredSuggestions.length > 0 && (
+                                  <div style={{
+                                    position: "absolute",
+                                    top: "100%",
+                                    left: 0,
+                                    right: 0,
+                                    backgroundColor: "#fff",
+                                    border: "1px solid #ddd",
+                                    borderTop: "none",
+                                    borderRadius: "0 0 4px 4px",
+                                    maxHeight: "200px",
+                                    overflowY: "auto",
+                                    zIndex: 10,
+                                    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                                  }}>
+                                    {filteredSuggestions.map((url, idx) => (
+                                      <div
+                                        key={idx}
+                                        onClick={() => {
+                                          setDataSourcePath(url);
+                                          const validation = validateSharePointUrl(url);
+                                          setIsValidUrl(validation.isValid);
+                                          setUrlValidationError(validation.error || "");
+                                          setShowUrlSuggestions(false);
+                                        }}
+                                        style={{
+                                          padding: "8px 10px",
+                                          borderBottom: idx < filteredSuggestions.length - 1 ? "1px solid #eee" : "none",
+                                          cursor: "pointer",
+                                          fontSize: "12px",
+                                          fontFamily: "monospace",
+                                          backgroundColor: "#f9f9f9",
+                                          transition: "background-color 0.2s",
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f0f0f0")}
+                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#f9f9f9")}
+                                      >
+                                        {url}
+                                      </div>
+                                    ))}
+                                  </div>
                                 )}
-                                <span style={{ fontSize: "11px", color: "#64748b", lineHeight: "1.4" }}>
-                                  SharePoint URL only. Format: https://companyname.sharepoint.com
-                                </span>
                               </div>
+                              {dataSourcePath && (
+                                <span style={{ fontSize: "11px", color: isValidUrl ? "#059669" : "#dc2626", fontWeight: 500 }}>
+                                  {isValidUrl ? "✅ Valid SharePoint URL" : (urlValidationError || "❌ Invalid SharePoint URL")}
+                                </span>
+                              )}
+                              <span style={{ fontSize: "11px", color: "#64748b", lineHeight: "1.4" }}>
+                                SharePoint URL only. Format: https://companyname.sharepoint.com
+                              </span>
                             </div>
                             )}
 
                             {!isCsvLoadscript && (
-                              <div style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: "4px",
-                                marginBottom: "10px",
-                                padding: "8px 12px",
-                                background: "#f0fdf4",
-                                borderRadius: "6px",
-                                border: "1px solid #bbf7d0",
-                              }}>
-                                <span style={{ fontSize: "11px", color: "#059669", fontWeight: 500 }}>
-                                  ℹ️ Inline LoadScript - No URL required
-                                </span>
-                              </div>
+                            <div style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "4px",
+                              marginBottom: "10px",
+                              padding: "8px 12px",
+                              background: "#f0fdf4",
+                              borderRadius: "6px",
+                              border: "1px solid #bbf7d0",
+                            }}>
+                              <span style={{ fontSize: "11px", color: "#059669", fontWeight: 500 }}>
+                                ℹ️ Inline LoadScript - No URL required
+                              </span>
+                            </div>
                             )}
 
                             <button
@@ -1498,27 +1665,15 @@ export default function SummaryPage() {
                 </div>
               )}
 
-              {/* ER DIAGRAM TAB */}
-              {activeTab === "er" && (
-                <div className="tab-content er-tab">
-                  <div className="summary-div er-diagram-div">
-                    <ERDiagramModal
-                      tables={tables}
-                      relations={relations}
-                      mainTable={mainTable}
-                      onClose={() => {}}
-                      isModal={false}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
 
+            </div>
+ 
             {/* ===== SEPARATE DIV FOR TABLE ===== */}
             <div className="data-section">
-
+             
+ 
               {tableLoading && <p>Loading data…</p>}
-
+ 
               {!tableLoading && (
                 <>
                   {rows.length > 0 ? (
@@ -1558,7 +1713,7 @@ export default function SummaryPage() {
                           </button>
                         </div>
                       </div>
-
+ 
                       <div className="table-wrapper">
                         <TableContainer component={Paper}>
                           <Table size="small">
@@ -1577,7 +1732,7 @@ export default function SummaryPage() {
                                 ))}
                               </TableRow>
                             </TableHead>
-
+ 
                             <TableBody>
                               {visibleRows.map((r, i) => (
                                 <TableRow key={i} hover>
@@ -1589,12 +1744,12 @@ export default function SummaryPage() {
                             </TableBody>
                           </Table>
                         </TableContainer>
-
+ 
                         <div className="table-footer">
                           {`Showing ${totalEntries ? startIndex + 1 : 0} to ${endIndex} of ${totalEntries} entries`}
                         </div>
                       </div>
-
+ 
                       {/* Pagination */}
                       <div className="pagination-bar">
                         <button
@@ -1632,7 +1787,7 @@ export default function SummaryPage() {
                       <p style={{ marginTop: 8, color: '#666' }}>You can still export this table; clicking <strong>Continue to Export</strong> will attempt to load the table data.</p>
                     </div>
                   )}
-
+ 
                   {/* BOTTOM RIGHT BUTTON - Export (single table or auto-include related tables for master) */}
                   {activeTab === "summary" && (
                   <div className="bottom-actions">
@@ -1648,14 +1803,13 @@ export default function SummaryPage() {
                   )}
                 </>
               )}
-
+ 
             </div>
-
+ 
           </>
         )}
       </div>
 
-      {/* Schema Modal */}
       <SchemaModal
         isOpen={isSchemaModalOpen}
         onClose={() => setIsSchemaModalOpen(false)}
@@ -1663,194 +1817,28 @@ export default function SummaryPage() {
         masterTable={mainTable || selectedTable}
         tables={tables}
       />
-
     </div>
   );
 }
 
-
-// ================= ER DIAGRAM MODAL =================
-// Shows a mermaid erDiagram popup matching the Qlik Sense ER structure.
-// Relationship direction: fact/history tables are many-side pointing
-// to dimension/master tables as one-side. This matches Power BI model view.
-
-interface ERDiagramModalProps {
-  tables: any[];
-  relations: Record<string, string[]>;
-  mainTable: string | null;
-  onClose: () => void;
-  isModal?: boolean;
-}
-
-function ERDiagramModal({ tables, relations, mainTable, onClose, isModal = true }: ERDiagramModalProps) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  const factKeywords  = ["fact", "history", "transaction", "detail", "sales", "order"];
-  const dimKeywords   = ["master", "dim", "lookup", "ref", "details"];
-
-  const isFact = (name: string) => factKeywords.some(k => name.toLowerCase().includes(k));
-  const isDim  = (name: string) => dimKeywords.some(k => name.toLowerCase().includes(k));
-
-  const buildErSource = (): string => {
-    let src = "erDiagram\n";
-
-    // Entity definitions — limit fields to avoid overflow
-    for (const t of tables) {
-      const name = typeof t === "string" ? t : t?.name;
-      if (!name) continue;
-      const fields = (t.fields || t.columns || []).slice(0, 10);
-      src += `  ${name} {\n`;
-      for (const f of fields) {
-        const fname = (typeof f === "string" ? f : f?.name || "")
-          .replace(/[^a-zA-Z0-9_]/g, "_");
-        if (fname) src += `    string ${fname}\n`;
-      }
-      src += "  }\n";
-    }
-
-    // Relationships with correct direction
-    // many-side (fact/history or mainTable) --> one-side (dim/master)
-    const seen = new Set<string>();
-    for (const [a, toList] of Object.entries(relations)) {
-      for (const b of toList) {
-        const key = [a, b].sort().join("|");
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        const aIsFact = isFact(a) || a === mainTable;
-        const bIsFact = isFact(b) || b === mainTable;
-        const aIsDim  = isDim(a);
-        const bIsDim  = isDim(b);
-
-        let many: string, one: string;
-        if (aIsDim && !bIsDim)       { one = a; many = b; }
-        else if (bIsDim && !aIsDim)  { one = b; many = a; }
-        else if (aIsFact && !bIsFact){ many = a; one = b; }
-        else if (bIsFact && !aIsFact){ many = b; one = a; }
-        else                          { many = a; one = b; }
-
-        src += `  ${many} }o--|| ${one} : ""\n`;
-      }
-    }
-    return src;
-  };
-
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.innerHTML = '<p style="color:#888;font-size:13px;padding:16px">Rendering diagram...</p>';
-
-    import("https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs").then(async (mod: any) => {
-      const mermaid = mod.default;
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: "base",
-        fontFamily: "inherit",
-        themeVariables: {
-          fontSize: "12px",
-          lineColor: "#73726c",
-          textColor: "#3d3d3a",
-          primaryColor: "#ede9fe",
-          primaryBorderColor: "#7c3aed",
-          primaryTextColor: "#3d3d3a",
-        },
-      });
-      try {
-        const { svg } = await mermaid.render("er-modal-svg-" + Date.now(), buildErSource());
-        if (ref.current) ref.current.innerHTML = svg;
-      } catch (e) {
-        console.error("ER render error:", e);
-        if (ref.current) ref.current.innerHTML = '<p style="color:#e11d48;font-size:13px;padding:16px">Could not render diagram. Check console for details.</p>';
-      }
-    });
-  }, [tables, relations]);
-
-  return (
-    <>
-      {isModal ? (
-        <div
-          onClick={onClose}
-          style={{
-            position: "fixed", inset: 0, zIndex: 9999,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "#fff", borderRadius: 12,
-              width: "min(90vw, 900px)", maxHeight: "85vh",
-              display: "flex", flexDirection: "column",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-            }}
-          >
-            {/* Header */}
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "16px 20px", borderBottom: "1px solid #e5e7eb",
-            }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#111827" }}>
-                  ER Diagram — from Qlik Sense
-                </h3>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>
-                  Entity relationships detected from the Qlik associative model
-                </p>
-              </div>
-              <button
-                onClick={onClose}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  fontSize: 20, color: "#9ca3af", lineHeight: 1, padding: "4px 8px",
-                  borderRadius: 4,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Diagram */}
-            <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-              <div ref={ref} style={{ fontSize: 12 }} />
-            </div>
-
-            {/* Footer note */}
-            <div style={{
-              padding: "10px 20px", borderTop: "1px solid #e5e7eb",
-              fontSize: 11, color: "#9ca3af",
-            }}>
-              Arrows show many-to-one direction. Qlik associative joins on shared field names.
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div style={{ width: "100%", padding: "20px", fontSize: 12 }}>
-          <div ref={ref} />
-        </div>
-      )}
-    </>
-  );
-}
-
-
 // ================= SUMMARY REPORT COMPONENT =================
 import React from "react";
-
+ 
 interface SummaryReportProps {
   summary: any;
   rows: Row[];
   aiBullets?: string[];
   aiLoading?: boolean;
 }
-
+ 
 // Pie Chart Component
 const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ data, title }) => {
   const entries = Object.entries(data)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8);
-
+ 
   const total = entries.reduce((sum, [_, val]) => sum + val, 0);
-
+ 
   const colors = [
     "#FF6B6B",
     "#4ECDC4",
@@ -1861,38 +1849,41 @@ const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ d
     "#BB8FCE",
     "#85C1E2",
   ];
-
+ 
   let currentAngle = 0;
   const slices = entries.map(([label, value], i) => {
     const percentage = (value / total) * 100;
     const sliceAngle = (percentage / 100) * 360;
     const startAngle = currentAngle;
     const endAngle = currentAngle + sliceAngle;
-
+ 
+    // Convert angles to radians
     const startRad = (startAngle - 90) * (Math.PI / 180);
     const endRad = (endAngle - 90) * (Math.PI / 180);
-
+ 
+    // Calculate path points
     const x1 = 100 + 80 * Math.cos(startRad);
     const y1 = 100 + 80 * Math.sin(startRad);
     const x2 = 100 + 80 * Math.cos(endRad);
     const y2 = 100 + 80 * Math.sin(endRad);
-
+ 
     const largeArc = sliceAngle > 180 ? 1 : 0;
-
+ 
     const pathData = [
       `M 100 100`,
       `L ${x1} ${y1}`,
       `A 80 80 0 ${largeArc} 1 ${x2} ${y2}`,
       `Z`,
     ].join(" ");
-
+ 
+    // Label position
     const labelAngle = (startAngle + endAngle) / 2;
     const labelRad = (labelAngle - 90) * (Math.PI / 180);
     const labelX = 100 + 50 * Math.cos(labelRad);
     const labelY = 100 + 50 * Math.sin(labelRad);
-
+ 
     currentAngle = endAngle;
-
+ 
     return {
       pathData,
       color: colors[i % colors.length],
@@ -1903,7 +1894,7 @@ const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ d
       labelY,
     };
   });
-
+ 
   return (
     <div className="pie-chart-container">
       <div className="pie-chart-content">
@@ -1942,7 +1933,7 @@ const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ d
     </div>
   );
 };
-
+ 
 export const SummaryReport: React.FC<SummaryReportProps> = ({
   summary,
   rows,
@@ -1950,21 +1941,24 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
   aiLoading = false,
 }) => {
   if (!summary && rows.length === 0) return null;
-
+ 
+  // Combine ALL categorical data into one pie chart
   const allCategoricalCounts: Record<string, number> = {};
   let topCityCount = 0;
   const cityCount: Record<string, number> = {};
-
+ 
   rows.forEach((row) => {
     Object.entries(row).forEach(([key, value]) => {
       if (key.toLowerCase().includes('id')) return;
-
+ 
       const num = Number(value);
       if (isNaN(num) || num === null || num === 0) {
+        // Categorical data
         const strValue = String(value);
         const label = `${key}: ${strValue}`;
         allCategoricalCounts[label] = (allCategoricalCounts[label] || 0) + 1;
-
+       
+        // Track top city
         if (key.toLowerCase().includes('city')) {
           cityCount[strValue] = (cityCount[strValue] || 0) + 1;
           if (cityCount[strValue] > topCityCount) {
@@ -1974,21 +1968,45 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
       }
     });
   });
-
+ 
+  // Calculate metrics
+ 
+  // Generate executive summary text
   return (
     <div className="summary-report">
+      {/* Top Metrics Cards */}
+      {/* <div className="metrics-container">
+        <div className="metric-card">
+          <div className="metric-value">{totalVehicles}</div>
+          <div className="metric-label">Total Vehicles</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value">{salesM}</div>
+          <div className="metric-label">Total Sales (M)</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value">{(totalSales * 0.01).toFixed(1)}</div>
+          <div className="metric-label">2025 Sales (M)</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-value">{topCityValue}</div>
+          <div className="metric-label">Top City</div>
+        </div>
+      </div> */}
+ 
       {/* Analytics Container - Pie Chart and Summary Side by Side */}
       <div className="analytics-container">
         {/* Left: Chart Section */}
         {Object.keys(allCategoricalCounts).length > 0 && (
           <div className="chart-section">
+            {/* <h4>Top Cities by Sales Value</h4> */}
             <PieChart data={allCategoricalCounts} title="" />
           </div>
         )}
-
+       
         {/* Right: AI Summary Section */}
         <div className="hf-summary-section">
-          <h4>Executive Summary</h4>
+          <h4>Executive Summary </h4>
           <ul className="hf-summary-content">
             {aiLoading ? (
               <li style={{ color: "#6366f1" }}>⏳ Generating AI insights...</li>
@@ -1996,10 +2014,11 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({
               aiBullets.map((point, idx) => (
                 <li key={idx}>{point.replace(/^[-•]\s*/, "")}</li>
               ))
-            ) : null}
+            ) : null } 
           </ul>
         </div>
       </div>
+
     </div>
   );
 };

@@ -438,6 +438,7 @@ import "./ExportPage.css";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { useWizard } from "../context/WizardContext";
+import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
 
 interface SelectedTableData {
   name: string;
@@ -457,6 +458,7 @@ export default function ExportPage() {
 
   const { getLastElapsed } = useWizard();
   const [pageLoadTime, setPageLoadTime] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Capture the elapsed time from navigation (Summary -> Export)
   useEffect(() => {
@@ -465,6 +467,15 @@ export default function ExportPage() {
       setPageLoadTime(elapsed);
     }
   }, [getLastElapsed]);
+
+  // Simulate export data preparation loading with animation
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 1000); // Show loading for 1 second while preparing export data
+
+    return () => clearTimeout(timer);
+  }, []);
 
   // Check if this is multi-select or single-select mode
   const isMultiSelect = state?.selectedTables && state?.selectedTables.length > 0;
@@ -650,6 +661,15 @@ export default function ExportPage() {
   };
 
   // Download functions (removed - combined export only)
+
+  if (loading) {
+    return (
+      <LoadingOverlay
+        isVisible={loading}
+        message="Preparing export data..."
+      />
+    );
+  }
 
   return (
     <div className="export-wrap">

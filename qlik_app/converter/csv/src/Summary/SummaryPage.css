@@ -1527,7 +1527,7 @@ PAGE WRAP
 .loadscript-displays {
   display: flex;
   gap: 12px;
-  height: 850px;
+  height: 750px;
   flex-shrink: 0;
 }
 
@@ -1677,7 +1677,7 @@ PAGE WRAP
 }
 
 .summary-tab {
-  min-height: 500px;
+  min-height: 400px;
 }
 
 .mquery-tab {
