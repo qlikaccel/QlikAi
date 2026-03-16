@@ -120,6 +120,7 @@
 
 import "./Stepper.css";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
  
 // ✅ ICON IMAGES (ONLY ADDITION)
 import connectImg from "../assets/connect3.jpg";
@@ -139,6 +140,32 @@ const steps = [
 export default function Stepper() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [summaryActiveTab, setSummaryActiveTab] = useState<string | null>(null);
+  const [publishMethod, setPublishMethod] = useState<string | null>(null);
+
+  // Listen for changes in summaryActiveTab and publishMethod from sessionStorage
+  useEffect(() => {
+    const checkTab = () => {
+      const tab = sessionStorage.getItem("summaryActiveTab");
+      setSummaryActiveTab(tab);
+    };
+
+    const checkPublishMethod = () => {
+      const method = sessionStorage.getItem("publishMethod");
+      setPublishMethod(method);
+    };
+
+    // Check initial values
+    checkTab();
+    checkPublishMethod();
+
+    // Listen for storage changes
+    const interval = setInterval(() => {
+      checkTab();
+      checkPublishMethod();
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
  
   const getActive = () => {
     const url = location.pathname;
@@ -180,10 +207,37 @@ export default function Stepper() {
 
     return false;
   };
+
+  // Check if we should hide the Export step (dynamically based on active tab or publish method)
+  const shouldHideExportStep = () => {
+    const isOnSummaryPage = location.pathname.includes("/summary");
+    const isOnExportPage = location.pathname.includes("/export");
+    
+    // On Summary page: show/hide based on ACTIVE TAB
+    if (isOnSummaryPage) {
+      return summaryActiveTab === "mquery";
+    }
+    
+    // On Export page: always show it (we're actively exporting)
+    if (isOnExportPage) {
+      return false;
+    }
+    
+    // On other pages (Publish, etc): show/hide based on publishMethod (M_QUERY means hide)
+    return publishMethod === "M_QUERY";
+  };
+
+  // Filter steps: hide Export step if on Query tab
+  const visibleSteps = steps.filter((step) => {
+    if (step.id === 4 && shouldHideExportStep()) {
+      return false; // Hide Export step
+    }
+    return true;
+  });
  
   return (
     <div className="stepper">
-      {steps.map((step) => {
+      {visibleSteps.map((step) => {
         const disabled = isStepDisabled(step.id);
  
         return (

@@ -69,6 +69,11 @@ export default function SummaryPage() {
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [_aiSummaryError, setAiSummaryError] = useState<string>("");
 
+  // URL autocomplete history
+  const [urlHistory, setUrlHistory] = useState<string[]>([]);
+  const [showUrlSuggestions, setShowUrlSuggestions] = useState(false);
+  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
+
   // Helper: Detect if loadscript is CSV-based or inline
   const detectCsvLoadscript = (script: string): boolean => {
     if (!script) return false;
@@ -245,6 +250,26 @@ export default function SummaryPage() {
   // Track page load start time
   useEffect(() => {
     pageStartTimeRef.current = Date.now();
+  }, []);
+
+  // Save activeTab to sessionStorage so Stepper can read it and hide Export step if needed
+  useEffect(() => {
+    sessionStorage.setItem("summaryActiveTab", activeTab);
+  }, [activeTab]);
+
+  // Load URL history from localStorage on component mount
+  useEffect(() => {
+    const stored = localStorage.getItem("sharepoint_url_history");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setUrlHistory(parsed);
+        }
+      } catch (e) {
+        // Ignore parsing errors
+      }
+    }
   }, []);
   // Data-table controls
   const [tableQuery, setTableQuery] = useState<string>("");
@@ -839,6 +864,19 @@ const downloadCSV = async () => {
       console.log(`📊 Master table "${selectedTable}": ${masterRowCount} rows`);
       console.log(`📊 Total rows (master + all related): ${totalRowsAllTables} rows`);
 
+      // 🚀 Save DataSourcePath to URL history for autocomplete (for CSV-based LoadScripts)
+      if (isCsvLoadscript && isValidUrl && dataSourcePath.trim()) {
+        const updatedHistory = [dataSourcePath, ...urlHistory.filter(url => url !== dataSourcePath)].slice(0, 10);
+        setUrlHistory(updatedHistory);
+        localStorage.setItem("sharepoint_url_history", JSON.stringify(updatedHistory));
+      }
+
+      // 🚀 Store publishing method for UI control (hide export step, hide CSV/DAX box)
+      sessionStorage.setItem("publishMethod", "M_QUERY");
+      
+      // 🚀 Mark export as complete to enable Publish button in stepper (same logic as CSV/DAX workflow)
+      sessionStorage.setItem("exportComplete", "true");
+
       // 🚀 IMMEDIATE NAVIGATION - Navigate to publish page first to show workflow
       // ✅ All publishing is handled in PublishPage - only one API call there!
       navigate("/publish", {
@@ -1067,6 +1105,13 @@ const downloadCSV = async () => {
       daxLines.push(`\n-- Sample measure`);
       daxLines.push(`[${sel} Count] = COUNTROWS('${sel}')`);
       const daxContent = daxLines.join("\n");
+
+      // 🚀 Save DataSourcePath to URL history for autocomplete (for CSV-based LoadScripts)
+      if (isCsvLoadscript && isValidUrl && dataSourcePath.trim()) {
+        const updatedHistory = [dataSourcePath, ...urlHistory.filter(url => url !== dataSourcePath)].slice(0, 10);
+        setUrlHistory(updatedHistory);
+        localStorage.setItem("sharepoint_url_history", JSON.stringify(updatedHistory));
+      }
 
       if (!related || related.length === 0) {
         // single-table export - navigate to export page
@@ -1410,34 +1455,101 @@ const downloadCSV = async () => {
                               background: isValidUrl ? "#ecfdf5" : "#fef2f2",
                               borderRadius: "6px",
                               border: isValidUrl ? "1px solid #86efac" : "1px solid #fecaca",
+                              position: "relative",
                             }}>
                               <label style={{ fontSize: "12px", fontWeight: 600, color: "#0369a1" }}>
                                 📁 Data Source Path <span style={{ fontWeight: 400, color: "#64748b" }}>(required for CSV)</span>
                               </label>
-                              <input
-                                type="text"
-                                value={dataSourcePath}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setDataSourcePath(val);
-                                  const validation = validateSharePointUrl(val);
-                                  setIsValidUrl(validation.isValid);
-                                  setUrlValidationError(validation.error || "");
-                                }}
-                                placeholder="e.g. https://company.sharepoint.com/Shared Documents/Data/"
-                                style={{
-                                  padding: "6px 10px",
-                                  fontSize: "12px",
-                                  fontFamily: "monospace",
-                                  border: isValidUrl ? "1px solid #86efac" : "1px solid #fecaca",
-                                  transition: "border-color 0.3s ease",
-                                  borderRadius: "4px",
-                                  outline: "none",
-                                  width: "100%",
-                                  boxSizing: "border-box" as const,
-                                  background: "#fff",
-                                }}
-                              />
+                              <div style={{ position: "relative" }}>
+                                <input
+                                  type="text"
+                                  value={dataSourcePath}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDataSourcePath(val);
+                                    const validation = validateSharePointUrl(val);
+                                    setIsValidUrl(validation.isValid);
+                                    setUrlValidationError(validation.error || "");
+                                    
+                                    // Filter suggestions based on input
+                                    if (val.trim().length > 0) {
+                                      const filtered = urlHistory.filter(url => 
+                                        url.toLowerCase().includes(val.toLowerCase())
+                                      );
+                                      setFilteredSuggestions(filtered);
+                                      setShowUrlSuggestions(filtered.length > 0);
+                                    } else {
+                                      setShowUrlSuggestions(false);
+                                    }
+                                  }}
+                                  onFocus={() => {
+                                    if (urlHistory.length > 0) {
+                                      setFilteredSuggestions(urlHistory);
+                                      setShowUrlSuggestions(true);
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    setTimeout(() => setShowUrlSuggestions(false), 200);
+                                  }}
+                                  placeholder="e.g. https://company.sharepoint.com/Shared Documents/Data/"
+                                  style={{
+                                    padding: "6px 10px",
+                                    fontSize: "12px",
+                                    fontFamily: "monospace",
+                                    border: isValidUrl ? "1px solid #86efac" : "1px solid #fecaca",
+                                    transition: "border-color 0.3s ease",
+                                    borderRadius: "4px",
+                                    outline: "none",
+                                    width: "100%",
+                                    boxSizing: "border-box" as const,
+                                    background: "#fff",
+                                  }}
+                                />
+                                
+                                {/* Autocomplete dropdown */}
+                                {showUrlSuggestions && filteredSuggestions.length > 0 && (
+                                  <div style={{
+                                    position: "absolute",
+                                    top: "100%",
+                                    left: 0,
+                                    right: 0,
+                                    backgroundColor: "#fff",
+                                    border: "1px solid #ddd",
+                                    borderTop: "none",
+                                    borderRadius: "0 0 4px 4px",
+                                    maxHeight: "200px",
+                                    overflowY: "auto",
+                                    zIndex: 10,
+                                    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                                  }}>
+                                    {filteredSuggestions.map((url, idx) => (
+                                      <div
+                                        key={idx}
+                                        onClick={() => {
+                                          setDataSourcePath(url);
+                                          const validation = validateSharePointUrl(url);
+                                          setIsValidUrl(validation.isValid);
+                                          setUrlValidationError(validation.error || "");
+                                          setShowUrlSuggestions(false);
+                                        }}
+                                        style={{
+                                          padding: "8px 10px",
+                                          borderBottom: idx < filteredSuggestions.length - 1 ? "1px solid #eee" : "none",
+                                          cursor: "pointer",
+                                          fontSize: "12px",
+                                          fontFamily: "monospace",
+                                          backgroundColor: "#f9f9f9",
+                                          transition: "background-color 0.2s",
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f0f0f0")}
+                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#f9f9f9")}
+                                      >
+                                        {url}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                               {dataSourcePath && (
                                 <span style={{ fontSize: "11px", color: isValidUrl ? "#059669" : "#dc2626", fontWeight: 500 }}>
                                   {isValidUrl ? "✅ Valid SharePoint URL" : (urlValidationError || "❌ Invalid SharePoint URL")}
@@ -1677,6 +1789,7 @@ const downloadCSV = async () => {
                   )}
  
                   {/* BOTTOM RIGHT BUTTON - Export (single table or auto-include related tables for master) */}
+                  {activeTab === "summary" && (
                   <div className="bottom-actions">
                     <button
                       className="continue-export-btn"
@@ -1687,6 +1800,7 @@ const downloadCSV = async () => {
                       Continue to Export
                     </button>
                   </div>
+                  )}
                 </>
               )}
  

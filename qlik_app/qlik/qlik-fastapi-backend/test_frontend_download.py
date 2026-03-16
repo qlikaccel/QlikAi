@@ -158,8 +158,8 @@ def test_download_endpoint():
     print("TEST 3: /download-mquery Endpoint")
     print("=" * 80)
     
-    url = "http://localhost:8000/api/migration/download-mquery"
-    # url = "https://qliksense-stuv.onrender.com/api/migration/download-mquery"
+    # url = "http://localhost:8000/api/migration/download-mquery"
+    url = "https://qliksense-stuv.onrender.com/api/migration/download-mquery"
     
     # Generate a sample complete M query
     complete_m_query = """// Power Query - Converted from Qlik LoadScript

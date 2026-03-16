@@ -1,4 +1,4 @@
-# """
+﻿# """
 # Migration API -- FastAPI router for the 6-stage Qlik-to-Power BI pipeline.
 
 # Endpoints:
@@ -2531,3 +2531,171 @@ async def generate_pbit_endpoint(request: GeneratePbitRequest):
     except Exception as exc:
         logger.exception("[generate_pbit] Failed")
         raise HTTPException(status_code=500, detail=f"PBIT generation failed: {exc}")
+
+# ===========================================================================
+# PUBLISH TABLES (Flow 2 - CSV Export Path)
+# Accepts raw table data, builds inline M Queries, publishes via Fabric API.
+#
+# FIXES applied here:
+# 1. Column name sanitization: hyphens/dots -> underscores in M expression
+#    (M Engine treats - and . as operators, causing 'Token , expected' errors)
+# 2. Row cap: tables over MAX_INLINE_ROWS are sampled to stay under Fabric
+#    API payload limits (~1MB). The semantic model schema and relationships
+#    are defined by column names, not row count. Full data loads on refresh.
+# ===========================================================================
+
+# Max rows to embed inline per table. Fabric API rejects payloads >~1MB.
+# Service_History at 35,868 rows = ~2.4MB inline — well over the limit.
+# Relationships are column-based, not row-based, so capping rows does not
+# affect relationship inference or the published schema.
+MAX_INLINE_ROWS = 500
+
+
+def _sanitize_col(name: str) -> str:
+    """
+    Sanitize a column name for use in an M #table() type declaration.
+    Replaces any character that is not alphanumeric or underscore with
+    an underscore. Hyphens and dots are M operators and must be replaced.
+    Examples:
+        'DealerID-ServiceID'     -> 'DealerID_ServiceID'
+        'Model_Master.ModelID'   -> 'Model_Master_ModelID'
+        'Service_History.Cost'   -> 'Service_History_Cost'
+    """
+    import re as _re
+    return _re.sub(r'[^A-Za-z0-9_]', '_', name)
+
+
+class PublishTablesRequest(_BaseModel):
+    dataset_name: str = "Qlik_Migrated_Dataset"
+    tables: list = []  # [{name, rows: [{col: val}]}]
+
+
+@router.post("/publish-tables")
+async def publish_tables_endpoint(request: PublishTablesRequest):
+    """
+    Publish multiple tables with inline data directly to Fabric.
+    Each table's rows are embedded as inline M Query (#table).
+    Used by Flow 2 (CSV export path).
+    """
+    logger.info("[publish_tables] Received %d tables", len(request.tables))
+    for t in request.tables:
+        rows = t.get("rows", [])
+        if rows:
+            logger.info(
+                "[publish_tables] Table '%s': %d rows, columns: %s",
+                t.get("name"), len(rows), list(rows[0].keys())[:5]
+            )
+
+    from powerbi_publisher import publish_semantic_model, _infer_type_from_name
+
+    workspace_id = os.getenv("POWERBI_WORKSPACE_ID", "")
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="POWERBI_WORKSPACE_ID not set")
+
+    tables_m = []
+    for t in request.tables:
+        name = t.get("name", "Table")
+        rows = t.get("rows", [])
+        if not rows:
+            continue
+
+        # Original column names (used to read row data)
+        orig_headers = list(rows[0].keys())
+
+        # Sanitized column names (used in M expression — hyphens/dots are M operators)
+        safe_headers = [_sanitize_col(h) for h in orig_headers]
+
+        # Log any columns that were renamed
+        renamed = [(o, s) for o, s in zip(orig_headers, safe_headers) if o != s]
+        if renamed:
+            logger.info(
+                "[publish_tables] Table '%s': sanitized %d column name(s): %s",
+                name, len(renamed), renamed
+            )
+
+        # Cap rows to stay under Fabric API payload limit (~1MB).
+        # Schema and relationships are defined by columns, not row count.
+        # Full data will be available after dataset refresh from source.
+        total_rows = len(rows)
+        if total_rows > MAX_INLINE_ROWS:
+            logger.info(
+                "[publish_tables] Table '%s': capping %d rows to %d for inline embedding "
+                "(schema/relationships unaffected — full data loads on refresh)",
+                name, total_rows, MAX_INLINE_ROWS
+            )
+            rows = rows[:MAX_INLINE_ROWS]
+
+        fields = [{"name": h, "type": _infer_type_from_name(h)} for h in safe_headers]
+
+        # Build Table.FromRecords() M expression using sanitized column names.
+        # This avoids the #table(type table [...]) syntax which triggers
+        # "Token ',' expected" parse errors in Fabric's M Engine.
+        # Table.FromRecords() uses record syntax which is universally supported.
+        record_rows = []
+        for row in rows:
+            pairs = ", ".join(
+                '{} = "{}"'.format(
+                    s,
+                    str(row.get(o, "") or "").replace('"', '""')
+                )
+                for o, s in zip(orig_headers, safe_headers)
+            )
+            record_rows.append(f"        [{pairs}]")
+        record_rows_str = ",\n".join(record_rows)
+
+        m_expr = (
+            f"let\n"
+            f"    Source = Table.FromRecords({{\n"
+            f"{record_rows_str}\n"
+            f"    }})\n"
+            f"in\n"
+            f"    Source"
+        )
+
+        logger.info(
+            "[publish_tables] Table '%s' M expression (first 300 chars):\n%s",
+            name, m_expr[:300]
+        )
+        tables_m.append({
+            "name": name,
+            "source_type": "inline",
+            "m_expression": m_expr,
+            "fields": fields,
+        })
+
+    if not tables_m:
+        raise HTTPException(status_code=400, detail="No tables with data provided")
+
+    # Infer relationships from sanitized field names
+    relationships = []
+    try:
+        relationships = _infer_relationships_from_tables(tables_m)
+        logger.info("[publish_tables] Inferred %d relationship(s)", len(relationships))
+        for r in relationships:
+            logger.info(
+                "[publish_tables]   %s.%s -> %s.%s",
+                r["fromTable"], r["fromColumn"],
+                r["toTable"],   r["toColumn"]
+            )
+    except Exception as e:
+        logger.warning("[publish_tables] Relationship inference failed: %s", e)
+
+    result = publish_semantic_model(
+        dataset_name=request.dataset_name,
+        tables_m=tables_m,
+        relationships=relationships,
+        workspace_id=workspace_id,
+        data_source_path="",
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Publish failed"))
+
+    return {
+        "success": True,
+        "dataset_id": result.get("dataset_id", ""),
+        "dataset_name": request.dataset_name,
+        "tables_deployed": len(tables_m),
+        "workspace_url": result.get("workspace_url", ""),
+        "message": result.get("message", ""),
+    }

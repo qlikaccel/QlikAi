@@ -499,6 +499,7 @@ export default function PublishPage() {
           // Parse CSV into rows
           const lines = csvText.trim().split('\n').filter((l: string) => l.trim());
           if (lines.length < 2) continue;
+          /*
           const headers = lines[0].split(',').map((h: string) => h.trim().replace(/^"|"$/g, ''));
           const rows = lines.slice(1).map((line: string) => {
             const vals = line.split(',');
@@ -508,16 +509,48 @@ export default function PublishPage() {
             });
             return row;
           });
+          */
+          const parseCSVLine = (line: string): string[] => {
+          const result: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (ch === '"') {
+              if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+              else inQuotes = !inQuotes;
+            } else if (ch === ',' && !inQuotes) {
+              result.push(current.trim());
+              current = '';
+            } else {
+              current += ch;
+            }
+          }
+          result.push(current.trim());
+          return result;
+        };
+        const headers = parseCSVLine(lines[0]);
+        const rows = lines.slice(1).map((line: string) => {
+          const vals = parseCSVLine(line);
+          const row: any = {};
+          headers.forEach((h: string, idx: number) => {
+            row[h] = vals[idx] ?? null;
+          });
+          return row;
+        });
 
           batchTables.push({ name: tName, rows });
           console.log(`📦 Prepared table ${i + 1}/${tableCount}: ${tName} (${rows.length} rows)`);
         }
 
         if (batchTables.length === 0) throw new Error("No table data available to publish");
-
         console.log(`📤 Publishing ${batchTables.length} tables as single dataset with relationships...`);
-        // const batchRes = await fetch("http://localhost:8000/powerbi/process-batch", {
-        const batchRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/process-batch", {
+
+        const batchApiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+          ? 'http://localhost:8000'
+          : 'https://qliksense-stuv.onrender.com';
+
+        const batchRes = await fetch(`${batchApiBase}/api/migration/publish-tables`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -525,7 +558,6 @@ export default function PublishPage() {
             tables: batchTables,
           }),
         });
-
         const batchData = await batchRes.json();
         if (!batchRes.ok) throw new Error(batchData?.detail || "Batch publish failed");
 
@@ -1244,8 +1276,8 @@ export default function PublishPage() {
             </div>
           </div>
 
-          {/* COMBINED FORMAT INFO */}
-          {hasCSV && hasDAX && (
+          {/* COMBINED FORMAT INFO - Only show for CSV/DAX publishing */}
+          {hasCSV && hasDAX && result?.mquery !== true && (
             <div style={{ 
               backgroundColor: "#dbeafe", 
               border: "2px solid #0078d4", 
@@ -1327,25 +1359,6 @@ export default function PublishPage() {
             >
               Open in Power BI
             </button>
-            {/* Hide XMLA and Desktop+Cloud buttons for M Query */}
-            {!result?.mquery && (
-              <>
-                <button
-                  onClick={generateXmlaSemanticModel}
-                  className="btn btn-small btn-primary"
-                  disabled={xmlaSemanticLoading}
-                >
-                  {xmlaSemanticLoading ? "Enabling Semantic..." : "Enable Semantic Model (XMLA)"}
-                </button>
-                <button
-                  onClick={generateDesktopCloudBundle}
-                  className="btn btn-small btn-primary"
-                  disabled={desktopBundleLoading}
-                >
-                  {desktopBundleLoading ? "Building Bundle..." : "Desktop + Cloud Bundle"}
-                </button>
-              </>
-            )}
             <button
               onClick={downloadDataset}
               className="btn btn-small btn-warning"
