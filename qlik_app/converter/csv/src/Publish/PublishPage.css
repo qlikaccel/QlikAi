@@ -28,7 +28,7 @@
   align-items: center;
   justify-content: space-between;
   position: relative;
-  margin-bottom: 24px;
+  border-radius: 12px;
 }
 
 /* .stepper::before {
@@ -267,6 +267,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  margin-bottom: 16px;
 }
 
 .btn-success {

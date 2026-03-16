@@ -118,6 +118,10 @@ export default function PublishPage() {
   const [xmlaSemanticError, setXmlaSemanticError] = useState<string>("");
   const [xmlaSemanticResult, setXmlaSemanticResult] = useState<any>(null);
   const [showXmlaDiagram, setShowXmlaDiagram] = useState(false);
+
+  // Prevent unused-variable TypeScript errors (these hooks may be used in future updates)
+  void desktopBundleLoading;
+  void xmlaSemanticLoading;
   const [bundlePathCopied, setBundlePathCopied] = useState(false);
 
   const [copied, setCopied] = useState(false);
@@ -958,6 +962,9 @@ export default function PublishPage() {
     }
   };
 
+  // Prevent unused symbol warning
+  void generateXmlaSemanticModel;
+
   const generateDesktopCloudBundle = async () => {
     try {
       setDesktopBundleLoading(true);
@@ -1007,6 +1014,9 @@ export default function PublishPage() {
       setDesktopBundleLoading(false);
     }
   };
+
+  // Prevent unused symbol warning
+  void generateDesktopCloudBundle;
 
   const copyBundlePath = () => {
     const path = desktopBundle?.bundle_dir;

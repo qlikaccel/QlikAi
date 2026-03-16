@@ -1,5 +1,5 @@
 {
-  "name": "Healthbase",
+  "name": "Vehicle_Fact_MASTER",
   "compatibilityLevel": 1550,
   "model": {
     "culture": "en-US",
@@ -11,12 +11,12 @@
     "sourceQueryCulture": "en-US",
     "tables": [
       {
-        "name": "admissions_fact",
+        "name": "Vehicle_Fact_MASTER",
         "columns": [
           {
-            "name": "disease_id",
+            "name": "VIN",
             "dataType": "string",
-            "sourceColumn": "disease_id",
+            "sourceColumn": "VIN",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -26,9 +26,9 @@
             ]
           },
           {
-            "name": "doctor_id",
+            "name": "ModelName",
             "dataType": "string",
-            "sourceColumn": "doctor_id",
+            "sourceColumn": "ModelName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -38,9 +38,9 @@
             ]
           },
           {
-            "name": "hospital_id",
+            "name": "VariantName",
             "dataType": "string",
-            "sourceColumn": "hospital_id",
+            "sourceColumn": "VariantName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -50,9 +50,9 @@
             ]
           },
           {
-            "name": "patient_id",
+            "name": "FuelType",
             "dataType": "string",
-            "sourceColumn": "patient_id",
+            "sourceColumn": "FuelType",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -62,9 +62,9 @@
             ]
           },
           {
-            "name": "date_id",
+            "name": "VehicleChannel",
             "dataType": "string",
-            "sourceColumn": "date_id",
+            "sourceColumn": "VehicleChannel",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -74,9 +74,9 @@
             ]
           },
           {
-            "name": "admission_id",
+            "name": "ManufactureYear",
             "dataType": "string",
-            "sourceColumn": "admission_id",
+            "sourceColumn": "ManufactureYear",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -86,9 +86,9 @@
             ]
           },
           {
-            "name": "treatment_cost",
+            "name": "SalePrice",
             "dataType": "string",
-            "sourceColumn": "treatment_cost",
+            "sourceColumn": "SalePrice",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -98,9 +98,33 @@
             ]
           },
           {
-            "name": "length_of_stay_days",
+            "name": "ServiceDate",
             "dataType": "string",
-            "sourceColumn": "length_of_stay_days",
+            "sourceColumn": "ServiceDate",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "ServiceType",
+            "dataType": "string",
+            "sourceColumn": "ServiceType",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "ServiceCost",
+            "dataType": "string",
+            "sourceColumn": "ServiceCost",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -112,38 +136,60 @@
         ],
         "partitions": [
           {
-            "name": "admissions_fact-Partition",
+            "name": "Vehicle_Fact_MASTER-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = Table.FromRecords({",
-                "        [disease_id = \"DS005\", doctor_id = \"D002\", hospital_id = \"H02\", patient_id = \"P019\", date_id = \"2/27/2023\", admission_id = \"A0001\", treatment_cost = \"41587\", length_of_stay_days = \"6\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D012\", hospital_id = \"H05\", patient_id = \"P004\", date_id = \"3/3/2023\", admission_id = \"A0049\", treatment_cost = \"36189\", length_of_stay_days = \"8\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D009\", hospital_id = \"H03\", patient_id = \"P006\", date_id = \"2/4/2023\", admission_id = \"A0010\", treatment_cost = \"4105\", length_of_stay_days = \"2\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D015\", hospital_id = \"H01\", patient_id = \"P021\", date_id = \"1/11/2023\", admission_id = \"A0063\", treatment_cost = \"15873\", length_of_stay_days = \"4\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D015\", hospital_id = \"H05\", patient_id = \"P028\", date_id = \"1/12/2023\", admission_id = \"A0088\", treatment_cost = \"43168\", length_of_stay_days = \"6\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D011\", hospital_id = \"H02\", patient_id = \"P011\", date_id = \"4/26/2023\", admission_id = \"A0114\", treatment_cost = \"48305\", length_of_stay_days = \"3\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D011\", hospital_id = \"H04\", patient_id = \"P049\", date_id = \"3/14/2023\", admission_id = \"A0019\", treatment_cost = \"29837\", length_of_stay_days = \"10\"],",
-                "        [disease_id = \"DS005\", doctor_id = \"D011\", hospital_id = \"H01\", patient_id = \"P040\", date_id = \"3/25/2023\", admission_id = \"A0030\", treatment_cost = \"20077\", length_of_stay_days = \"5\"],",
-                "        [disease_id = \"DS004\", doctor_id = \"D010\", hospital_id = \"H04\", patient_id = \"P023\", date_id = \"3/4/2023\", admission_id = \"A0002\", treatment_cost = \"38129\", length_of_stay_days = \"5\"],",
-                "        [disease_id = \"DS004\", doctor_id = \"D010\", hospital_id = \"H03\", patient_id = \"P008\", date_id = \"1/7/2023\", admission_id = \"A0040\", treatment_cost = \"7682\", length_of_stay_days = \"10\"]",
-                "    })",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"Vehicle_Fact_MASTER.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"VIN\", type text},",
+                "        {\"ModelName\", type text},",
+                "        {\"VariantName\", type text},",
+                "        {\"FuelType\", type text},",
+                "        {\"VehicleChannel\", type text},",
+                "        {\"ManufactureYear\", Int64.Type},",
+                "        {\"SalePrice\", type number},",
+                "        {\"ServiceDate\", type date},",
+                "        {\"ServiceType\", type text},",
+                "        {\"ServiceCost\", type number}",
+                "        }",
+                "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       },
       {
-        "name": "dates",
+        "name": "Dealer_Master",
         "columns": [
           {
-            "name": "date_id",
+            "name": "DealerID",
             "dataType": "string",
-            "sourceColumn": "date_id",
+            "sourceColumn": "DealerID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -153,9 +199,9 @@
             ]
           },
           {
-            "name": "full_date",
+            "name": "DealerName",
             "dataType": "string",
-            "sourceColumn": "full_date",
+            "sourceColumn": "DealerName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -165,9 +211,9 @@
             ]
           },
           {
-            "name": "year",
+            "name": "City",
             "dataType": "string",
-            "sourceColumn": "year",
+            "sourceColumn": "City",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -177,9 +223,9 @@
             ]
           },
           {
-            "name": "month",
+            "name": "Phone",
             "dataType": "string",
-            "sourceColumn": "month",
+            "sourceColumn": "Phone",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -189,9 +235,9 @@
             ]
           },
           {
-            "name": "day",
+            "name": "Email",
             "dataType": "string",
-            "sourceColumn": "day",
+            "sourceColumn": "Email",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -203,148 +249,55 @@
         ],
         "partitions": [
           {
-            "name": "dates-Partition",
+            "name": "Dealer_Master-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = Table.FromRecords({",
-                "        [date_id = \"2/27/2023\", full_date = \"2023-02-27\", year = \"2023\", month = \"2\", day = \"27\"],",
-                "        [date_id = \"3/4/2023\", full_date = \"2023-03-04\", year = \"2023\", month = \"3\", day = \"4\"],",
-                "        [date_id = \"4/3/2023\", full_date = \"2023-04-03\", year = \"2023\", month = \"4\", day = \"3\"],",
-                "        [date_id = \"4/26/2023\", full_date = \"2023-04-26\", year = \"2023\", month = \"4\", day = \"26\"],",
-                "        [date_id = \"1/17/2023\", full_date = \"2023-01-17\", year = \"2023\", month = \"1\", day = \"17\"],",
-                "        [date_id = \"1/11/2023\", full_date = \"2023-01-11\", year = \"2023\", month = \"1\", day = \"11\"],",
-                "        [date_id = \"4/17/2023\", full_date = \"2023-04-17\", year = \"2023\", month = \"4\", day = \"17\"],",
-                "        [date_id = \"3/11/2023\", full_date = \"2023-03-11\", year = \"2023\", month = \"3\", day = \"11\"],",
-                "        [date_id = \"4/11/2023\", full_date = \"2023-04-11\", year = \"2023\", month = \"4\", day = \"11\"],",
-                "        [date_id = \"2/4/2023\", full_date = \"2023-02-04\", year = \"2023\", month = \"2\", day = \"4\"],",
-                "        [date_id = \"3/7/2023\", full_date = \"2023-03-07\", year = \"2023\", month = \"3\", day = \"7\"],",
-                "        [date_id = \"2/25/2023\", full_date = \"2023-02-25\", year = \"2023\", month = \"2\", day = \"25\"],",
-                "        [date_id = \"3/14/2023\", full_date = \"2023-03-14\", year = \"2023\", month = \"3\", day = \"14\"],",
-                "        [date_id = \"1/9/2023\", full_date = \"2023-01-09\", year = \"2023\", month = \"1\", day = \"9\"],",
-                "        [date_id = \"3/24/2023\", full_date = \"2023-03-24\", year = \"2023\", month = \"3\", day = \"24\"],",
-                "        [date_id = \"4/4/2023\", full_date = \"2023-04-04\", year = \"2023\", month = \"4\", day = \"4\"],",
-                "        [date_id = \"1/14/2023\", full_date = \"2023-01-14\", year = \"2023\", month = \"1\", day = \"14\"],",
-                "        [date_id = \"1/23/2023\", full_date = \"2023-01-23\", year = \"2023\", month = \"1\", day = \"23\"],",
-                "        [date_id = \"3/21/2023\", full_date = \"2023-03-21\", year = \"2023\", month = \"3\", day = \"21\"],",
-                "        [date_id = \"3/23/2023\", full_date = \"2023-03-23\", year = \"2023\", month = \"3\", day = \"23\"],",
-                "        [date_id = \"4/8/2023\", full_date = \"2023-04-08\", year = \"2023\", month = \"4\", day = \"8\"],",
-                "        [date_id = \"1/29/2023\", full_date = \"2023-01-29\", year = \"2023\", month = \"1\", day = \"29\"],",
-                "        [date_id = \"2/3/2023\", full_date = \"2023-02-03\", year = \"2023\", month = \"2\", day = \"3\"],",
-                "        [date_id = \"2/18/2023\", full_date = \"2023-02-18\", year = \"2023\", month = \"2\", day = \"18\"],",
-                "        [date_id = \"3/25/2023\", full_date = \"2023-03-25\", year = \"2023\", month = \"3\", day = \"25\"],",
-                "        [date_id = \"3/30/2023\", full_date = \"2023-03-30\", year = \"2023\", month = \"3\", day = \"30\"],",
-                "        [date_id = \"2/12/2023\", full_date = \"2023-02-12\", year = \"2023\", month = \"2\", day = \"12\"],",
-                "        [date_id = \"2/21/2023\", full_date = \"2023-02-21\", year = \"2023\", month = \"2\", day = \"21\"],",
-                "        [date_id = \"1/15/2023\", full_date = \"2023-01-15\", year = \"2023\", month = \"1\", day = \"15\"],",
-                "        [date_id = \"4/7/2023\", full_date = \"2023-04-07\", year = \"2023\", month = \"4\", day = \"7\"],",
-                "        [date_id = \"4/27/2023\", full_date = \"2023-04-27\", year = \"2023\", month = \"4\", day = \"27\"],",
-                "        [date_id = \"1/7/2023\", full_date = \"2023-01-07\", year = \"2023\", month = \"1\", day = \"7\"],",
-                "        [date_id = \"3/31/2023\", full_date = \"2023-03-31\", year = \"2023\", month = \"3\", day = \"31\"],",
-                "        [date_id = \"1/21/2023\", full_date = \"2023-01-21\", year = \"2023\", month = \"1\", day = \"21\"],",
-                "        [date_id = \"1/31/2023\", full_date = \"2023-01-31\", year = \"2023\", month = \"1\", day = \"31\"],",
-                "        [date_id = \"4/16/2023\", full_date = \"2023-04-16\", year = \"2023\", month = \"4\", day = \"16\"],",
-                "        [date_id = \"4/2/2023\", full_date = \"2023-04-02\", year = \"2023\", month = \"4\", day = \"2\"],",
-                "        [date_id = \"2/23/2023\", full_date = \"2023-02-23\", year = \"2023\", month = \"2\", day = \"23\"],",
-                "        [date_id = \"3/3/2023\", full_date = \"2023-03-03\", year = \"2023\", month = \"3\", day = \"3\"],",
-                "        [date_id = \"3/17/2023\", full_date = \"2023-03-17\", year = \"2023\", month = \"3\", day = \"17\"],",
-                "        [date_id = \"2/9/2023\", full_date = \"2023-02-09\", year = \"2023\", month = \"2\", day = \"9\"],",
-                "        [date_id = \"2/22/2023\", full_date = \"2023-02-22\", year = \"2023\", month = \"2\", day = \"22\"],",
-                "        [date_id = \"4/24/2023\", full_date = \"2023-04-24\", year = \"2023\", month = \"4\", day = \"24\"],",
-                "        [date_id = \"4/13/2023\", full_date = \"2023-04-13\", year = \"2023\", month = \"4\", day = \"13\"],",
-                "        [date_id = \"3/9/2023\", full_date = \"2023-03-09\", year = \"2023\", month = \"3\", day = \"9\"],",
-                "        [date_id = \"1/28/2023\", full_date = \"2023-01-28\", year = \"2023\", month = \"1\", day = \"28\"],",
-                "        [date_id = \"4/12/2023\", full_date = \"2023-04-12\", year = \"2023\", month = \"4\", day = \"12\"],",
-                "        [date_id = \"4/18/2023\", full_date = \"2023-04-18\", year = \"2023\", month = \"4\", day = \"18\"],",
-                "        [date_id = \"1/4/2023\", full_date = \"2023-01-04\", year = \"2023\", month = \"1\", day = \"4\"],",
-                "        [date_id = \"3/6/2023\", full_date = \"2023-03-06\", year = \"2023\", month = \"3\", day = \"6\"],",
-                "        [date_id = \"4/29/2023\", full_date = \"2023-04-29\", year = \"2023\", month = \"4\", day = \"29\"],",
-                "        [date_id = \"1/27/2023\", full_date = \"2023-01-27\", year = \"2023\", month = \"1\", day = \"27\"],",
-                "        [date_id = \"2/5/2023\", full_date = \"2023-02-05\", year = \"2023\", month = \"2\", day = \"5\"],",
-                "        [date_id = \"4/6/2023\", full_date = \"2023-04-06\", year = \"2023\", month = \"4\", day = \"6\"],",
-                "        [date_id = \"3/28/2023\", full_date = \"2023-03-28\", year = \"2023\", month = \"3\", day = \"28\"],",
-                "        [date_id = \"1/13/2023\", full_date = \"2023-01-13\", year = \"2023\", month = \"1\", day = \"13\"],",
-                "        [date_id = \"4/10/2023\", full_date = \"2023-04-10\", year = \"2023\", month = \"4\", day = \"10\"],",
-                "        [date_id = \"4/15/2023\", full_date = \"2023-04-15\", year = \"2023\", month = \"4\", day = \"15\"],",
-                "        [date_id = \"1/18/2023\", full_date = \"2023-01-18\", year = \"2023\", month = \"1\", day = \"18\"],",
-                "        [date_id = \"3/16/2023\", full_date = \"2023-03-16\", year = \"2023\", month = \"3\", day = \"16\"],",
-                "        [date_id = \"1/12/2023\", full_date = \"2023-01-12\", year = \"2023\", month = \"1\", day = \"12\"],",
-                "        [date_id = \"4/22/2023\", full_date = \"2023-04-22\", year = \"2023\", month = \"4\", day = \"22\"],",
-                "        [date_id = \"2/19/2023\", full_date = \"2023-02-19\", year = \"2023\", month = \"2\", day = \"19\"],",
-                "        [date_id = \"4/20/2023\", full_date = \"2023-04-20\", year = \"2023\", month = \"4\", day = \"20\"],",
-                "        [date_id = \"2/13/2023\", full_date = \"2023-02-13\", year = \"2023\", month = \"2\", day = \"13\"],",
-                "        [date_id = \"2/10/2023\", full_date = \"2023-02-10\", year = \"2023\", month = \"2\", day = \"10\"],",
-                "        [date_id = \"2/20/2023\", full_date = \"2023-02-20\", year = \"2023\", month = \"2\", day = \"20\"],",
-                "        [date_id = \"3/10/2023\", full_date = \"2023-03-10\", year = \"2023\", month = \"3\", day = \"10\"],",
-                "        [date_id = \"1/3/2023\", full_date = \"2023-01-03\", year = \"2023\", month = \"1\", day = \"3\"],",
-                "        [date_id = \"1/5/2023\", full_date = \"2023-01-05\", year = \"2023\", month = \"1\", day = \"5\"],",
-                "        [date_id = \"3/22/2023\", full_date = \"2023-03-22\", year = \"2023\", month = \"3\", day = \"22\"],",
-                "        [date_id = \"4/9/2023\", full_date = \"2023-04-09\", year = \"2023\", month = \"4\", day = \"9\"],",
-                "        [date_id = \"2/16/2023\", full_date = \"2023-02-16\", year = \"2023\", month = \"2\", day = \"16\"],",
-                "        [date_id = \"1/1/2023\", full_date = \"2023-01-01\", year = \"2023\", month = \"1\", day = \"1\"],",
-                "        [date_id = \"1/2/2023\", full_date = \"2023-01-02\", year = \"2023\", month = \"1\", day = \"2\"],",
-                "        [date_id = \"1/6/2023\", full_date = \"2023-01-06\", year = \"2023\", month = \"1\", day = \"6\"],",
-                "        [date_id = \"1/8/2023\", full_date = \"2023-01-08\", year = \"2023\", month = \"1\", day = \"8\"],",
-                "        [date_id = \"1/10/2023\", full_date = \"2023-01-10\", year = \"2023\", month = \"1\", day = \"10\"],",
-                "        [date_id = \"1/16/2023\", full_date = \"2023-01-16\", year = \"2023\", month = \"1\", day = \"16\"],",
-                "        [date_id = \"1/19/2023\", full_date = \"2023-01-19\", year = \"2023\", month = \"1\", day = \"19\"],",
-                "        [date_id = \"1/20/2023\", full_date = \"2023-01-20\", year = \"2023\", month = \"1\", day = \"20\"],",
-                "        [date_id = \"1/22/2023\", full_date = \"2023-01-22\", year = \"2023\", month = \"1\", day = \"22\"],",
-                "        [date_id = \"1/24/2023\", full_date = \"2023-01-24\", year = \"2023\", month = \"1\", day = \"24\"],",
-                "        [date_id = \"1/25/2023\", full_date = \"2023-01-25\", year = \"2023\", month = \"1\", day = \"25\"],",
-                "        [date_id = \"1/26/2023\", full_date = \"2023-01-26\", year = \"2023\", month = \"1\", day = \"26\"],",
-                "        [date_id = \"1/30/2023\", full_date = \"2023-01-30\", year = \"2023\", month = \"1\", day = \"30\"],",
-                "        [date_id = \"2/1/2023\", full_date = \"2023-02-01\", year = \"2023\", month = \"2\", day = \"1\"],",
-                "        [date_id = \"2/2/2023\", full_date = \"2023-02-02\", year = \"2023\", month = \"2\", day = \"2\"],",
-                "        [date_id = \"2/6/2023\", full_date = \"2023-02-06\", year = \"2023\", month = \"2\", day = \"6\"],",
-                "        [date_id = \"2/7/2023\", full_date = \"2023-02-07\", year = \"2023\", month = \"2\", day = \"7\"],",
-                "        [date_id = \"2/8/2023\", full_date = \"2023-02-08\", year = \"2023\", month = \"2\", day = \"8\"],",
-                "        [date_id = \"2/11/2023\", full_date = \"2023-02-11\", year = \"2023\", month = \"2\", day = \"11\"],",
-                "        [date_id = \"2/14/2023\", full_date = \"2023-02-14\", year = \"2023\", month = \"2\", day = \"14\"],",
-                "        [date_id = \"2/15/2023\", full_date = \"2023-02-15\", year = \"2023\", month = \"2\", day = \"15\"],",
-                "        [date_id = \"2/17/2023\", full_date = \"2023-02-17\", year = \"2023\", month = \"2\", day = \"17\"],",
-                "        [date_id = \"2/24/2023\", full_date = \"2023-02-24\", year = \"2023\", month = \"2\", day = \"24\"],",
-                "        [date_id = \"2/26/2023\", full_date = \"2023-02-26\", year = \"2023\", month = \"2\", day = \"26\"],",
-                "        [date_id = \"2/28/2023\", full_date = \"2023-02-28\", year = \"2023\", month = \"2\", day = \"28\"],",
-                "        [date_id = \"3/1/2023\", full_date = \"2023-03-01\", year = \"2023\", month = \"3\", day = \"1\"],",
-                "        [date_id = \"3/2/2023\", full_date = \"2023-03-02\", year = \"2023\", month = \"3\", day = \"2\"],",
-                "        [date_id = \"3/5/2023\", full_date = \"2023-03-05\", year = \"2023\", month = \"3\", day = \"5\"],",
-                "        [date_id = \"3/8/2023\", full_date = \"2023-03-08\", year = \"2023\", month = \"3\", day = \"8\"],",
-                "        [date_id = \"3/12/2023\", full_date = \"2023-03-12\", year = \"2023\", month = \"3\", day = \"12\"],",
-                "        [date_id = \"3/13/2023\", full_date = \"2023-03-13\", year = \"2023\", month = \"3\", day = \"13\"],",
-                "        [date_id = \"3/15/2023\", full_date = \"2023-03-15\", year = \"2023\", month = \"3\", day = \"15\"],",
-                "        [date_id = \"3/18/2023\", full_date = \"2023-03-18\", year = \"2023\", month = \"3\", day = \"18\"],",
-                "        [date_id = \"3/19/2023\", full_date = \"2023-03-19\", year = \"2023\", month = \"3\", day = \"19\"],",
-                "        [date_id = \"3/20/2023\", full_date = \"2023-03-20\", year = \"2023\", month = \"3\", day = \"20\"],",
-                "        [date_id = \"3/26/2023\", full_date = \"2023-03-26\", year = \"2023\", month = \"3\", day = \"26\"],",
-                "        [date_id = \"3/27/2023\", full_date = \"2023-03-27\", year = \"2023\", month = \"3\", day = \"27\"],",
-                "        [date_id = \"3/29/2023\", full_date = \"2023-03-29\", year = \"2023\", month = \"3\", day = \"29\"],",
-                "        [date_id = \"4/1/2023\", full_date = \"2023-04-01\", year = \"2023\", month = \"4\", day = \"1\"],",
-                "        [date_id = \"4/5/2023\", full_date = \"2023-04-05\", year = \"2023\", month = \"4\", day = \"5\"],",
-                "        [date_id = \"4/14/2023\", full_date = \"2023-04-14\", year = \"2023\", month = \"4\", day = \"14\"],",
-                "        [date_id = \"4/19/2023\", full_date = \"2023-04-19\", year = \"2023\", month = \"4\", day = \"19\"],",
-                "        [date_id = \"4/21/2023\", full_date = \"2023-04-21\", year = \"2023\", month = \"4\", day = \"21\"],",
-                "        [date_id = \"4/23/2023\", full_date = \"2023-04-23\", year = \"2023\", month = \"4\", day = \"23\"],",
-                "        [date_id = \"4/25/2023\", full_date = \"2023-04-25\", year = \"2023\", month = \"4\", day = \"25\"],",
-                "        [date_id = \"4/28/2023\", full_date = \"2023-04-28\", year = \"2023\", month = \"4\", day = \"28\"],",
-                "        [date_id = \"4/30/2023\", full_date = \"2023-04-30\", year = \"2023\", month = \"4\", day = \"30\"]",
-                "    })",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"Dealer_Master.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"DealerID\", type text},",
+                "        {\"DealerName\", type text},",
+                "        {\"City\", type text},",
+                "        {\"Phone\", type text},",
+                "        {\"Email\", type text}",
+                "        }",
+                "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       },
       {
-        "name": "diseases",
+        "name": "Model_Master",
         "columns": [
           {
-            "name": "disease_id",
+            "name": "ModelID",
             "dataType": "string",
-            "sourceColumn": "disease_id",
+            "sourceColumn": "ModelID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -354,21 +307,9 @@
             ]
           },
           {
-            "name": "disease_name",
+            "name": "ModelName",
             "dataType": "string",
-            "sourceColumn": "disease_name",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "category",
-            "dataType": "string",
-            "sourceColumn": "category",
+            "sourceColumn": "ModelName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -380,40 +321,52 @@
         ],
         "partitions": [
           {
-            "name": "diseases-Partition",
+            "name": "Model_Master-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = Table.FromRecords({",
-                "        [disease_id = \"DS005\", disease_name = \"Hypertension\", category = \"Acute\"],",
-                "        [disease_id = \"DS004\", disease_name = \"Hypertension\", category = \"Chronic\"],",
-                "        [disease_id = \"DS007\", disease_name = \"Diabetes\", category = \"Chronic\"],",
-                "        [disease_id = \"DS010\", disease_name = \"Fracture\", category = \"Acute\"],",
-                "        [disease_id = \"DS001\", disease_name = \"Fracture\", category = \"Acute\"],",
-                "        [disease_id = \"DS011\", disease_name = \"Diabetes\", category = \"Acute\"],",
-                "        [disease_id = \"DS008\", disease_name = \"Fracture\", category = \"Acute\"],",
-                "        [disease_id = \"DS003\", disease_name = \"Fracture\", category = \"Acute\"],",
-                "        [disease_id = \"DS006\", disease_name = \"Fracture\", category = \"Acute\"],",
-                "        [disease_id = \"DS002\", disease_name = \"Flu\", category = \"Acute\"],",
-                "        [disease_id = \"DS009\", disease_name = \"Fracture\", category = \"Acute\"],",
-                "        [disease_id = \"DS012\", disease_name = \"Flu\", category = \"Chronic\"]",
-                "    })",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"Model_Master.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"ModelID\", type text},",
+                "        {\"ModelName\", type text}",
+                "        }",
+                "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       },
       {
-        "name": "doctors",
+        "name": "Service_History",
         "columns": [
           {
-            "name": "doctor_id",
+            "name": "ServiceID",
             "dataType": "string",
-            "sourceColumn": "doctor_id",
+            "sourceColumn": "ServiceID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -423,9 +376,9 @@
             ]
           },
           {
-            "name": "doctor_name",
+            "name": "VehicleID",
             "dataType": "string",
-            "sourceColumn": "doctor_name",
+            "sourceColumn": "VehicleID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -435,9 +388,9 @@
             ]
           },
           {
-            "name": "specialization",
+            "name": "ServiceDate",
             "dataType": "string",
-            "sourceColumn": "specialization",
+            "sourceColumn": "ServiceDate",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -447,9 +400,21 @@
             ]
           },
           {
-            "name": "experience_years",
+            "name": "ServiceType",
             "dataType": "string",
-            "sourceColumn": "experience_years",
+            "sourceColumn": "ServiceType",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "ServiceCost",
+            "dataType": "string",
+            "sourceColumn": "ServiceCost",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -461,43 +426,55 @@
         ],
         "partitions": [
           {
-            "name": "doctors-Partition",
+            "name": "Service_History-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = Table.FromRecords({",
-                "        [doctor_id = \"D002\", doctor_name = \"Doctor_2\", specialization = \"Cardiology\", experience_years = \"30\"],",
-                "        [doctor_id = \"D010\", doctor_name = \"Doctor_10\", specialization = \"Cardiology\", experience_years = \"30\"],",
-                "        [doctor_id = \"D012\", doctor_name = \"Doctor_12\", specialization = \"General\", experience_years = \"6\"],",
-                "        [doctor_id = \"D006\", doctor_name = \"Doctor_6\", specialization = \"Orthopedics\", experience_years = \"26\"],",
-                "        [doctor_id = \"D009\", doctor_name = \"Doctor_9\", specialization = \"General\", experience_years = \"4\"],",
-                "        [doctor_id = \"D015\", doctor_name = \"Doctor_15\", specialization = \"Orthopedics\", experience_years = \"29\"],",
-                "        [doctor_id = \"D007\", doctor_name = \"Doctor_7\", specialization = \"Pediatrics\", experience_years = \"9\"],",
-                "        [doctor_id = \"D003\", doctor_name = \"Doctor_3\", specialization = \"Orthopedics\", experience_years = \"11\"],",
-                "        [doctor_id = \"D005\", doctor_name = \"Doctor_5\", specialization = \"Orthopedics\", experience_years = \"10\"],",
-                "        [doctor_id = \"D013\", doctor_name = \"Doctor_13\", specialization = \"General\", experience_years = \"27\"],",
-                "        [doctor_id = \"D004\", doctor_name = \"Doctor_4\", specialization = \"Cardiology\", experience_years = \"14\"],",
-                "        [doctor_id = \"D011\", doctor_name = \"Doctor_11\", specialization = \"Neurology\", experience_years = \"14\"],",
-                "        [doctor_id = \"D014\", doctor_name = \"Doctor_14\", specialization = \"Orthopedics\", experience_years = \"19\"],",
-                "        [doctor_id = \"D008\", doctor_name = \"Doctor_8\", specialization = \"General\", experience_years = \"18\"],",
-                "        [doctor_id = \"D001\", doctor_name = \"Doctor_1\", specialization = \"Pediatrics\", experience_years = \"6\"]",
-                "    })",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"Service_History.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"ServiceID\", type text},",
+                "        {\"VehicleID\", type text},",
+                "        {\"ServiceDate\", type date},",
+                "        {\"ServiceType\", type text},",
+                "        {\"ServiceCost\", type number}",
+                "        }",
+                "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       },
       {
-        "name": "hospitals",
+        "name": "Variant_Master",
         "columns": [
           {
-            "name": "hospital_id",
+            "name": "VariantID",
             "dataType": "string",
-            "sourceColumn": "hospital_id",
+            "sourceColumn": "VariantID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -507,9 +484,9 @@
             ]
           },
           {
-            "name": "hospital_name",
+            "name": "ModelID",
             "dataType": "string",
-            "sourceColumn": "hospital_name",
+            "sourceColumn": "ModelID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -519,21 +496,9 @@
             ]
           },
           {
-            "name": "city",
+            "name": "VariantName",
             "dataType": "string",
-            "sourceColumn": "city",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "hospital_type",
-            "dataType": "string",
-            "sourceColumn": "hospital_type",
+            "sourceColumn": "VariantName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -545,33 +510,53 @@
         ],
         "partitions": [
           {
-            "name": "hospitals-Partition",
+            "name": "Variant_Master-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = Table.FromRecords({",
-                "        [hospital_id = \"H02\", hospital_name = \"Hospital_2\", city = \"Mumbai\", hospital_type = \"Government\"],",
-                "        [hospital_id = \"H04\", hospital_name = \"Hospital_4\", city = \"Mumbai\", hospital_type = \"Private\"],",
-                "        [hospital_id = \"H01\", hospital_name = \"Hospital_1\", city = \"Mumbai\", hospital_type = \"Private\"],",
-                "        [hospital_id = \"H03\", hospital_name = \"Hospital_3\", city = \"Chennai\", hospital_type = \"Private\"],",
-                "        [hospital_id = \"H05\", hospital_name = \"Hospital_5\", city = \"Hyderabad\", hospital_type = \"Private\"]",
-                "    })",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"Variant_Master.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"VariantID\", type text},",
+                "        {\"ModelID\", type text},",
+                "        {\"VariantName\", type text}",
+                "        }",
+                "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
         ]
       },
       {
-        "name": "patients",
+        "name": "VIN_Details",
         "columns": [
           {
-            "name": "patient_id",
+            "name": "VIN",
             "dataType": "string",
-            "sourceColumn": "patient_id",
+            "sourceColumn": "VIN",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -581,9 +566,9 @@
             ]
           },
           {
-            "name": "patient_name",
+            "name": "EngineNumber",
             "dataType": "string",
-            "sourceColumn": "patient_name",
+            "sourceColumn": "EngineNumber",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -593,9 +578,9 @@
             ]
           },
           {
-            "name": "age",
+            "name": "ChassisNumber",
             "dataType": "string",
-            "sourceColumn": "age",
+            "sourceColumn": "ChassisNumber",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -605,9 +590,9 @@
             ]
           },
           {
-            "name": "gender",
+            "name": "ProductionPlant",
             "dataType": "string",
-            "sourceColumn": "gender",
+            "sourceColumn": "ProductionPlant",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -617,9 +602,9 @@
             ]
           },
           {
-            "name": "patients_city",
+            "name": "ProductionDate",
             "dataType": "string",
-            "sourceColumn": "patients_city",
+            "sourceColumn": "ProductionDate",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -631,66 +616,43 @@
         ],
         "partitions": [
           {
-            "name": "patients-Partition",
+            "name": "VIN_Details-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
-                "    Source = Table.FromRecords({",
-                "        [patient_id = \"P019\", patient_name = \"Patient_19\", age = \"31\", gender = \"Female\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P023\", patient_name = \"Patient_23\", age = \"63\", gender = \"Female\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P018\", patient_name = \"Patient_18\", age = \"77\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P005\", patient_name = \"Patient_5\", age = \"46\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P038\", patient_name = \"Patient_38\", age = \"18\", gender = \"Female\", patients_city = \"Hyderabad\"],",
-                "        [patient_id = \"P010\", patient_name = \"Patient_10\", age = \"70\", gender = \"Female\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P006\", patient_name = \"Patient_6\", age = \"72\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P047\", patient_name = \"Patient_47\", age = \"49\", gender = \"Female\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P020\", patient_name = \"Patient_20\", age = \"54\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P008\", patient_name = \"Patient_8\", age = \"32\", gender = \"Female\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P001\", patient_name = \"Patient_1\", age = \"21\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P043\", patient_name = \"Patient_43\", age = \"73\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P039\", patient_name = \"Patient_39\", age = \"58\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P034\", patient_name = \"Patient_34\", age = \"32\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P014\", patient_name = \"Patient_14\", age = \"66\", gender = \"Female\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P049\", patient_name = \"Patient_49\", age = \"62\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P042\", patient_name = \"Patient_42\", age = \"46\", gender = \"Female\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P028\", patient_name = \"Patient_28\", age = \"49\", gender = \"Female\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P045\", patient_name = \"Patient_45\", age = \"77\", gender = \"Female\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P025\", patient_name = \"Patient_25\", age = \"69\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P050\", patient_name = \"Patient_50\", age = \"18\", gender = \"Male\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P040\", patient_name = \"Patient_40\", age = \"47\", gender = \"Female\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P030\", patient_name = \"Patient_30\", age = \"65\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P035\", patient_name = \"Patient_35\", age = \"75\", gender = \"Male\", patients_city = \"Hyderabad\"],",
-                "        [patient_id = \"P044\", patient_name = \"Patient_44\", age = \"28\", gender = \"Female\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P037\", patient_name = \"Patient_37\", age = \"33\", gender = \"Female\", patients_city = \"Hyderabad\"],",
-                "        [patient_id = \"P024\", patient_name = \"Patient_24\", age = \"19\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P048\", patient_name = \"Patient_48\", age = \"52\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P002\", patient_name = \"Patient_2\", age = \"30\", gender = \"Male\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P012\", patient_name = \"Patient_12\", age = \"18\", gender = \"Female\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P016\", patient_name = \"Patient_16\", age = \"18\", gender = \"Female\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P017\", patient_name = \"Patient_17\", age = \"48\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P004\", patient_name = \"Patient_4\", age = \"76\", gender = \"Male\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P041\", patient_name = \"Patient_41\", age = \"36\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P015\", patient_name = \"Patient_15\", age = \"27\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P033\", patient_name = \"Patient_33\", age = \"45\", gender = \"Female\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P031\", patient_name = \"Patient_31\", age = \"79\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P027\", patient_name = \"Patient_27\", age = \"80\", gender = \"Male\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P046\", patient_name = \"Patient_46\", age = \"24\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P021\", patient_name = \"Patient_21\", age = \"43\", gender = \"Female\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P011\", patient_name = \"Patient_11\", age = \"25\", gender = \"Female\", patients_city = \"Hyderabad\"],",
-                "        [patient_id = \"P013\", patient_name = \"Patient_13\", age = \"63\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P022\", patient_name = \"Patient_22\", age = \"27\", gender = \"Female\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P026\", patient_name = \"Patient_26\", age = \"62\", gender = \"Male\", patients_city = \"Bangalore\"],",
-                "        [patient_id = \"P009\", patient_name = \"Patient_9\", age = \"40\", gender = \"Male\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P036\", patient_name = \"Patient_36\", age = \"50\", gender = \"Female\", patients_city = \"Delhi\"],",
-                "        [patient_id = \"P003\", patient_name = \"Patient_3\", age = \"73\", gender = \"Female\", patients_city = \"Chennai\"],",
-                "        [patient_id = \"P007\", patient_name = \"Patient_7\", age = \"23\", gender = \"Female\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P029\", patient_name = \"Patient_29\", age = \"59\", gender = \"Male\", patients_city = \"Mumbai\"],",
-                "        [patient_id = \"P032\", patient_name = \"Patient_32\", age = \"46\", gender = \"Female\", patients_city = \"Delhi\"]",
-                "    })",
+                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
+                "    FileName = \"VIN_Details.csv\",",
+                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
+                "    FilteredByName = Table.SelectRows(",
+                "        Source,",
+                "        each Text.Lower([Name]) = Text.Lower(FileName)",
+                "    ),",
+                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
+                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
+                "        else FilteredByName,",
+                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
+                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
+                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
+                "        else FilteredByLib{0}[Content],",
+                "    CsvData = Csv.Document(",
+                "        FileBinary,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
+                "    TypedTable = Table.TransformColumnTypes(",
+                "        PromotedHeaders,",
+                "        {",
+                "        {\"VIN\", type text},",
+                "        {\"EngineNumber\", type text},",
+                "        {\"ChassisNumber\", type text},",
+                "        {\"ProductionPlant\", type text},",
+                "        {\"ProductionDate\", type date}",
+                "        }",
+                "    )",
                 "in",
-                "    Source"
+                "    TypedTable"
               ]
             }
           }
@@ -699,43 +661,19 @@
     ],
     "relationships": [
       {
-        "name": "admissions_fact_disease_id_diseases_disease_id",
-        "fromTable": "admissions_fact",
-        "fromColumn": "disease_id",
-        "toTable": "diseases",
-        "toColumn": "disease_id",
+        "name": "Variant_Master_ModelID_Model_Master_ModelID",
+        "fromTable": "Variant_Master",
+        "fromColumn": "ModelID",
+        "toTable": "Model_Master",
+        "toColumn": "ModelID",
         "crossFilteringBehavior": "oneDirection"
       },
       {
-        "name": "admissions_fact_doctor_id_doctors_doctor_id",
-        "fromTable": "admissions_fact",
-        "fromColumn": "doctor_id",
-        "toTable": "doctors",
-        "toColumn": "doctor_id",
-        "crossFilteringBehavior": "oneDirection"
-      },
-      {
-        "name": "admissions_fact_hospital_id_hospitals_hospital_id",
-        "fromTable": "admissions_fact",
-        "fromColumn": "hospital_id",
-        "toTable": "hospitals",
-        "toColumn": "hospital_id",
-        "crossFilteringBehavior": "oneDirection"
-      },
-      {
-        "name": "admissions_fact_patient_id_patients_patient_id",
-        "fromTable": "admissions_fact",
-        "fromColumn": "patient_id",
-        "toTable": "patients",
-        "toColumn": "patient_id",
-        "crossFilteringBehavior": "oneDirection"
-      },
-      {
-        "name": "admissions_fact_date_id_dates_date_id",
-        "fromTable": "admissions_fact",
-        "fromColumn": "date_id",
-        "toTable": "dates",
-        "toColumn": "date_id",
+        "name": "Vehicle_Fact_MASTER_VIN_VIN_Details_VIN",
+        "fromTable": "Vehicle_Fact_MASTER",
+        "fromColumn": "VIN",
+        "toTable": "VIN_Details",
+        "toColumn": "VIN",
         "crossFilteringBehavior": "oneDirection"
       }
     ],
@@ -744,7 +682,7 @@
         "name": "DataSourcePath",
         "kind": "m",
         "expression": [
-          "\"\""
+          "\"https://sorimtechnologies.sharepoint.com\""
         ],
         "annotations": [
           {

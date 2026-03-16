@@ -444,6 +444,9 @@ export default function MultiMigrationPage() {
     return daxLines.join("\n");
   };
 
+  // Prevent unused warning (may be used in future)
+  void generateDAXContent;
+
   // Helper: Migrate tables to Power BI
   const handleMigrate = async () => {
     if (selectedTables.length === 0) {
