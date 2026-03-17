@@ -1,5 +1,5 @@
 {
-  "name": "Tourism_Fact",
+  "name": "qlik_sales",
   "compatibilityLevel": 1550,
   "model": {
     "culture": "en-US",
@@ -11,12 +11,12 @@
     "sourceQueryCulture": "en-US",
     "tables": [
       {
-        "name": "Accommodation",
+        "name": "customers",
         "columns": [
           {
-            "name": "accommodation_id",
+            "name": "CustomerID",
             "dataType": "string",
-            "sourceColumn": "accommodation_id",
+            "sourceColumn": "CustomerID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -26,9 +26,9 @@
             ]
           },
           {
-            "name": "accommodation_name",
+            "name": "CustomerName",
             "dataType": "string",
-            "sourceColumn": "accommodation_name",
+            "sourceColumn": "CustomerName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -38,9 +38,9 @@
             ]
           },
           {
-            "name": "destination_id",
+            "name": "Region",
             "dataType": "string",
-            "sourceColumn": "destination_id",
+            "sourceColumn": "Region",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -50,237 +50,9 @@
             ]
           },
           {
-            "name": "accommodation_type",
+            "name": "SignupDate",
             "dataType": "string",
-            "sourceColumn": "accommodation_type",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "star_rating",
-            "dataType": "string",
-            "sourceColumn": "star_rating",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "price_per_night_inr",
-            "dataType": "string",
-            "sourceColumn": "price_per_night_inr",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "total_rooms",
-            "dataType": "string",
-            "sourceColumn": "total_rooms",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "amenities",
-            "dataType": "string",
-            "sourceColumn": "amenities",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "pool",
-            "dataType": "string",
-            "sourceColumn": "pool",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "spa",
-            "dataType": "string",
-            "sourceColumn": "spa",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "restaurant",
-            "dataType": "string",
-            "sourceColumn": "restaurant",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "wifi",
-            "dataType": "string",
-            "sourceColumn": "wifi",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "pet_friendly",
-            "dataType": "string",
-            "sourceColumn": "pet_friendly",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "couple_friendly",
-            "dataType": "string",
-            "sourceColumn": "couple_friendly",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "family_friendly",
-            "dataType": "string",
-            "sourceColumn": "family_friendly",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "check_in_time",
-            "dataType": "string",
-            "sourceColumn": "check_in_time",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "check_out_time",
-            "dataType": "string",
-            "sourceColumn": "check_out_time",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "cancellation_policy",
-            "dataType": "string",
-            "sourceColumn": "cancellation_policy",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "owner_name",
-            "dataType": "string",
-            "sourceColumn": "owner_name",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "contact_email",
-            "dataType": "string",
-            "sourceColumn": "contact_email",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "contact_phone",
-            "dataType": "string",
-            "sourceColumn": "contact_phone",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "established_year",
-            "dataType": "string",
-            "sourceColumn": "established_year",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "avg_guest_rating",
-            "dataType": "string",
-            "sourceColumn": "avg_guest_rating",
+            "sourceColumn": "SignupDate",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -292,14 +64,14 @@
         ],
         "partitions": [
           {
-            "name": "Accommodation-Partition",
+            "name": "customers-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
                 "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
-                "    FileName = \"Accommodation.csv\",",
+                "    FileName = \"customers.csv\",",
                 "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
                 "    FilteredByName = Table.SelectRows(",
                 "        Source,",
@@ -320,29 +92,10 @@
                 "    TypedTable = Table.TransformColumnTypes(",
                 "        PromotedHeaders,",
                 "        {",
-                "        {\"accommodation_id\", type text},",
-                "        {\"accommodation_name\", type text},",
-                "        {\"destination_id\", type text},",
-                "        {\"accommodation_type\", type text},",
-                "        {\"star_rating\", type text},",
-                "        {\"price_per_night_inr\", Int64.Type},",
-                "        {\"total_rooms\", type text},",
-                "        {\"amenities\", type text},",
-                "        {\"pool\", type text},",
-                "        {\"spa\", type text},",
-                "        {\"restaurant\", type text},",
-                "        {\"wifi\", type text},",
-                "        {\"pet_friendly\", type text},",
-                "        {\"couple_friendly\", type text},",
-                "        {\"family_friendly\", type text},",
-                "        {\"check_in_time\", type date},",
-                "        {\"check_out_time\", type date},",
-                "        {\"cancellation_policy\", type text},",
-                "        {\"owner_name\", type text},",
-                "        {\"contact_email\", type text},",
-                "        {\"contact_phone\", type text},",
-                "        {\"established_year\", Int64.Type},",
-                "        {\"avg_guest_rating\", type text}",
+                "        {\"CustomerID\", type text},",
+                "        {\"CustomerName\", type text},",
+                "        {\"Region\", type text},",
+                "        {\"SignupDate\", type date}",
                 "        }",
                 "    )",
                 "in",
@@ -353,12 +106,12 @@
         ]
       },
       {
-        "name": "Destinations",
+        "name": "products",
         "columns": [
           {
-            "name": "destination_id",
+            "name": "ProductID",
             "dataType": "string",
-            "sourceColumn": "destination_id",
+            "sourceColumn": "ProductID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -368,9 +121,9 @@
             ]
           },
           {
-            "name": "destination_name",
+            "name": "ProductName",
             "dataType": "string",
-            "sourceColumn": "destination_name",
+            "sourceColumn": "ProductName",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -380,9 +133,9 @@
             ]
           },
           {
-            "name": "state",
+            "name": "Category",
             "dataType": "string",
-            "sourceColumn": "state",
+            "sourceColumn": "Category",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -392,213 +145,9 @@
             ]
           },
           {
-            "name": "district",
+            "name": "BasePrice",
             "dataType": "string",
-            "sourceColumn": "district",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "destination_type",
-            "dataType": "string",
-            "sourceColumn": "destination_type",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "primary_attraction",
-            "dataType": "string",
-            "sourceColumn": "primary_attraction",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "best_season",
-            "dataType": "string",
-            "sourceColumn": "best_season",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "altitude_meters",
-            "dataType": "string",
-            "sourceColumn": "altitude_meters",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "area_sqkm",
-            "dataType": "string",
-            "sourceColumn": "area_sqkm",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "annual_visitors",
-            "dataType": "string",
-            "sourceColumn": "annual_visitors",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "entry_fee_inr",
-            "dataType": "string",
-            "sourceColumn": "entry_fee_inr",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "heritage_site",
-            "dataType": "string",
-            "sourceColumn": "heritage_site",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "wildlife_sanctuary",
-            "dataType": "string",
-            "sourceColumn": "wildlife_sanctuary",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "beach_destination",
-            "dataType": "string",
-            "sourceColumn": "beach_destination",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "hill_station",
-            "dataType": "string",
-            "sourceColumn": "hill_station",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "pilgrimage_site",
-            "dataType": "string",
-            "sourceColumn": "pilgrimage_site",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "nearby_airport",
-            "dataType": "string",
-            "sourceColumn": "nearby_airport",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "nearest_city",
-            "dataType": "string",
-            "sourceColumn": "nearest_city",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "distance_from_nearest_city_km",
-            "dataType": "string",
-            "sourceColumn": "distance_from_nearest_city_km",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "languages_spoken",
-            "dataType": "string",
-            "sourceColumn": "languages_spoken",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "cuisine_specialty",
-            "dataType": "string",
-            "sourceColumn": "cuisine_specialty",
+            "sourceColumn": "BasePrice",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -610,14 +159,14 @@
         ],
         "partitions": [
           {
-            "name": "Destinations-Partition",
+            "name": "products-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
                 "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
-                "    FileName = \"Destinations.csv\",",
+                "    FileName = \"products.csv\",",
                 "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
                 "    FilteredByName = Table.SelectRows(",
                 "        Source,",
@@ -638,27 +187,10 @@
                 "    TypedTable = Table.TransformColumnTypes(",
                 "        PromotedHeaders,",
                 "        {",
-                "        {\"destination_id\", type text},",
-                "        {\"destination_name\", type text},",
-                "        {\"state\", type text},",
-                "        {\"district\", type text},",
-                "        {\"destination_type\", type text},",
-                "        {\"primary_attraction\", type text},",
-                "        {\"best_season\", type text},",
-                "        {\"altitude_meters\", type text},",
-                "        {\"area_sqkm\", type text},",
-                "        {\"annual_visitors\", type text},",
-                "        {\"entry_fee_inr\", Int64.Type},",
-                "        {\"heritage_site\", type text},",
-                "        {\"wildlife_sanctuary\", type text},",
-                "        {\"beach_destination\", type text},",
-                "        {\"hill_station\", type text},",
-                "        {\"pilgrimage_site\", type text},",
-                "        {\"nearby_airport\", type text},",
-                "        {\"nearest_city\", type text},",
-                "        {\"distance_from_nearest_city_km\", type text},",
-                "        {\"languages_spoken\", type text},",
-                "        {\"cuisine_specialty\", type text}",
+                "        {\"ProductID\", type text},",
+                "        {\"ProductName\", type text},",
+                "        {\"Category\", type text},",
+                "        {\"BasePrice\", type number}",
                 "        }",
                 "    )",
                 "in",
@@ -669,12 +201,12 @@
         ]
       },
       {
-        "name": "Tourists",
+        "name": "region_mapping",
         "columns": [
           {
-            "name": "tourist_id",
+            "name": "Region",
             "dataType": "string",
-            "sourceColumn": "tourist_id",
+            "sourceColumn": "Region",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -684,177 +216,9 @@
             ]
           },
           {
-            "name": "tourist_name",
+            "name": "RegionManager",
             "dataType": "string",
-            "sourceColumn": "tourist_name",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "age",
-            "dataType": "string",
-            "sourceColumn": "age",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "gender",
-            "dataType": "string",
-            "sourceColumn": "gender",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "nationality",
-            "dataType": "string",
-            "sourceColumn": "nationality",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "state_of_origin",
-            "dataType": "string",
-            "sourceColumn": "state_of_origin",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "city_of_origin",
-            "dataType": "string",
-            "sourceColumn": "city_of_origin",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "email",
-            "dataType": "string",
-            "sourceColumn": "email",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "phone",
-            "dataType": "string",
-            "sourceColumn": "phone",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "occupation",
-            "dataType": "string",
-            "sourceColumn": "occupation",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "income_bracket",
-            "dataType": "string",
-            "sourceColumn": "income_bracket",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "first_visit_date",
-            "dataType": "string",
-            "sourceColumn": "first_visit_date",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "total_visits",
-            "dataType": "string",
-            "sourceColumn": "total_visits",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "preferred_accommodation",
-            "dataType": "string",
-            "sourceColumn": "preferred_accommodation",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "preferred_transport",
-            "dataType": "string",
-            "sourceColumn": "preferred_transport",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "loyalty_tier",
-            "dataType": "string",
-            "sourceColumn": "loyalty_tier",
+            "sourceColumn": "RegionManager",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -866,14 +230,14 @@
         ],
         "partitions": [
           {
-            "name": "Tourists-Partition",
+            "name": "region_mapping-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
                 "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
-                "    FileName = \"Tourists.csv\",",
+                "    FileName = \"region_mapping.csv\",",
                 "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
                 "    FilteredByName = Table.SelectRows(",
                 "        Source,",
@@ -894,22 +258,8 @@
                 "    TypedTable = Table.TransformColumnTypes(",
                 "        PromotedHeaders,",
                 "        {",
-                "        {\"tourist_id\", type text},",
-                "        {\"tourist_name\", type text},",
-                "        {\"age\", Int64.Type},",
-                "        {\"gender\", type text},",
-                "        {\"nationality\", type text},",
-                "        {\"state_of_origin\", type text},",
-                "        {\"city_of_origin\", type text},",
-                "        {\"email\", type text},",
-                "        {\"phone\", type text},",
-                "        {\"occupation\", type text},",
-                "        {\"income_bracket\", type text},",
-                "        {\"first_visit_date\", type date},",
-                "        {\"total_visits\", type text},",
-                "        {\"preferred_accommodation\", type text},",
-                "        {\"preferred_transport\", type text},",
-                "        {\"loyalty_tier\", type text}",
+                "        {\"Region\", type text},",
+                "        {\"RegionManager\", type text}",
                 "        }",
                 "    )",
                 "in",
@@ -920,12 +270,12 @@
         ]
       },
       {
-        "name": "Transport",
+        "name": "qlik_sales",
         "columns": [
           {
-            "name": "transport_id",
+            "name": "OrderID",
             "dataType": "string",
-            "sourceColumn": "transport_id",
+            "sourceColumn": "OrderID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -935,9 +285,9 @@
             ]
           },
           {
-            "name": "transport_mode",
+            "name": "CustomerID",
             "dataType": "string",
-            "sourceColumn": "transport_mode",
+            "sourceColumn": "CustomerID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -947,9 +297,9 @@
             ]
           },
           {
-            "name": "transport_company",
+            "name": "ProductID",
             "dataType": "string",
-            "sourceColumn": "transport_company",
+            "sourceColumn": "ProductID",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -959,9 +309,9 @@
             ]
           },
           {
-            "name": "transport_type",
+            "name": "Region",
             "dataType": "string",
-            "sourceColumn": "transport_type",
+            "sourceColumn": "Region",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -971,9 +321,9 @@
             ]
           },
           {
-            "name": "ticket_price_per_person_inr",
+            "name": "Channel",
             "dataType": "string",
-            "sourceColumn": "ticket_price_per_person_inr",
+            "sourceColumn": "Channel",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -983,9 +333,9 @@
             ]
           },
           {
-            "name": "travel_class",
+            "name": "Category",
             "dataType": "string",
-            "sourceColumn": "travel_class",
+            "sourceColumn": "Category",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -995,9 +345,9 @@
             ]
           },
           {
-            "name": "frequency",
+            "name": "Quantity",
             "dataType": "string",
-            "sourceColumn": "frequency",
+            "sourceColumn": "Quantity",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -1007,9 +357,9 @@
             ]
           },
           {
-            "name": "booking_platform",
+            "name": "UnitPrice",
             "dataType": "string",
-            "sourceColumn": "booking_platform",
+            "sourceColumn": "UnitPrice",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -1019,9 +369,9 @@
             ]
           },
           {
-            "name": "advance_booking_days",
+            "name": "Discount",
             "dataType": "string",
-            "sourceColumn": "advance_booking_days",
+            "sourceColumn": "Discount",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -1031,9 +381,9 @@
             ]
           },
           {
-            "name": "cancellation_charges_pct",
+            "name": "OrderDate",
             "dataType": "string",
-            "sourceColumn": "cancellation_charges_pct",
+            "sourceColumn": "OrderDate",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -1043,69 +393,9 @@
             ]
           },
           {
-            "name": "luggage_allowance_kg",
+            "name": "SalesAmount",
             "dataType": "string",
-            "sourceColumn": "luggage_allowance_kg",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "meal_included",
-            "dataType": "string",
-            "sourceColumn": "meal_included",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "ac_available",
-            "dataType": "string",
-            "sourceColumn": "ac_available",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "duration_hrs_to_destination",
-            "dataType": "string",
-            "sourceColumn": "duration_hrs_to_destination",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "carbon_footprint_kg_co2",
-            "dataType": "string",
-            "sourceColumn": "carbon_footprint_kg_co2",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "tourist_friendly_rating",
-            "dataType": "string",
-            "sourceColumn": "tourist_friendly_rating",
+            "sourceColumn": "SalesAmount",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -1117,14 +407,14 @@
         ],
         "partitions": [
           {
-            "name": "Transport-Partition",
+            "name": "qlik_sales-Partition",
             "mode": "import",
             "source": {
               "type": "m",
               "expression": [
                 "let",
                 "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
-                "    FileName = \"Transport.csv\",",
+                "    FileName = \"qlik_sales.csv\",",
                 "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
                 "    FilteredByName = Table.SelectRows(",
                 "        Source,",
@@ -1145,299 +435,17 @@
                 "    TypedTable = Table.TransformColumnTypes(",
                 "        PromotedHeaders,",
                 "        {",
-                "        {\"transport_id\", type text},",
-                "        {\"transport_mode\", type text},",
-                "        {\"transport_company\", type text},",
-                "        {\"transport_type\", type text},",
-                "        {\"ticket_price_per_person_inr\", Int64.Type},",
-                "        {\"travel_class\", type text},",
-                "        {\"frequency\", type text},",
-                "        {\"booking_platform\", type text},",
-                "        {\"advance_booking_days\", Int64.Type},",
-                "        {\"cancellation_charges_pct\", type number},",
-                "        {\"luggage_allowance_kg\", type text},",
-                "        {\"meal_included\", type text},",
-                "        {\"ac_available\", type text},",
-                "        {\"duration_hrs_to_destination\", type text},",
-                "        {\"carbon_footprint_kg_co2\", type text},",
-                "        {\"tourist_friendly_rating\", type text}",
-                "        }",
-                "    )",
-                "in",
-                "    TypedTable"
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "name": "Tourism_Fact",
-        "columns": [
-          {
-            "name": "visit_id",
-            "dataType": "string",
-            "sourceColumn": "visit_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "tourist_id",
-            "dataType": "string",
-            "sourceColumn": "tourist_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "destination_id",
-            "dataType": "string",
-            "sourceColumn": "destination_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "accommodation_id",
-            "dataType": "string",
-            "sourceColumn": "accommodation_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "transport_id",
-            "dataType": "string",
-            "sourceColumn": "transport_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "visit_date",
-            "dataType": "string",
-            "sourceColumn": "visit_date",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "checkout_date",
-            "dataType": "string",
-            "sourceColumn": "checkout_date",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "duration_days",
-            "dataType": "string",
-            "sourceColumn": "duration_days",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "total_spend",
-            "dataType": "string",
-            "sourceColumn": "total_spend",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "activity_spend",
-            "dataType": "string",
-            "sourceColumn": "activity_spend",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "food_spend",
-            "dataType": "string",
-            "sourceColumn": "food_spend",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "shopping_spend",
-            "dataType": "string",
-            "sourceColumn": "shopping_spend",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "rating",
-            "dataType": "string",
-            "sourceColumn": "rating",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "group_size",
-            "dataType": "string",
-            "sourceColumn": "group_size",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "purpose_of_visit",
-            "dataType": "string",
-            "sourceColumn": "purpose_of_visit",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "visa_type",
-            "dataType": "string",
-            "sourceColumn": "visa_type",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "booking_source",
-            "dataType": "string",
-            "sourceColumn": "booking_source",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "season",
-            "dataType": "string",
-            "sourceColumn": "season",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          }
-        ],
-        "partitions": [
-          {
-            "name": "Tourism_Fact-Partition",
-            "mode": "import",
-            "source": {
-              "type": "m",
-              "expression": [
-                "let",
-                "    SiteUrl = \"https://sorimtechnologies.sharepoint.com\",",
-                "    FileName = \"Tourism_Fact.csv\",",
-                "    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),",
-                "    FilteredByName = Table.SelectRows(",
-                "        Source,",
-                "        each Text.Lower([Name]) = Text.Lower(FileName)",
-                "    ),",
-                "    FilteredByLib = if Table.RowCount(FilteredByName) > 1",
-                "        then Table.SelectRows(FilteredByName, each Text.Contains([Folder Path], \"Shared Documents\"))",
-                "        else FilteredByName,",
-                "    FileBinary = if Table.RowCount(FilteredByLib) = 0",
-                "        then error \"File \" & FileName & \" not found under \" & SiteUrl &",
-                "             \". Ensure the file exists in SharePoint and credentials are set.\"",
-                "        else FilteredByLib{0}[Content],",
-                "    CsvData = Csv.Document(",
-                "        FileBinary,",
-                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
-                "    ),",
-                "    PromotedHeaders = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        PromotedHeaders,",
-                "        {",
-                "        {\"visit_id\", type text},",
-                "        {\"tourist_id\", type text},",
-                "        {\"destination_id\", type text},",
-                "        {\"accommodation_id\", type text},",
-                "        {\"transport_id\", type text},",
-                "        {\"visit_date\", type date},",
-                "        {\"checkout_date\", type date},",
-                "        {\"duration_days\", Int64.Type},",
-                "        {\"total_spend\", type text},",
-                "        {\"activity_spend\", type text},",
-                "        {\"food_spend\", type text},",
-                "        {\"shopping_spend\", type text},",
-                "        {\"rating\", type text},",
-                "        {\"group_size\", type text},",
-                "        {\"purpose_of_visit\", type text},",
-                "        {\"visa_type\", type text},",
-                "        {\"booking_source\", type text},",
-                "        {\"season\", type text}",
+                "        {\"OrderID\", type text},",
+                "        {\"CustomerID\", type text},",
+                "        {\"ProductID\", type text},",
+                "        {\"Region\", type text},",
+                "        {\"Channel\", type text},",
+                "        {\"Category\", type text},",
+                "        {\"Quantity\", Int64.Type},",
+                "        {\"UnitPrice\", type number},",
+                "        {\"Discount\", Int64.Type},",
+                "        {\"OrderDate\", type date},",
+                "        {\"SalesAmount\", type number}",
                 "        }",
                 "    )",
                 "in",
@@ -1450,27 +458,19 @@
     ],
     "relationships": [
       {
-        "name": "Accommodation_destination_id_Destinations_destination_id",
-        "fromTable": "Accommodation",
-        "fromColumn": "destination_id",
-        "toTable": "Destinations",
-        "toColumn": "destination_id",
+        "name": "qlik_sales_CustomerID_customers_CustomerID",
+        "fromTable": "qlik_sales",
+        "fromColumn": "CustomerID",
+        "toTable": "customers",
+        "toColumn": "CustomerID",
         "crossFilteringBehavior": "oneDirection"
       },
       {
-        "name": "Tourism_Fact_tourist_id_Tourists_tourist_id",
-        "fromTable": "Tourism_Fact",
-        "fromColumn": "tourist_id",
-        "toTable": "Tourists",
-        "toColumn": "tourist_id",
-        "crossFilteringBehavior": "oneDirection"
-      },
-      {
-        "name": "Tourism_Fact_transport_id_Transport_transport_id",
-        "fromTable": "Tourism_Fact",
-        "fromColumn": "transport_id",
-        "toTable": "Transport",
-        "toColumn": "transport_id",
+        "name": "qlik_sales_ProductID_products_ProductID",
+        "fromTable": "qlik_sales",
+        "fromColumn": "ProductID",
+        "toTable": "products",
+        "toColumn": "ProductID",
         "crossFilteringBehavior": "oneDirection"
       }
     ],
