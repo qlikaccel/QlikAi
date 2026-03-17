@@ -45,7 +45,7 @@ export default function SummaryPage() {
   const [mainTable, setMainTable] = useState<string | null>(null); // detected hub table
   const [relations, setRelations] = useState<Record<string, string[]>>({}); // name -> related table names
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
-  const [isERModalOpen, setIsERModalOpen] = useState(false); // ER Diagram modal
+  const [] = useState(false); // ER Diagram modal
   const [activeTab, setActiveTab] = useState<"summary" | "mquery" | "er">("summary");
 
   // LoadScript and MQuery Display States
@@ -1359,7 +1359,7 @@ export default function SummaryPage() {
                                   type="text"
                                   // value={dataSourcePath}
                                   value="https://sorimtechnologies.sharepoint.com"
-                                  onChange={(e) => {
+                                  onChange={() => {
                                     const val = "https://sorimtechnologies.sharepoint.com";
                                     console.log("Data source path input changed:", val);
                                     setDataSourcePath(val);
@@ -1739,7 +1739,7 @@ function ERDiagramModal({ tables, relations, mainTable, onClose, isModal = true 
     if (!ref.current) return;
     ref.current.innerHTML = '<p style="color:#888;font-size:13px;padding:16px">Rendering diagram...</p>';
 
-    import("https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs").then(async (mod: any) => {
+    import("mermaid").then(async (mod: any) => {
       const mermaid = mod.default;
       mermaid.initialize({
         startOnLoad: false,
