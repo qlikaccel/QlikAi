@@ -44,7 +44,8 @@ export default function SummaryPage() {
   const [mainTable, setMainTable] = useState<string | null>(null); // detected hub table
   const [relations, setRelations] = useState<Record<string, string[]>>({}); // name -> related table names
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"summary" | "mquery">("summary");
+  const [activeTab, setActiveTab] = useState<"sourceTypes" | "summary" | "mquery">("sourceTypes");
+  const [sourceTypesTab, setSourceTypesTab] = useState<"database" | "scripts" | "csv" | null>(null);
 
   // LoadScript and MQuery Display States
   const [loadscript, setLoadscript] = useState<string>("");
@@ -58,6 +59,9 @@ export default function SummaryPage() {
   const [publishStatus, setPublishStatus] = useState<"idle" | "success" | "error">("idle");
   const [publishMessage, setPublishMessage] = useState<string>("");
   const [dataSourcePath, setDataSourcePath] = useState<string>("");
+
+  // Default SharePoint URL to pre-fill when viewing the Query (M Query) tab
+  const DEFAULT_SHAREPOINT_URL = "https://sorimtechnologies.sharepoint.com";
 
   // LoadScript type detection and URL validation
   const [isCsvLoadscript, setIsCsvLoadscript] = useState<boolean>(false);
@@ -255,6 +259,17 @@ export default function SummaryPage() {
   // Save activeTab to sessionStorage so Stepper can read it and hide Export step if needed
   useEffect(() => {
     sessionStorage.setItem("summaryActiveTab", activeTab);
+  }, [activeTab]);
+
+  // When user navigates to the M Query tab, pre-fill the SharePoint URL and validate it
+  useEffect(() => {
+    if (activeTab !== "mquery") return;
+
+    const defaultUrl = DEFAULT_SHAREPOINT_URL;
+    setDataSourcePath(defaultUrl);
+    const validation = validateSharePointUrl(defaultUrl);
+    setIsValidUrl(validation.isValid);
+    setUrlValidationError(validation.error || "");
   }, [activeTab]);
 
   // Load URL history from localStorage on component mount
@@ -617,7 +632,13 @@ export default function SummaryPage() {
           // Detect if CSV-based or inline loadscript
           const isCsv = detectCsvLoadscript(script);
           setIsCsvLoadscript(isCsv);
-          if (isCsv) setIsValidUrl(false); // Reset validation for new CSV script
+          if (isCsv) {
+            // Pre-fill & validate a known SharePoint URL so users can convert immediately
+            setDataSourcePath(DEFAULT_SHAREPOINT_URL);
+            const validation = validateSharePointUrl(DEFAULT_SHAREPOINT_URL);
+            setIsValidUrl(validation.isValid);
+            setUrlValidationError(validation.error || "");
+          }
           
           // Auto-parse the loadscript
           if (script) {
@@ -1311,6 +1332,36 @@ const downloadCSV = async () => {
                     padding: '4px',
                   }}>
                     <button
+                      onClick={() => setActiveTab("sourceTypes")}
+                      style={{
+                        padding: '8px 14px',
+                        fontSize: '13px',
+                        fontWeight: activeTab === "sourceTypes" ? 600 : 500,
+                        color: activeTab === "sourceTypes" ? '#fff' : '#6b7280',
+                        backgroundColor: activeTab === "sourceTypes" ? '#a855f7' : 'transparent',
+                        border: 'none',
+                        borderBottom: '3px solid #938d8d',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeTab !== "sourceTypes") {
+                          e.currentTarget.style.backgroundColor = 'rgba(168, 85, 247, 0.1)';
+                          e.currentTarget.style.color = '#7c3aed';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeTab !== "sourceTypes") {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.color = '#6b7280';
+                        }
+                      }}
+                    >
+                      🗂️ Source Types
+                    </button>
+
+                    <button
                       onClick={() => setActiveTab("summary")}
                       style={{
                         padding: '8px 14px',
@@ -1323,7 +1374,6 @@ const downloadCSV = async () => {
                         borderRadius: '4px',
                         cursor: 'pointer',
                         transition: 'all 0.3s ease',
-                        
                       }}
                       onMouseEnter={(e) => {
                         if (activeTab !== "summary") {
@@ -1339,36 +1389,6 @@ const downloadCSV = async () => {
                       }}
                     >
                       📊 Summary
-                    </button>
-
-                    <button
-                      onClick={() => setActiveTab("mquery")}
-                      style={{
-                        padding: '8px 14px',
-                        fontSize: '13px',
-                        fontWeight: activeTab === "mquery" ? 600 : 500,
-                        color: activeTab === "mquery" ? '#fff' : '#6b7280',
-                        backgroundColor: activeTab === "mquery" ? '#059669' : 'transparent',
-                        border: 'none',
-                        borderRadius: '4px',
-                        borderBottom: '3px solid #938d8d',
-                        cursor: 'pointer',
-                        transition: 'all 0.3s ease',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (activeTab !== "mquery") {
-                          e.currentTarget.style.backgroundColor = 'rgba(5, 150, 105, 0.1)';
-                          e.currentTarget.style.color = '#069669';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (activeTab !== "mquery") {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                          e.currentTarget.style.color = '#6b7280';
-                        }
-                      }}
-                    >
-                      📋 Query
                     </button>
 
                     <button
@@ -1408,6 +1428,249 @@ const downloadCSV = async () => {
 
             {/* ===== TAB CONTENT ===== */}
             <div className="tabs-content">
+              {/* SOURCE TYPES TAB */}
+              {activeTab === "sourceTypes" && (
+                <div className="tab-content source-types-tab">
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 16 }}>
+
+                    {/* Database card */}
+                    <div
+                      onClick={() => setSourceTypesTab('database')}
+                      style={{
+                        flex: '1 1 260px',
+                        minWidth: 260,
+                        border: sourceTypesTab === 'database' ? '2px solid #0ea5e9' : '1px solid #e5e7eb',
+                        borderRadius: 12,
+                        padding: 16,
+                        cursor: 'pointer',
+                        background: sourceTypesTab === 'database' ? 'rgba(14, 165, 233, 0.08)' : '#fff',
+                        boxShadow: sourceTypesTab === 'database' ? '0 8px 20px rgba(14,165,233,0.12)' : '0 4px 12px rgba(0,0,0,0.04)',
+                        transition: 'all 0.2s ease',
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            border: sourceTypesTab === 'database' ? '2px solid #0ea5e9' : '2px solid #cbd5e1',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: sourceTypesTab === 'database' ? '#0ea5e9' : 'transparent',
+                          }}>
+                            {sourceTypesTab === 'database' && (
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
+                            )}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: 10,
+                              background: '#e0f2fe',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 18,
+                            }}>🗄️</div>
+                            <div>
+                              <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937' }}>Database</div>
+                              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                                Direct ODBC/JDBC connection
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <p style={{ marginTop: 12, fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+                        Connect directly to the source database via ODBC/JDBC. Schema is inferred automatically. Best for live systems where data lives in SQL Server, Oracle, or Snowflake.
+                      </p>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#1f2937' }}>ODBC / JDBC</span>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#1f2937' }}>Live schema</span>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#1f2937' }}>SQL Server • Oracle</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }} />
+                    </div>
+
+                    {/* Scripts card */}
+                    <div
+                      onClick={() => setSourceTypesTab('scripts')}
+                      style={{
+                        flex: '1 1 260px',
+                        minWidth: 260,
+                        border: sourceTypesTab === 'scripts' ? '2px solid #14b8a6' : '1px solid #e5e7eb',
+                        borderRadius: 12,
+                        padding: 16,
+                        cursor: 'pointer',
+                        background: sourceTypesTab === 'scripts' ? 'rgba(20, 184, 166, 0.08)' : '#fff',
+                        boxShadow: sourceTypesTab === 'scripts' ? '0 8px 20px rgba(20,184,166,0.12)' : '0 4px 12px rgba(0,0,0,0.04)',
+                        transition: 'all 0.2s ease',
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            border: sourceTypesTab === 'scripts' ? '2px solid #14b8a6' : '2px solid #cbd5e1',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: sourceTypesTab === 'scripts' ? '#14b8a6' : 'transparent',
+                          }}>
+                            {sourceTypesTab === 'scripts' && (
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
+                            )}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: 10,
+                              background: '#dcfce7',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 18,
+                            }}>📜</div>
+                            <div>
+                              <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937' }}>Scripts</div>
+                              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                                Qlik Load Script → M-Query
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        {/* <div>
+                          <span style={{ background: '#f59e0b', color: '#fff', fontSize: 10, fontWeight: 700, padding: '4px 8px', borderRadius: 999 }}>RECOMMENDED</span>
+                        </div> */}
+                      </div>
+
+                      <p style={{ marginTop: 12, fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+                        Parse the Qlik Load Script from your application. Transforms APPLYMAP, INLINE, and RESIDENT tables into Power Query M-code. Full schema and relationship preservation.
+                      </p>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#fde68a', fontSize: 11, fontWeight: 600, color: '#92400e' }}>M-QUERY</span>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#fde68a', fontSize: 11, fontWeight: 600, color: '#92400e' }}>XMLA</span>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#fde68a', fontSize: 11, fontWeight: 600, color: '#92400e' }}>RELATIONSHIPS</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+                        <button
+                          className="continue-export-btn"
+                          onClick={() => {
+                            setActiveTab('mquery');
+                            setSourceTypesTab('scripts');
+                          }}
+                        >
+                          Go to Scripts
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* CSV card */}
+                    <div
+                      onClick={() => setSourceTypesTab('csv')}
+                      style={{
+                        flex: '1 1 260px',
+                        minWidth: 260,
+                        border: sourceTypesTab === 'csv' ? '2px solid #f97316' : '1px solid #e5e7eb',
+                        borderRadius: 12,
+                        padding: 16,
+                        cursor: 'pointer',
+                        background: sourceTypesTab === 'csv' ? 'rgba(251, 146, 60, 0.08)' : '#fff',
+                        boxShadow: sourceTypesTab === 'csv' ? '0 8px 20px rgba(249,115,22,0.12)' : '0 4px 12px rgba(0,0,0,0.04)',
+                        transition: 'all 0.2s ease',
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            border: sourceTypesTab === 'csv' ? '2px solid #f97316' : '2px solid #cbd5e1',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: sourceTypesTab === 'csv' ? '#f97316' : 'transparent',
+                          }}>
+                            {sourceTypesTab === 'csv' && (
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
+                            )}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: 10,
+                              background: '#ffedd5',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 18,
+                            }}>📦</div>
+                            <div>
+                              <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937' }}>Export CSV</div>
+                              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                                Data export via REST API
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <p style={{ marginTop: 12, fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+                        Export all table data as CSV and push to Power BI as a push dataset via REST API. Works on any Power BI license. Ideal for flat tables without complex transformations.
+                      </p>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#dbeafe', fontSize: 11, fontWeight: 600, color: '#1e40af' }}>ANY LICENSE</span>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#dbeafe', fontSize: 11, fontWeight: 600, color: '#1e40af' }}>REST API</span>
+                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#dbeafe', fontSize: 11, fontWeight: 600, color: '#1e40af' }}>FAST DEPLOY</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+                        <button
+                          className="continue-export-btn"
+                          disabled={!isExportAllowed || tableLoading}
+                          onClick={() => prepareAndNavigateToExport()}
+                          style={{ padding: '10px 14px', fontWeight: 600 }}
+                        >
+                          Export as CSV
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {!sourceTypesTab && (
+                    <div style={{ padding: 14, borderRadius: 10, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569', marginTop: 8 }}>
+                      Select a source type above to continue.
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* SUMMARY TAB */}
               {activeTab === "summary" && (
                 <div className="tab-content summary-tab">

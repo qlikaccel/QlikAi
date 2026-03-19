@@ -747,7 +747,8 @@ PAGE WRAP
 
 /* CONTINUE TO EXPORT BUTTON */
 .continue-export-btn {
-  padding: 10px 24px;
+  padding: 10px 16px;
+  margin-left:148px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
