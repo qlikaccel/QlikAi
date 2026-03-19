@@ -1776,6 +1776,11 @@ async def convert_to_mquery_endpoint(
         parse_result.get("details", {}).get("tables", [])
         or parse_result.get("tables", [])
     )
+    # Full unfiltered table list for RESIDENT chain resolution in converter
+    all_tables_unfiltered: List[Dict[str, Any]] = (
+        parse_result.get("details", {}).get("all_tables_unfiltered", [])
+        or tables
+    )
     raw_script: str = parse_result.get("raw_script", "")
 
     if not tables and not raw_script:
@@ -1871,6 +1876,7 @@ async def convert_to_mquery_endpoint(
                 user_tables,
                 base_path=_base_path,
                 connection_string=_connection_str or None,
+                all_tables=all_tables_unfiltered,  # full registry for RESIDENT chain resolution
             )
 
             # Build a combined M script: each table as a named section
