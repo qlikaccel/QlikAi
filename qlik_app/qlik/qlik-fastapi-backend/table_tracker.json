@@ -328,5 +328,120 @@
       "added_at": "2026-03-13T20:31:37.979775",
       "added_timestamp": 1773433897.979775
     }
-  }
+  },
+  "1958638f-6d27-4f35-be33-477ed71c3c49": {
+    "City": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Date": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Department": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Doctor": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Fact_Hospital": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Hospital": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Insurance": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Patient": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Treatment": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    },
+    "Payment": {
+      "added_at": "2026-03-19T09:51:25.458729",
+      "added_timestamp": 1773913885.45873
+    }
+  },
+  "4a8b8f6f-8539-4dba-819c-3cd7219f4fab": {
+    "City": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Date": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Department": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Doctor": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Fact_Hospital": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Hospital": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Insurance": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Patient": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Payment": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    },
+    "Treatment": {
+      "added_at": "2026-03-19T09:51:28.170211",
+      "added_timestamp": 1773913888.1702113
+    }
+  },
+  "8edfb917-e821-4849-a926-c0ce00afc8bb": {
+    "FactTransactions": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    },
+    "DimProduct": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    },
+    "DimCustomer": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    },
+    "DimSalesRep": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    },
+    "MonthlyRepSummary": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    },
+    "QuotaAttainment": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    },
+    "RegionalRollup": {
+      "added_at": "2026-03-19T09:51:29.725374",
+      "added_timestamp": 1773913889.7253742
+    }
+  },
+  "f4613b28-ee47-4ccf-ad18-fc20f5f536b8": {}
 }
