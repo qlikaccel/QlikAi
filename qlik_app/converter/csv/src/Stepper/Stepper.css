@@ -1,0 +1,138 @@
+
+
+ 
+/* ===== Container ===== */
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 32px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}
+ 
+/* ===== Each step ===== */
+.step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 180px;
+}
+ 
+/* ===== Icon circle ===== */
+.circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+ 
+/* icon size */
+.circle img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+ 
+/* ===== Active step ===== */
+.circle.active {
+  background: #ffffff;
+  border: 2px solid #3b82f6;
+  box-shadow: 0 6px 14px rgba(59, 130, 246, 0.25);
+}
+ 
+.circle.active img {
+  filter: none;
+  border-radius: 5px;
+}
+ 
+/* ===== Text block ===== */
+.step-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+ 
+.step-text .title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+ 
+.step-text .sub {
+  font-size: 12.5px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+ 
+/* ===== Disabled state ===== */
+/* .step.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+} */
+ 
+ 
+.step:not(.disabled):hover .title {
+  color: #2563eb;
+}
+ 
+/* ===== Active step styling ===== */
+.step.active-step {
+  background: rgba(59, 130, 246, 0.12);
+  border-radius: 14px;
+  padding: 16px 14px;
+  border-bottom: 3px solid rgba(59, 130, 246, 0.35);
+}
+
+.step.active-step .title {
+  color: #1d4ed8;
+}
+
+/* ===== Publish Step (6th step - Same styling as other steps) ===== */
+.step:nth-child(6) .circle.active {
+  background: #ffffff;
+  border: 2px solid #3b82f6;
+  box-shadow: 0 6px 14px rgba(59, 130, 246, 0.25);
+}
+
+.step:nth-child(6) .circle.active img {
+  border-radius: 5px;
+}
+
+.step:nth-child(6).active-step {
+  background: rgba(59, 130, 246, 0.12);
+  border-radius: 14px;
+  border-bottom: 3px solid rgba(59, 130, 246, 0.35);
+  padding: 10px 10px 8px;
+}
+
+.step:nth-child(6):not(.disabled):hover .title {
+  color: #1d4ed8;
+}
+
+.step:nth-child(6):not(.disabled):hover .circle {
+  background: #f0f9fa;
+  transform: scale(1.05);
+  transition: all 0.3s ease;
+}
+
+.step:nth-child(6) {
+  opacity: 1;
+  cursor: pointer;
+}
+ 
+/* ===== Responsive (optional safety) ===== */
+@media (max-width: 1200px) {
+  .stepper {
+    overflow-x: auto;
+    gap: 24px;
+  }
+ 
+  .step {
+    min-width: 160px;
+  }
+}
