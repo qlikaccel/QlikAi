@@ -55,7 +55,7 @@ import io
 #from fastapi import HTTPException
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=False)
 #app = FastAPI()
 
 # Visualisation / numeric
