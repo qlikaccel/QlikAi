@@ -45,7 +45,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body
+from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, PlainTextResponse, StreamingResponse
 from typing import List, Dict, Any, Optional
@@ -132,15 +132,17 @@ app.include_router(migration_router)
 
 qlik_client_instance = None  # FIX 3: lazy singleton
 
-def get_qlik_client():
-    """Get or initialize QlikClient on first use (lazy singleton)."""
-    global qlik_client_instance
-    if qlik_client_instance is None:
-        try:
-            qlik_client_instance = QlikClient()
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    return qlik_client_instance
+def get_qlik_client(
+    x_api_key: Optional[str] = Header(None),
+    x_tenant_url: Optional[str] = Header(None)
+):
+    try:
+        return QlikClient(
+            api_key=x_api_key or os.getenv("QLIK_API_KEY"),
+            tenant_url=x_tenant_url or os.getenv("QLIK_TENANT_URL")
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def get_qlik_websocket_client():
     """Dependency to provide QlikWebSocketClient for endpoints."""
@@ -817,12 +819,9 @@ async def validate_tenant(payload: dict = Body(...)):
     if not tenant_url or not tenant_url.endswith("qlikcloud.com"):
         raise HTTPException(status_code=400, detail="Enter correct tenant URL")
 
-    # Runtime override (testing purpose)
-    os.environ["QLIK_TENANT_URL"] = tenant_url
-    os.environ["QLIK_API_BASE_URL"] = f"{tenant_url}/api/v1"
-
     try:
-        client = QlikClient()
+        api_key = payload.get("api_key") or os.getenv("QLIK_API_KEY")
+        client = QlikClient(api_key=api_key, tenant_url=tenant_url)
         result = client.test_connection()
 
         if result.get("status") != "success":
@@ -893,12 +892,15 @@ async def list_spaces(
 
 @app.get("/applications", response_model=List[Dict[str, Any]])
 async def list_applications(
-    tenant_url: Optional[str] = Query(None, description="Qlik Cloud tenant URL")
+    tenant_url: Optional[str] = Query(None, description="Qlik Cloud tenant URL"),
+    x_api_key: Optional[str] = Header(None),
+    x_tenant_url: Optional[str] = Header(None)
 ):
-    """List all available applications"""
     try:
-        # Use the provided tenant_url or fall back to environment
-        client = QlikClient(tenant_url=tenant_url)
+        client = QlikClient(
+            api_key=x_api_key or os.getenv("QLIK_API_KEY"),
+            tenant_url=tenant_url or x_tenant_url or os.getenv("QLIK_TENANT_URL")
+        )
         logger.info(f"📋 Fetching applications from tenant: {tenant_url or 'default'}")
         apps = client.get_applications()
         logger.info(f"✅ Found {len(apps)} application(s)")

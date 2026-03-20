@@ -12,10 +12,10 @@ class QlikClient:
         # ONLY use API Key authentication - NO OAuth fallback
         self.api_key = (api_key or os.getenv("QLIK_API_KEY") or "").strip()
         self.tenant_url = (tenant_url or os.getenv("QLIK_TENANT_URL") or "").strip().rstrip("/")
-        self.api_base_url = (os.getenv("QLIK_API_BASE_URL") or "").strip().rstrip("/")
-
-        if not self.api_base_url and self.tenant_url:
+        if self.tenant_url:
             self.api_base_url = f"{self.tenant_url}/api/v1"
+        else:
+            self.api_base_url = (os.getenv("QLIK_API_BASE_URL") or "").strip().rstrip("/")
 
         if not self.api_base_url:
             raise ValueError("QLIK_API_BASE_URL or QLIK_TENANT_URL is not set in environment variables")

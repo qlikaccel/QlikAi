@@ -1023,7 +1023,7 @@ export default function SummaryPage() {
                           onClick={() => prepareAndNavigateToExport()}
                           style={{ padding: '10px 14px', fontWeight: 600 }}
                         >
-                          Export as CSV
+                          Go to Export
                         </button>
                       </div>
                     </div>
