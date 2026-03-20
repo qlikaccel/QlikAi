@@ -754,7 +754,7 @@ const downloadCSV = async () => {
       // for SharePoint URLs) rather than the generic File.Contents() pattern.
       const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
         ? 'http://127.0.0.1:8000'
-        : 'https://qliksense-stuv.onrender.com';
+        : 'https://qlikai-new-web.onrender.com';
       const convertResponse = await fetch(`${apiBase}/api/migration/convert-to-mquery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -799,7 +799,7 @@ const downloadCSV = async () => {
     try {
       const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
         ? 'http://127.0.0.1:8000'
-        : 'https://qliksense-stuv.onrender.com';
+        : 'https://qlikai-new-web.onrender.com';
       const res = await fetch(`${apiBase}/chat/summary-hf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
