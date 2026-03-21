@@ -1259,18 +1259,7 @@ export default function SummaryPage() {
                     </div>
                   )}
 
-                  {activeTab === "summary" && (
-                    <div className="bottom-actions">
-                      <button
-                        className="continue-export-btn"
-                        disabled={!isExportAllowed || tableLoading}
-                        onClick={() => prepareAndNavigateToExport()}
-                        title={!selectedTable ? "Select a table first" : isRelatedTable(selectedTable) ? "Select master table or standalone table to export" : "Proceed to Export page"}
-                      >
-                        Continue to Export
-                      </button>
-                    </div>
-                  )}
+                  {/* "Continue to Export" is intentionally hidden on Summary tab to match UX requirement */}
                 </>
               )}
             </div>
