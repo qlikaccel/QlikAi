@@ -14,7 +14,7 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TableSortLabel from "@mui/material/TableSortLabel";
 
-type TableInfo = string | { name: string; [key: string]: any };
+type TableInfo = string | { name: string;[key: string]: any };
 type Row = Record<string, any>;
 
 
@@ -210,7 +210,7 @@ export default function SummaryPage() {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) setUrlHistory(parsed);
-      } catch (e) {}
+      } catch (e) { }
     }
   }, []);
 
@@ -322,7 +322,7 @@ export default function SummaryPage() {
 
         const getTimestamp = (t: any) => {
           if (!t || typeof t === 'string') return 0;
-          const candidates = ['added_timestamp','created','createdAt','created_at','createdDate','modifiedDate','lastModifiedDate','lastReloadTime','lastReload'];
+          const candidates = ['added_timestamp', 'created', 'createdAt', 'created_at', 'createdDate', 'modifiedDate', 'lastModifiedDate', 'lastReloadTime', 'lastReload'];
           for (const k of candidates) {
             const v = t[k];
             if (v) {
@@ -396,7 +396,7 @@ export default function SummaryPage() {
           if (firstTableName) loadData(firstTableName);
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => { setLoading(false); });
   }, [appId, stopTimer, startTimer]);
 
@@ -434,7 +434,7 @@ export default function SummaryPage() {
       try {
         sessionStorage.setItem("selectedTable", tableName);
         sessionStorage.setItem("selectedRows", JSON.stringify(data || []));
-      } catch (e) {}
+      } catch (e) { }
 
       const { generateSummaryFromData } = await import("../api/qlikApi");
       const summary = generateSummaryFromData(data, tableName);
@@ -567,7 +567,7 @@ export default function SummaryPage() {
         try {
           const relMeta = await fetchTableDataSimple(appId, relTable).catch(() => null);
           totalRowsAllTables += relMeta?.row_count || relMeta?.rowCount || relMeta?.no_of_rows || 0;
-        } catch (e) {}
+        } catch (e) { }
       }
       if (isCsvLoadscript && isValidUrl && dataSourcePath.trim()) {
         const updatedHistory = [dataSourcePath, ...urlHistory.filter(url => url !== dataSourcePath)].slice(0, 10);
@@ -906,6 +906,7 @@ export default function SummaryPage() {
 
                     {/* Database card */}
                     <div
+                      className="source-card"
                       onClick={() => setSourceTypesTab('database')}
                       style={{
                         flex: '1 1 260px', minWidth: 260,
@@ -943,6 +944,7 @@ export default function SummaryPage() {
 
                     {/* Scripts card */}
                     <div
+                      className="source-card"
                       onClick={() => setSourceTypesTab('scripts')}
                       style={{
                         flex: '1 1 260px', minWidth: 260,
@@ -984,6 +986,7 @@ export default function SummaryPage() {
 
                     {/* Export CSV card */}
                     <div
+                      className="source-card"
                       onClick={() => setSourceTypesTab('csv')}
                       style={{
                         flex: '1 1 260px', minWidth: 260,
@@ -1147,7 +1150,7 @@ export default function SummaryPage() {
                               </button>
                               <button onClick={handlePublishMQuery} disabled={publishingMQuery} className="publish-pbi-btn">
                                 {publishingMQuery ? (<><span className="publish-spinner" />Publishing…</>) : (
-                                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Publish MQuery to PowerBI</>
+                                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>Publish MQuery to PowerBI</>
                                 )}
                               </button>
                             </div>
@@ -1287,10 +1290,10 @@ function ERDiagramView({ tables, relations, mainTable }: ERDiagramViewProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   const factKeywords = ["fact", "history", "transaction", "detail", "sales", "order"];
-  const dimKeywords  = ["master", "dim", "lookup", "ref", "details"];
+  const dimKeywords = ["master", "dim", "lookup", "ref", "details"];
 
   const isFact = (name: string) => factKeywords.some(k => name.toLowerCase().includes(k));
-  const isDim  = (name: string) => dimKeywords.some(k => name.toLowerCase().includes(k));
+  const isDim = (name: string) => dimKeywords.some(k => name.toLowerCase().includes(k));
 
   const buildErSource = (): string => {
     let src = "erDiagram\n";
@@ -1317,17 +1320,17 @@ function ERDiagramView({ tables, relations, mainTable }: ERDiagramViewProps) {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const aIsDim  = isDim(a);
-        const bIsDim  = isDim(b);
+        const aIsDim = isDim(a);
+        const bIsDim = isDim(b);
         const aIsFact = isFact(a) || a === mainTable;
         const bIsFact = isFact(b) || b === mainTable;
 
         let many: string, one: string;
-        if (aIsDim && !bIsDim)       { one = a; many = b; }
-        else if (bIsDim && !aIsDim)  { one = b; many = a; }
-        else if (aIsFact && !bIsFact){ many = a; one = b; }
-        else if (bIsFact && !aIsFact){ many = b; one = a; }
-        else                          { many = a; one = b; }
+        if (aIsDim && !bIsDim) { one = a; many = b; }
+        else if (bIsDim && !aIsDim) { one = b; many = a; }
+        else if (aIsFact && !bIsFact) { many = a; one = b; }
+        else if (bIsFact && !aIsFact) { many = b; one = a; }
+        else { many = a; one = b; }
 
         src += `  ${many} }o--|| ${one} : ""\n`;
       }
@@ -1433,7 +1436,7 @@ interface SummaryReportProps {
 const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ data, title }) => {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const total = entries.reduce((sum, [, val]) => sum + val, 0);
-  const colors = ["#FF4E50","#FC913A","#F9D62E","#1DC8CD","#7B68EE","#EE4B9E","#00C851","#2196F3"];
+  const colors = ["#FF4E50", "#FC913A", "#F9D62E", "#1DC8CD", "#7B68EE", "#EE4B9E", "#00C851", "#2196F3"];
 
   const cx = 100, cy = 100, R = 95;
 
@@ -1442,9 +1445,9 @@ const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ d
     const pct = value / total;
     const sweep = pct * 360;
     const startRad = (angle - 90) * Math.PI / 180;
-    const endRad   = (angle + sweep - 90) * Math.PI / 180;
+    const endRad = (angle + sweep - 90) * Math.PI / 180;
     const x1 = cx + R * Math.cos(startRad), y1 = cy + R * Math.sin(startRad);
-    const x2 = cx + R * Math.cos(endRad),   y2 = cy + R * Math.sin(endRad);
+    const x2 = cx + R * Math.cos(endRad), y2 = cy + R * Math.sin(endRad);
     const largeArc = sweep > 180 ? 1 : 0;
     const midRad = ((angle + sweep / 2) - 90) * Math.PI / 180;
     const lx = cx + R * 0.62 * Math.cos(midRad);
