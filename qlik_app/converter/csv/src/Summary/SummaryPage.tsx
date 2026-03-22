@@ -1432,49 +1432,133 @@ interface SummaryReportProps {
 
 const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ data, title }) => {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const total = entries.reduce((sum, [_, val]) => sum + val, 0);
-  const colors = ["#FF6B6B","#4ECDC4","#45B7D1","#FFA07A","#98D8C8","#F7DC6F","#BB8FCE","#85C1E2"];
-  let currentAngle = 0;
+  const total = entries.reduce((sum, [, val]) => sum + val, 0);
+  const colors = ["#FF4E50","#FC913A","#F9D62E","#1DC8CD","#7B68EE","#EE4B9E","#00C851","#2196F3"];
+
+  const cx = 100, cy = 100, R = 95;
+
+  let angle = -90;
   const slices = entries.map(([label, value], i) => {
-    const percentage = (value / total) * 100;
-    const sliceAngle = (percentage / 100) * 360;
-    const startAngle = currentAngle;
-    const endAngle = currentAngle + sliceAngle;
-    const startRad = (startAngle - 90) * (Math.PI / 180);
-    const endRad = (endAngle - 90) * (Math.PI / 180);
-    const x1 = 100 + 80 * Math.cos(startRad); const y1 = 100 + 80 * Math.sin(startRad);
-    const x2 = 100 + 80 * Math.cos(endRad);   const y2 = 100 + 80 * Math.sin(endRad);
-    const largeArc = sliceAngle > 180 ? 1 : 0;
-    const pathData = [`M 100 100`, `L ${x1} ${y1}`, `A 80 80 0 ${largeArc} 1 ${x2} ${y2}`, `Z`].join(" ");
-    const labelAngle = (startAngle + endAngle) / 2;
-    const labelRad = (labelAngle - 90) * (Math.PI / 180);
-    const labelX = 100 + 50 * Math.cos(labelRad); const labelY = 100 + 50 * Math.sin(labelRad);
-    currentAngle = endAngle;
-    return { pathData, color: colors[i % colors.length], label, percentage, value, labelX, labelY };
+    const pct = value / total;
+    const sweep = pct * 360;
+    const startRad = (angle - 90) * Math.PI / 180;
+    const endRad   = (angle + sweep - 90) * Math.PI / 180;
+    const x1 = cx + R * Math.cos(startRad), y1 = cy + R * Math.sin(startRad);
+    const x2 = cx + R * Math.cos(endRad),   y2 = cy + R * Math.sin(endRad);
+    const largeArc = sweep > 180 ? 1 : 0;
+    const midRad = ((angle + sweep / 2) - 90) * Math.PI / 180;
+    const lx = cx + R * 0.62 * Math.cos(midRad);
+    const ly = cy + R * 0.62 * Math.sin(midRad);
+    const tipX = cx + (R + 38) * Math.cos(midRad);
+    const tipY = cy + (R + 38) * Math.sin(midRad);
+    const pathData = `M${cx} ${cy} L${x1} ${y1} A${R} ${R} 0 ${largeArc} 1 ${x2} ${y2}Z`;
+    angle += sweep;
+    return { pathData, label, value, pct, lx, ly, tipX, tipY, midRad, color: colors[i % colors.length], delay: i * 0.06 };
   });
+
   return (
     <div className="pie-chart-container">
+      <style>{`
+        @keyframes slicePop {
+          from { opacity: 0; transform: scale(0.5); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes pieFadeUp {
+          from { opacity: 0; transform: translateY(5px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .pie-slice-g {
+          cursor: pointer;
+          transform-origin: 100px 100px;
+          animation: slicePop 0.5s cubic-bezier(.34,1.56,.64,1) both;
+        }
+        .pie-slice-g path {
+          transition: opacity 0.18s;
+        }
+        .pie-slice-g:hover path { opacity: 0.82; }
+        .pie-callout-line {
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .pie-callout-tip {
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .pie-slice-g:hover .pie-callout-line { opacity: 1; }
+        .pie-slice-g:hover .pie-callout-tip  { opacity: 1; }
+        .pie-legend-animated {
+          animation: pieFadeUp 0.4s ease both;
+        }
+      `}</style>
+
       <div className="pie-chart-content">
         <div className="pie-chart-left">
           {title && <h4>{title}</h4>}
-          <svg viewBox="0 0 200 200" className="pie-svg">
+          <svg viewBox="0 0 200 200" className="pie-svg" style={{ overflow: "visible" }}>
             {slices.map((slice, i) => (
-              <g key={i}>
-                <path d={slice.pathData} fill={slice.color} stroke="white" strokeWidth="2" />
-                {slice.percentage > 8 && (
-                  <text x={slice.labelX} y={slice.labelY} textAnchor="middle" dominantBaseline="middle" className="pie-label">
-                    {slice.percentage.toFixed(0)}%
+              <g
+                key={i}
+                className="pie-slice-g"
+                style={{ animationDelay: `${slice.delay}s` } as React.CSSProperties}
+              >
+                <path
+                  d={slice.pathData}
+                  fill={slice.color}
+                  stroke="#fff"
+                  strokeWidth="2.5"
+                />
+                {/* percentage label inside slice */}
+                {slice.pct > 0.09 && (
+                  <text
+                    x={slice.lx} y={slice.ly}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="#fff"
+                    fontSize={11}
+                    fontWeight={700}
+                    fontFamily="sans-serif"
+                  >
+                    {(slice.pct * 100).toFixed(0)}%
                   </text>
                 )}
+                {/* hover callout line */}
+                {/* <line
+                  className="pie-callout-line"
+                  x1={slice.lx} y1={slice.ly}
+                  x2={slice.tipX} y2={slice.tipY}
+                  stroke={slice.color}
+                  strokeWidth="1.5"
+                /> */}
+                {/* hover callout tip label */}
+                {/* <text
+                  className="pie-callout-tip"
+                  x={slice.tipX + (Math.cos(slice.midRad) > 0 ? 5 : -5)}
+                  y={slice.tipY}
+                  textAnchor={Math.cos(slice.midRad) > 0 ? "start" : "end"}
+                  dominantBaseline="central"
+                  fill={slice.color}
+                  fontSize={10}
+                  fontWeight={600}
+                  fontFamily="sans-serif"
+                >
+                  {(slice.pct * 100).toFixed(1)}%
+                </text> */}
               </g>
             ))}
           </svg>
         </div>
+
         <div className="pie-legend">
           {slices.map((slice, i) => (
-            <div key={i} className="legend-item">
-              <span className="legend-color" style={{ backgroundColor: slice.color }}></span>
-              <span className="legend-text">{slice.label.substring(0, 20)}: {slice.percentage.toFixed(1)}%</span>
+            <div
+              key={i}
+              className="legend-item pie-legend-animated"
+              style={{ animationDelay: `${i * 0.07 + 0.3}s` } as React.CSSProperties}
+            >
+              <span className="legend-color" style={{ backgroundColor: slice.color }} />
+              <span className="legend-text">
+                {slice.label.substring(0, 20)}: {(slice.pct * 100).toFixed(1)}%
+              </span>
             </div>
           ))}
         </div>
