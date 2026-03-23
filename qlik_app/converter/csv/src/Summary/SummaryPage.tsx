@@ -1033,7 +1033,7 @@ export default function SummaryPage() {
                   </div>
 
                   {!sourceTypesTab && (
-                    <div style={{ padding: 14, borderRadius: 10, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569', marginTop: 8 }}>
+                    <div style={{ padding: 14, borderRadius: 10, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569' }}>
                       Select a source type above to continue.
                     </div>
                   )}
