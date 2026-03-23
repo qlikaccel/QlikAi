@@ -318,7 +318,9 @@ def _parse_single_statement(stmt: str) -> Optional[Dict[str, Any]]:
     has_select = bool(re.search(r'\bSELECT\b', stmt, re.IGNORECASE))
     if not (has_load or has_select):
         return None
-
+    # ✅ Fix: Skip MAPPING LOAD — temporary Qlik tables, not needed in Power BI
+    if re.search(r'\bMAPPING\s+LOAD\b', stmt, re.IGNORECASE):
+        return None
     table_name = _extract_table_label(stmt)
 
     # --- modifier ---
@@ -633,6 +635,8 @@ class LoadScriptParser:
         Extract table definitions using the string-aware statement parser.
         ✅ FIX 3: Detects INLINE, RESIDENT, QVD, CSV, Excel, SQL
         ✅ FIX 8: source_type and source_path populated per table
+        ✅ FIX 11: MAPPING LOAD tables filtered out
+        ✅ FIX 12: Dropped/staging tables filtered out
         """
         logger.debug("Extracting table definitions...")
 
@@ -641,13 +645,34 @@ class LoadScriptParser:
 
         seen_names: set = set()
 
+        # ✅ FIX 12: Collect all DROP TABLE names first
+        dropped_tables: set = set()
         for stmt in stmts:
+            drop_m = re.search(
+                r'\bDROP\s+TABLE\b\s+([A-Za-z_][A-Za-z0-9_]*)',
+                stmt, re.IGNORECASE
+            )
+            if drop_m:
+                dropped_tables.add(drop_m.group(1).strip())
+
+        for stmt in stmts:
+            # ✅ FIX 11: Skip MAPPING LOAD tables
+            if re.search(r'\bMAPPING\s+LOAD\b', stmt, re.IGNORECASE):
+                continue
+            # ✅ FIX 12: Skip DROP TABLE statements
+            if re.search(r'\bDROP\s+TABLE\b', stmt, re.IGNORECASE):
+                continue
+
             td = _parse_single_statement(stmt)
             if td is None:
                 continue
 
             name = td['name']
             if not name:
+                continue
+
+            # ✅ FIX 12: Skip staging/intermediate tables that are dropped later
+            if name in dropped_tables:
                 continue
 
             # Deduplicate by name
@@ -663,8 +688,49 @@ class LoadScriptParser:
                 "modifier":    td.get('modifier', ''),
                 "options":     td.get('options', {}),
                 "field_count": len(td['fields']),
-                "fields":      td['fields'],   # per-table fields available here too
+                "fields":      td['fields'],
             })
+        # """
+        # Extract table definitions using the string-aware statement parser.
+        # ✅ FIX 3: Detects INLINE, RESIDENT, QVD, CSV, Excel, SQL
+        # ✅ FIX 8: source_type and source_path populated per table
+        # """
+        # logger.debug("Extracting table definitions...")
+
+        # cleaned = _strip_comments_safe(self.loadscript)
+        # stmts = _split_statements(cleaned)
+
+        # seen_names: set = set()
+
+        # for stmt in stmts:
+        #     # ✅ Fix: Skip MAPPING LOAD and DROP TABLE statements
+        #     if re.search(r'\bMAPPING\s+LOAD\b', stmt, re.IGNORECASE):
+        #         continue
+        #     if re.search(r'\bDROP\s+TABLE\b', stmt, re.IGNORECASE):
+        #         continue
+        #     td = _parse_single_statement(stmt)
+        #     if td is None:
+        #         continue
+
+        #     name = td['name']
+        #     if not name:
+        #         continue
+
+        #     # Deduplicate by name
+        #     if name in seen_names:
+        #         continue
+        #     seen_names.add(name)
+
+        #     self.tables.append({
+        #         "name":        name,
+        #         "type":        "load_statement",
+        #         "source_type": td['source_type'],
+        #         "source_path": td['source_path'],
+        #         "modifier":    td.get('modifier', ''),
+        #         "options":     td.get('options', {}),
+        #         "field_count": len(td['fields']),
+        #         "fields":      td['fields'],   # per-table fields available here too
+        #     })
 
     # ------------------------------------------------------------------
     # Step 5.4 — Fields (with type inference)
