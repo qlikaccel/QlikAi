@@ -46,7 +46,7 @@ def check_permissions():
             print("\n🔧 REQUIRED ACTIONS:")
             print("1. Go to Azure Portal: https://portal.azure.com")
             print("2. Navigate to Azure Active Directory")
-            print("3. Find your app registration (Client ID: 6413a69e-b951-4d7f-9c8e-af5f040ca3ea)")
+            print("3. Find your app registration (Client ID: 24a540bc-c770-4e07-a92d-503a1dd7ac80)")
             print("4. Go to 'API permissions'")
             print("5. Add the following permissions:")
             print("   - https://analysis.windows.net/powerbi/api/Dataset.ReadWrite.All")

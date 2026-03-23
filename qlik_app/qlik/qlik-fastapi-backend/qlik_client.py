@@ -40,7 +40,8 @@ class QlikClient:
             print(f"🔐 Authentication failed: 401 Unauthorized")
             print(f"✅ Ensure QLIK_API_KEY in .env is valid and not expired")
             print(f"✅ Generate a NEW API key from Qlik Cloud console:")
-            print(f"   https://c8vlzp3sx6akvnh.in.qlikcloud.com/console")
+            # print(f"   https://c8vlzp3sx6akvnh.in.qlikcloud.com/console")
+            print(f"   {self.tenant_url}/console")
             print(f"   → Admin → API Keys → Create New")
             print(f"   → Add scopes: apps:read, data:read, spaces:read")
 

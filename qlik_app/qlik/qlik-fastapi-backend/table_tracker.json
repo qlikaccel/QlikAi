@@ -443,5 +443,273 @@
       "added_timestamp": 1773917325.7318807
     }
   },
-  "f4613b28-ee47-4ccf-ad18-fc20f5f536b8": {}
+  "f4613b28-ee47-4ccf-ad18-fc20f5f536b8": {},
+  "10119d39-619b-4b37-adcc-d33f3be803e5": {
+    "customers": {
+      "added_at": "2026-03-22T10:23:42.336567",
+      "added_timestamp": 1774175022.3365679
+    },
+    "products": {
+      "added_at": "2026-03-22T10:23:42.336567",
+      "added_timestamp": 1774175022.3365679
+    },
+    "salesrep": {
+      "added_at": "2026-03-22T10:23:42.336567",
+      "added_timestamp": 1774175022.3365679
+    },
+    "orders": {
+      "added_at": "2026-03-22T10:23:42.336567",
+      "added_timestamp": 1774175022.3365679
+    },
+    "payments": {
+      "added_at": "2026-03-22T10:23:42.336567",
+      "added_timestamp": 1774175022.3365679
+    }
+  },
+  "0258e29e-506f-4622-9573-1fdd29512871": {
+    "Vehicle_Fact_MASTER": {
+      "added_at": "2026-03-23T07:24:52.474048",
+      "added_timestamp": 1774250692.4740489
+    },
+    "Dealer_Master": {
+      "added_at": "2026-03-23T07:24:52.474048",
+      "added_timestamp": 1774250692.4740489
+    },
+    "Model_Master": {
+      "added_at": "2026-03-23T07:24:52.474048",
+      "added_timestamp": 1774250692.4740489
+    },
+    "Service_History": {
+      "added_at": "2026-03-23T07:24:52.474048",
+      "added_timestamp": 1774250692.4740489
+    },
+    "Variant_Master": {
+      "added_at": "2026-03-23T07:24:52.474048",
+      "added_timestamp": 1774250692.4740489
+    },
+    "VIN_Details": {
+      "added_at": "2026-03-23T07:24:52.474048",
+      "added_timestamp": 1774250692.4740489
+    }
+  },
+  "06047f7c-16d4-4331-b719-dbe52c05b2ed": {
+    "Accommodation": {
+      "added_at": "2026-03-23T07:24:53.443983",
+      "added_timestamp": 1774250693.4439836
+    },
+    "Destinations": {
+      "added_at": "2026-03-23T07:24:53.443983",
+      "added_timestamp": 1774250693.4439836
+    },
+    "Tourists": {
+      "added_at": "2026-03-23T07:24:53.443983",
+      "added_timestamp": 1774250693.4439836
+    },
+    "Transport": {
+      "added_at": "2026-03-23T07:24:53.443983",
+      "added_timestamp": 1774250693.4439836
+    },
+    "Tourism_Fact": {
+      "added_at": "2026-03-23T07:24:53.443983",
+      "added_timestamp": 1774250693.4439836
+    }
+  },
+  "0a6b40cc-8e9d-472f-8484-ec90d16f0886": {
+    "Customers": {
+      "added_at": "2026-03-23T07:24:54.475600",
+      "added_timestamp": 1774250694.4756002
+    },
+    "Products": {
+      "added_at": "2026-03-23T07:24:54.475600",
+      "added_timestamp": 1774250694.4756002
+    },
+    "Regions": {
+      "added_at": "2026-03-23T07:24:54.475600",
+      "added_timestamp": 1774250694.4756002
+    },
+    "Sales": {
+      "added_at": "2026-03-23T07:24:54.475600",
+      "added_timestamp": 1774250694.4756002
+    }
+  },
+  "2534ad97-a0a9-450d-99a1-638e70d4c6dd": {
+    "City": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Date": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Department": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Doctor": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Fact_Hospital": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Hospital": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Insurance": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Patient": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Payment": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    },
+    "Treatment": {
+      "added_at": "2026-03-23T07:24:57.140984",
+      "added_timestamp": 1774250697.1409845
+    }
+  },
+  "29c7ef9b-fa2d-4bd3-bcd5-c58f0d3a1f11": {
+    "City": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Date": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Department": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Doctor": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Fact_Hospital": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Hospital": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Insurance": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Patient": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Treatment": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    },
+    "Payment": {
+      "added_at": "2026-03-23T07:24:58.734941",
+      "added_timestamp": 1774250698.7349417
+    }
+  },
+  "443712ed-68e1-483c-bd09-548fd194cea2": {
+    "customers": {
+      "added_at": "2026-03-23T07:24:59.878197",
+      "added_timestamp": 1774250699.8781972
+    },
+    "products": {
+      "added_at": "2026-03-23T07:24:59.878197",
+      "added_timestamp": 1774250699.8781972
+    },
+    "region_mapping": {
+      "added_at": "2026-03-23T07:24:59.878197",
+      "added_timestamp": 1774250699.8781972
+    },
+    "qlik_sales": {
+      "added_at": "2026-03-23T07:24:59.878197",
+      "added_timestamp": 1774250699.8781972
+    }
+  },
+  "93ff1ec9-e34c-4430-ac7a-4ed49acabfa0": {
+    "DimCustomer": {
+      "added_at": "2026-03-23T07:25:00.955024",
+      "added_timestamp": 1774250700.9550247
+    },
+    "DimDate": {
+      "added_at": "2026-03-23T07:25:00.955024",
+      "added_timestamp": 1774250700.9550247
+    },
+    "DimProduct": {
+      "added_at": "2026-03-23T07:25:00.955024",
+      "added_timestamp": 1774250700.9550247
+    },
+    "DimStore": {
+      "added_at": "2026-03-23T07:25:00.955024",
+      "added_timestamp": 1774250700.9550247
+    },
+    "FactSales": {
+      "added_at": "2026-03-23T07:25:00.955024",
+      "added_timestamp": 1774250700.9550247
+    }
+  },
+  "c27d1cfc-8d6c-4bc8-a3f8-fdab02517c7e": {
+    "FactTransactions": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    },
+    "DimProduct": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    },
+    "DimCustomer": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    },
+    "DimSalesRep": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    },
+    "MonthlyRepSummary": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    },
+    "QuotaAttainment": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    },
+    "RegionalRollup": {
+      "added_at": "2026-03-23T07:25:02.195562",
+      "added_timestamp": 1774250702.1955626
+    }
+  },
+  "eb88d7d9-a851-43ae-86ad-2df631c60e95": {
+    "hospital_admissions_fact": {
+      "added_at": "2026-03-23T07:25:03.292595",
+      "added_timestamp": 1774250703.292595
+    },
+    "hospital_dates": {
+      "added_at": "2026-03-23T07:25:03.292595",
+      "added_timestamp": 1774250703.292595
+    },
+    "hospital_hospitals": {
+      "added_at": "2026-03-23T07:25:03.292595",
+      "added_timestamp": 1774250703.292595
+    },
+    "hospital_diseases": {
+      "added_at": "2026-03-23T07:25:03.292595",
+      "added_timestamp": 1774250703.292595
+    },
+    "hospital_doctors": {
+      "added_at": "2026-03-23T07:25:03.292595",
+      "added_timestamp": 1774250703.292595
+    },
+    "hospital_patients": {
+      "added_at": "2026-03-23T07:25:03.292595",
+      "added_timestamp": 1774250703.292595
+    }
+  }
 }

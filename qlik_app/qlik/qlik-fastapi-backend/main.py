@@ -801,7 +801,7 @@ import os
 # ==================== VALIDATE TENANT ====================
 TEST_USERNAME = "testuser"
 TEST_PASSWORD = "test123"
-HARDCODED_TENANT = "https://c8vlzp3sx6akvnh.in.qlikcloud.com"
+# HARDCODED_TENANT = "https://c8vlzp3sx6akvnh.in.qlikcloud.com"
 
 class PowerBIRequest(BaseModel):
     csv_path: str
@@ -1136,7 +1136,8 @@ async def find_apps_with_data(client: QlikClient = Depends(get_qlik_client)):
                         "last_reload_time": last_reload,
                         "created_date": attributes.get('createdDate'),
                         "description": attributes.get('description', ''),
-                        "app_url": f"https://c8vlzp3sx6akvnh.in.qlikcloud.com/hub/{attributes.get('id')}"
+                        # "app_url": f"https://c8vlzp3sx6akvnh.in.qlikcloud.com/hub/{attributes.get('id')}"
+                        "app_url": f"{client.tenant_url}/hub/{attributes.get('id')}"
                     })
         
         # Sort by last reload time (most recent first)
