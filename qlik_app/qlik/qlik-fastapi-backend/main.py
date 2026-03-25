@@ -117,6 +117,8 @@ app.add_middleware(
         "https://qlik-sense-cloud.onrender.com",
         "https://qlikai-ld54.onrender.com"
         "https://qlikaiv2-web.onrender.com",
+        "https://qlikai-app-ltmrv.ondigitalocean.app"
+
         
     ],
     allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+|https://.*\.onrender\.com",
