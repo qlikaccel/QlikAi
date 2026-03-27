@@ -42,13 +42,14 @@ import requests
 import pandas as pd
 import json
 from datetime import datetime
+from typing import Annotated
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, PlainTextResponse, StreamingResponse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Annotated
 import logging
 import base64
 import io
@@ -134,8 +135,8 @@ app.include_router(migration_router)
 qlik_client_instance = None  # FIX 3: lazy singleton
 
 def get_qlik_client(
-    x_api_key: Optional[str] = Header(None),
-    x_tenant_url: Optional[str] = Header(None)
+    x_api_key: Annotated[Optional[str], Header()] = None,
+    x_tenant_url: Annotated[Optional[str], Header()] = None
 ):
     try:
         return QlikClient(
@@ -892,10 +893,9 @@ async def list_spaces(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve spaces: {str(e)}")
 
 @app.get("/applications", response_model=List[Dict[str, Any]])
-async def list_applications(
-    tenant_url: Optional[str] = Query(None, description="Qlik Cloud tenant URL"),
-    x_api_key: Optional[str] = Header(None),
-    x_tenant_url: Optional[str] = Header(None)
+async def list_apps(
+    x_api_key: Annotated[Optional[str], Header()] = None,
+    x_tenant_url: Annotated[Optional[str], Header()] = None
 ):
     try:
         client = QlikClient(
