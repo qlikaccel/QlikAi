@@ -43,6 +43,8 @@ import pandas as pd
 import json
 from datetime import datetime
 
+from typing import Annotated
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body, Header
@@ -192,10 +194,12 @@ def health():
 # ==================== M QUERY DOWNLOAD ====================
 
 @app.get("/applications/{app_id}/mquery/download")
+
 async def download_mquery(
     app_id: str,
-    table: str = Query(..., description="Table name to generate M Query for"),
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    table: Annotated[str, Query(..., description="Table name to generate M Query for")],
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
+    
 ):
     """Generate Power BI M Query for selected Qlik table."""
     try:
@@ -868,7 +872,7 @@ async def validate_sharepoint_url(payload: dict = Body(...)):
 
 # ==================== API ENDPOINTS ====================
 @app.get("/test-connection")
-async def test_connection(client: QlikClient = Depends(get_qlik_client)):
+async def test_connection(client: Annotated[QlikClient, Depends(get_qlik_client)]):
     """Test connection to Qlik Cloud"""
     try:
         result = client.test_connection()
@@ -878,7 +882,7 @@ async def test_connection(client: QlikClient = Depends(get_qlik_client)):
 
 @app.get("/spaces")
 async def list_spaces(
-    client: QlikClient = Depends(get_qlik_client)
+    client: Annotated[QlikClient, Depends(get_qlik_client)]
 ):
     """List all available spaces"""
     try:
@@ -911,7 +915,7 @@ async def list_applications(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve applications: {str(e)}")
 
 @app.get("/applications/{app_id}")
-async def get_application(app_id: str, client: QlikClient = Depends(get_qlik_client)):
+async def get_application(app_id: str, client: Annotated[QlikClient, Depends(get_qlik_client)]):
     """Get basic details of a specific application"""
     try:
         app = client.get_application_details(app_id)
@@ -920,7 +924,7 @@ async def get_application(app_id: str, client: QlikClient = Depends(get_qlik_cli
         raise HTTPException(status_code=404, detail=f"Application not found: {str(e)}")
 
 @app.get("/applications/{app_id}/info")
-async def get_application_full_info(app_id: str, ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
+async def get_application_full_info(app_id: str, ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]):
     """Get comprehensive information about an application including tables, fields, script, and sheets"""
     try:
         result = ws_client.get_app_tables_simple(app_id)
@@ -937,7 +941,7 @@ async def get_application_full_info(app_id: str, ws_client: QlikWebSocketClient 
 # async def get_app_tables(
 #     app_id: str, 
 #     include_script: bool = Query(default=False, description="Include script analysis"),
-#     ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+#     ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
 # ):
 #     """
 #     Get tables and fields from app using WebSocket.
@@ -975,7 +979,11 @@ async def get_application_full_info(app_id: str, ws_client: QlikWebSocketClient 
 
 # FIX 7: single /applications/{app_id}/tables — duplicate removed
 @app.get("/applications/{app_id}/tables")
-async def get_app_tables(app_id: str, include_script: bool = Query(default=False), ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
+async def get_app_tables(
+    app_id: str,
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
+    include_script: bool = Query(default=False)
+):
     try:
         result = ws_client.get_app_tables_simple(app_id)
         if not result.get("success", False):
@@ -1000,7 +1008,7 @@ async def get_app_tables(app_id: str, include_script: bool = Query(default=False
 
 
 @app.get("/applications/{app_id}/script")
-async def get_app_script(app_id: str, ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
+async def get_app_script(app_id: str, ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]):
     """Get the load script from the application"""
     try:
         result = ws_client.get_app_tables_simple(app_id)
@@ -1025,8 +1033,8 @@ async def get_app_script(app_id: str, ws_client: QlikWebSocketClient = Depends(g
 @app.get("/applications/{app_id}/fields")
 async def get_app_fields(
     app_id: str,
-    include_system: bool = Query(default=False, description="Include system fields"),
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
+    include_system: bool = Query(default=False, description="Include system fields")
 ):
     """Get all fields from the application"""
     try:
@@ -1058,8 +1066,8 @@ async def get_app_fields(
 async def get_field_values(
     app_id: str, 
     field_name: str,
-    limit: int = Query(default=100, le=10000, description="Maximum number of values to return"),
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
+    limit: int = Query(default=100, le=10000, description="Maximum number of values to return")
 ):
     """Get values for a specific field with actual data"""
     try:
@@ -1084,9 +1092,9 @@ async def validate_login_alias(payload: dict = Body(...)):
 async def get_table_data(
     app_id: str,
     table_name: str,
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
     limit: int = Query(default=100, le=200000, description="Maximum number of rows to return"),
-    offset: int = Query(default=0, ge=0, description="Row offset for paging"),
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    offset: int = Query(default=0, ge=0, description="Row offset for paging")
 ):
     """Get actual data from a specific table with tolerant name matching (supports offset+limit)"""
     try:
@@ -1121,7 +1129,7 @@ async def get_table_data(
         raise HTTPException(status_code=500, detail=f"Failed to get table data: {str(e)}")
 
 @app.get("/applications/with-data")
-async def find_apps_with_data(client: QlikClient = Depends(get_qlik_client)):
+async def find_apps_with_data(client: Annotated[QlikClient, Depends(get_qlik_client)]):
     """Find apps that have been reloaded (have data)"""
     try:
         apps = client.get_applications()
@@ -1157,7 +1165,7 @@ async def find_apps_with_data(client: QlikClient = Depends(get_qlik_client)):
 async def get_table_data_simple(
     app_id: str,
     table_name: str,
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
 ):
     """
     Simple endpoint that returns table structure and metadata without complex hypercube creation
@@ -1206,8 +1214,8 @@ async def get_table_data_simple(
 async def get_table_data_enhanced(
     app_id: str,
     table_name: str,
-    limit: int = Query(default=100, le=200000, description="Maximum number of rows to return"),
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
+    limit: int = Query(default=100, le=200000, description="Maximum number of rows to return")
 ):
     """
     Enhanced endpoint to fetch table data with multiple fallback strategies
@@ -1349,7 +1357,7 @@ async def get_table_data_enhanced(
 if SCRIPT_PARSER_AVAILABLE:
     
     @app.get("/applications/{app_id}/script/tables")
-    async def get_script_tables(app_id: str, ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)):
+    async def get_script_tables(app_id: str, ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]):
         """
         Extract all tables and their data from the app script (INLINE data)
         Returns structured data from LOAD ... INLINE statements
@@ -1390,9 +1398,9 @@ if SCRIPT_PARSER_AVAILABLE:
     async def get_script_table_data(
         app_id: str, 
         table_name: str,
-        limit: int = Query(default=100, le=10000, description="Maximum number of rows to return"),
-        ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
-    ):
+        ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
+        limit: int = Query(default=100, le=10000, description="Maximum number of rows to return")
+):
         """
         Get data for a specific table from the script (INLINE data)
         Returns rows and columns as JSON
@@ -1431,7 +1439,7 @@ if SCRIPT_PARSER_AVAILABLE:
     async def get_script_table_html(
         app_id: str, 
         table_name: str,
-        ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+        ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
     ):
         """
         Get data for a specific table as HTML table
@@ -1474,7 +1482,7 @@ if SCRIPT_PARSER_AVAILABLE:
     async def get_script_table_csv(
         app_id: str, 
         table_name: str,
-        ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+        ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
     ):
         """
         Get data for a specific table as CSV
@@ -1506,7 +1514,7 @@ if SCRIPT_PARSER_AVAILABLE:
     @app.get("/applications/{app_id}/script/html", response_class=HTMLResponse)
     async def get_all_script_tables_html(
         app_id: str,
-        ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+        ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
     ):
         """
         Get all tables from script as HTML
@@ -1562,7 +1570,7 @@ else:
 async def export_table_as_csv(
     app_id: str,
     table_name: str,
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
 ):
     """
     Export table data as CSV file
@@ -1639,7 +1647,7 @@ async def export_table_as_csv(
 async def vehicle_summary(
     app_id: str,
     table_name: str,
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client)
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)]
 ):
     """
     Generate a summary of table data
@@ -3472,7 +3480,7 @@ class PublishDatasetRequest(BaseModel):
 @app.post("/api/migration/publish-dataset")
 async def publish_dataset_endpoint(
     request: PublishDatasetRequest,
-    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client),
+    ws_client: Annotated[QlikWebSocketClient, Depends(get_qlik_websocket_client)],
 ):
     """
     Full pipeline: fetch loadscript → parse → generate M expressions → publish to Power BI.
