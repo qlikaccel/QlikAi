@@ -49,7 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, PlainTextResponse, StreamingResponse
-from typing import List, Dict, Any, Optional, Annotated
+from typing import List, Dict, Any, Optional
 import logging
 import base64
 import io
@@ -900,9 +900,9 @@ async def list_apps(
     try:
         client = QlikClient(
             api_key=x_api_key or os.getenv("QLIK_API_KEY"),
-            tenant_url=tenant_url or x_tenant_url or os.getenv("QLIK_TENANT_URL")
+            tenant_url=x_tenant_url or os.getenv("QLIK_TENANT_URL")
         )
-        logger.info(f"📋 Fetching applications from tenant: {tenant_url or 'default'}")
+        logger.info(f"📋 Fetching applications from tenant: {x_tenant_url or 'default'}")
         apps = client.get_applications()
         logger.info(f"✅ Found {len(apps)} application(s)")
         return apps
