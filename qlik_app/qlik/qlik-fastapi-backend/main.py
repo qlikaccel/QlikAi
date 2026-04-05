@@ -70,10 +70,9 @@ from pydantic import BaseModel
 # Project imports
 from login_validation import router as login_router
 from migration_api import router as migration_router
-from mquery_converter import validate_sharepoint_url_strict
+from mquery_converter import validate_sharepoint_url_strict, MQueryConverter
 from qlik_websocket_client import QlikWebSocketClient
 from qlik_client import QlikClient
-from simple_mquery_generator import SimpleMQueryGenerator
 from processor import PowerBIProcessor
 from table_tracker import enhance_tables_with_timestamps
 from powerbi_service_delegated import PowerBIService, infer_schema_from_rows
@@ -236,22 +235,42 @@ async def download_mquery(
             }
 
         try:
-            from simple_mquery_generator import create_mquery_generator
-            generator = create_mquery_generator(
-                parsed_script=parse_result,
-                table_name=table,
-                lib_mapping={
-                    "lib://DataFiles/": "C:/Data/",
-                    "lib://QVD/":       "C:/QVD/",
-                },
+            # ✅ FIX: Use MQueryConverter instead of SimpleMQueryGenerator
+            converter = MQueryConverter()
+            tables = parse_result.get("details", {}).get("tables", [])
+            
+            if not tables:
+                raise ValueError(f"No tables found in parsed script")
+            
+            # Find the requested table
+            target_table = next((t for t in tables if t.get("name") == table), None)
+            if not target_table:
+                # Fuzzy match — case-insensitive
+                target_table = next(
+                    (t for t in tables if t.get("name", "").lower() == table.lower()),
+                    None
+                )
+            
+            if not target_table:
+                available = [t.get("name", "?") for t in tables]
+                raise ValueError(f"Table '{table}' not found. Available: {available}")
+            
+            # Get all table names for RESIDENT table resolution
+            all_table_names = {t.get("name", "") for t in tables}
+            
+            # Generate M Query using MQueryConverter
+            m_query = converter.convert_one(
+                target_table,
+                base_path="C:/Data/",
+                connection_string=None,
+                all_table_names=all_table_names,
+                qlik_fields_map=parse_result.get("qlik_fields_map"),
             )
-            m_query = generator.generate()
+            
             if not m_query.strip():
                 raise ValueError("Empty M query generated")
-
-        except ImportError:
-            generator = SimpleMQueryGenerator({"raw_script": raw_script}, selected_table=table)
-            m_query   = generator.generate()
+            
+            logger.info(f"✅ M Query generated for table '{table}'")
 
         except Exception as e:
             logger.error(f"❌ Generator error: {e}")
@@ -3607,6 +3626,7 @@ async def convert_mquery_endpoint(request: ConvertMQueryRequest):
             base_path=request.base_path,
             connection_string=request.connection_string,
             all_table_names=all_table_names,
+            qlik_fields_map=request.parse_result.get("qlik_fields_map"),
         )
 
         # For RESIDENT tables, also return the source table's M so the user
@@ -3621,6 +3641,7 @@ async def convert_mquery_endpoint(request: ConvertMQueryRequest):
                     base_path=request.base_path,
                     connection_string=request.connection_string,
                     all_table_names=all_table_names,
+                    qlik_fields_map=request.parse_result.get("qlik_fields_map"),
                 )
 
         return {

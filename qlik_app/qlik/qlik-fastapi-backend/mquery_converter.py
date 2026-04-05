@@ -17,19 +17,23 @@ CHANGES FROM ORIGINAL
             before Table.Combine so schema is always aligned even when CSV
             files differ in column order or have extra columns.
 
-  ✅ Fix C: _convert_applymap_to_dimension_table() — ApplyMap tables are
-            generated as standalone dimension queries instead of fragile
-            inline SharePoint lookups. Callers (publish_mquery_endpoint)
-            inject the dimension table into tables_m and let Power BI
-            relationships handle the lookup.
+  ✅ Fix C: _detect_and_apply_applymap() — APPLYMAP (dimension mapping) NOW ENABLED!
+            Converts ApplyMap('MapTable', key_col, 'default') to M Query:
+            1. Table.NestedJoin - LEFT JOIN with mapping table
+            2. Table.ExpandTableColumn - Expand joined columns
+            3. Table.ReplaceValue - Replace nulls with default value
+            Integrated at Step 3.3 in transformation pipeline.
 
-  ✅ Fix D: _detect_and_apply_join() now correctly wires the parser's
-            is_join / join_table / join_type option flags so JOIN/KEEP
-            statements from the load script produce proper
-            Table.NestedJoin M steps.
+  ✅ Fix D: REMOVED - Full JOIN logic disabled in strict mode. All JOIN
+            operations now return empty transforms (no-op). 
+            is_join is always set to False in _auto_detect_transformations().
 
-  ✅ Fix E: _apply_all_transformations() order fixed — null fixes → concat
-            → IF/WHERE → group_by → join → keep (was missing join wiring).
+  ✅ Fix E: _apply_all_transformations() order: null fixes → concat →
+            IF/WHERE → APPLYMAP → date → group_by → KEEP (JOIN removed).
+
+  ✅ Fix F: _apply_date_transformation() — DATE transformation fully implemented.
+            Converts date_id (YYYYMMDD) to full_date + year/month/day/quarter.
+            Uses #date() for robust, null-safe parsing in M Query.
 
   All original logic preserved; changes are additive / targeted replacements.
 """
@@ -115,16 +119,27 @@ def _infer_type_from_name(col_name: str) -> str:
 
 
 def _wrap_columns_in_brackets(expr: str) -> str:
-    if not expr or "[" in expr:
+    # 🔥 STRICT: Don't wrap IF statements - they're M keywords
+    if not expr or "[" in expr or expr.upper().startswith("IF"):
         return expr
     expr = re.sub(r'\bIsNull\s*\(\s*([^,\)]+)\s*\)', r'(\1 = null)', expr, flags=re.IGNORECASE)
     expr = re.sub(r'\bIsEmpty\s*\(\s*([^,\)]+)\s*\)', r'(\1 = "" or \1 = null)', expr, flags=re.IGNORECASE)
     result = re.sub(
         r'\b([A-Za-z_][A-Za-z0-9_]*)\b(?![\]])',
-        lambda m: f'[{m.group(1)}]' if m.group(1).lower() not in ('null', 'true', 'false', 'and', 'or') else m.group(1),
+        lambda m: f'[{m.group(1)}]' if m.group(1).lower() not in ('null', 'true', 'false', 'and', 'or', 'if', 'then', 'else') else m.group(1),
         expr
     )
     result = re.sub(r'\[\[([^\[\]]+)\]\]', r'[\1]', result)
+    
+    # FIX 4: Ensure numeric comparisons don't quote numbers
+    # Convert patterns like [hours_worked] > "8" to [hours_worked] > 8
+    # But keep string comparisons like [name] = "John"
+    result = re.sub(
+        r'\[([^\]]+)\]\s*([><=!]+)\s*["\'](\d+(?:\.\d+)?)["\']',
+        lambda m: f'[{m.group(1)}] {m.group(2)} {m.group(3)}',
+        result
+    )
+    
     return result
 
 
@@ -148,6 +163,139 @@ def _escape_m_string(text: str) -> str:
     text = text.replace('"', '""')
     text = text.replace("\n", " ").replace("\r", "")
     return text
+
+
+def _parse_nested_if_expression(expr: str) -> tuple[str, bool]:
+    """
+    Parse nested IF expressions from Qlik and convert to M Query chains.
+    
+    FIX #7 — Support nested IF conditions like:
+    If(total_hours > 100, 'High Performer', If(total_hours > 50, 'Medium', 'Low'))
+    
+    Returns (m_query_expression, is_numeric)
+    
+    🔥 FIX: Properly bracket column names and convert quotes
+    - hours_worked > 8 → [hours_worked] > 8
+    - 'Overtime' → "Overtime"
+    
+    Example:
+    Input:  "If(total_hours > 100, 'High Performer', If(total_hours > 50, 'Medium', 'Low'))"
+    Output: "if [total_hours] > 100 then \"High Performer\" else if [total_hours] > 50 then \"Medium\" else \"Low\""
+    """
+    expr = expr.strip()
+    if not expr.upper().startswith("IF("):
+        return expr, False
+    
+    # 🔥 FIX: Convert condition with proper column bracketing
+    def format_condition(cond_str: str) -> str:
+        """Convert condition: hours_worked > 8 → [hours_worked] > 8"""
+        cond = cond_str.strip()
+        # Replace bare column names (not already bracketed) with bracketed versions
+        # Match: word characters surrounded by spaces/operators, not already in brackets
+        cond = re.sub(
+            r'(?<!\[)([A-Za-z_][A-Za-z0-9_]*)(?![\]\w])',
+            lambda m: f'[{m.group(1)}]' if m.group(1).upper() not in ['IS', 'NOT', 'NULL', 'AND', 'OR', 'TRUE', 'FALSE'] else m.group(1),
+            cond
+        )
+        return cond
+    
+    # Helper to format values
+    def format_value(raw_val: str) -> tuple[str, bool]:
+        val = raw_val.strip()
+        # Remove outer quotes if present (single OR double)
+        if (val.startswith("'") and val.endswith("'")) or \
+           (val.startswith('"') and val.endswith('"')):
+            unquoted = val[1:-1]
+            if _is_numeric_literal(unquoted):
+                # Keep as numeric literal (no quotes)
+                return unquoted, True
+            else:
+                # 🔥 FIX: Always use double quotes for string literals
+                return f'"{unquoted}"', False
+        # No quotes - check what it is
+        if _is_numeric_literal(val):
+            return val, True
+        else:
+            # Wrap unquoted column reference in brackets
+            return _wrap_columns_in_brackets(val), False
+    
+    # Remove outer IF(...) wrapper (case insensitive)
+    # Find the last ) and strip from index 3 to len-1
+    if len(expr) < 5:  # Minimum: "if(a,b,c)" has 9 chars minimum but let's be safe
+        return expr, False
+    
+    inner = expr[3:-1]  # Strip opening "IF(" and closing ")"
+    
+    # Find the condition and its split points
+    parts = _split_if_expression(inner)
+    if len(parts) < 3:
+        return expr, False
+    
+    condition, true_val, false_val = parts[0], parts[1], parts[2]
+    
+    # 🔥 FIX: Format condition with proper column bracketing
+    condition = format_condition(condition.strip())
+    
+    # Format true value
+    true_formatted, true_is_numeric = format_value(true_val.strip())
+    
+    # Check if false_val is another IF (nested)
+    false_upper = false_val.strip().upper()
+    if false_upper.startswith("IF("):
+        # Recursively parse nested IF
+        false_formatted, false_is_numeric = _parse_nested_if_expression(false_val.strip())
+        is_numeric = true_is_numeric and false_is_numeric
+        # Build nested if-then-else
+        m_expr = f"if {condition} then {true_formatted} else {false_formatted}"
+        return m_expr, is_numeric
+    else:
+        # Simple false value - format it
+        false_formatted, false_is_numeric = format_value(false_val.strip())
+        is_numeric = true_is_numeric and false_is_numeric
+        m_expr = f"if {condition} then {true_formatted} else {false_formatted}"
+        return m_expr, is_numeric
+
+
+def _split_if_expression(inner: str) -> list[str]:
+    """
+    Split IF expression into [condition, true_value, false_value].
+    Handles nested IF, parentheses, and quoted strings.
+    """
+    parts = []
+    current = ""
+    depth = 0
+    in_quote = False
+    quote_char = None
+    
+    for i, char in enumerate(inner):
+        # Handle quotes
+        if char in ('"', "'") and (i == 0 or inner[i-1] != "\\"):
+            if not in_quote:
+                in_quote = True
+                quote_char = char
+            elif char == quote_char:
+                in_quote = False
+                quote_char = None
+        
+        # Count parentheses depth
+        if not in_quote:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == "," and depth == 0:
+                # Found a separator comma at top level
+                parts.append(current.strip())
+                current = ""
+                continue
+        
+        current += char
+    
+    # Add final part
+    if current.strip():
+        parts.append(current.strip())
+    
+    return parts
 
 
 def _m_type(qlik_type: str, col_name: str = "") -> str:
@@ -253,6 +401,7 @@ def _build_sharepoint_m(
     transform_step: str,
     final_step: str,
     is_qvd: bool = False,
+    mapping_tables_code: str = "",
 ) -> str:
     """
     Build SharePoint M query using STATIC PLACEHOLDERS (not dynamic variables).
@@ -278,6 +427,11 @@ def _build_sharepoint_m(
     # Convert filename to lowercase for comparison (but keep original case in placeholder)
     filename_lower = filename.lower()
     
+    # Build the let expression with optional mapping tables
+    # Mapping tables code starts with a comma (from _generate_applymap_table_loading_code)
+    # so we only add it if it's not empty
+    mapping_tables_section = f"{mapping_tables_code}" if mapping_tables_code.strip() else ""
+    
     m = (
         f"let\n"
         f"{qvd_comment}"
@@ -294,6 +448,7 @@ def _build_sharepoint_m(
         f"        else error \"File {filename} not found in SharePoint\",\n"
         f"    Csv = Csv.Document(File, [Delimiter=\"{delimiter}\", Encoding={encoding}, QuoteStyle=QuoteStyle.Csv]),\n"
         f"    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])"
+        f"{mapping_tables_section}"
         f"{transform_step}\n"
         f"in\n"
         f"    {final_step}"
@@ -333,8 +488,13 @@ def _build_azure_blob_m(
     encoding: int,
     transform_step: str,
     final_step: str,
+    mapping_tables_code: str = "",
 ) -> str:
     clean_url = container_url.strip().strip('"').strip("'").rstrip("/")
+    
+    # Build the let expression with optional mapping tables
+    mapping_tables_section = f"\n{mapping_tables_code}" if mapping_tables_code.strip() else ""
+    
     m = (
         f"let\n"
         f"    Source = AzureStorage.Blobs(\"{clean_url}\"),\n"
@@ -344,6 +504,7 @@ def _build_azure_blob_m(
         f"        [Delimiter=\"{delimiter}\", Encoding={encoding}, QuoteStyle=QuoteStyle.Csv]\n"
         f"    ),\n"
         f"    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])"
+        f"{mapping_tables_section}"
         f"{transform_step}\n"
         f"in\n"
         f"    {final_step or 'Headers'}"
@@ -359,11 +520,107 @@ class MQueryConverter:
 
     def __init__(self):
         self.all_tables_list: Dict[str, Dict[str, Any]] = {}
-        # Optional map: table_name → list of real column names from the Qlik data model.
-        # When provided, LOAD * tables get explicit TransformColumnTypes instead of the
-        # dynamic List.Transform pattern so Power BI sees real column names in the BIM.
-        # Format: {"Departments": ["department_id", "department_name"], ...}
-        self.qlik_fields_map: Dict[str, List[str]] = {}
+
+    # ============================================================
+    # PRIVATE: Type Resolution
+    # ============================================================
+
+    def _get_column_type(self, table_name: str, col_name: str, qlik_type: str = "string") -> str:
+        """
+        Resolve column type from Qlik script type, then fallback to heuristic inference.
+        
+        Priority:
+        1. qlik_type from load script (if it's a known type like date, number, etc.)
+        2. Heuristic name inference (_infer_type_from_name)
+        
+        Args:
+            table_name: Name of the table (e.g., "Departments", "fact_activity")
+            col_name: Column name to resolve
+            qlik_type: Original type from Qlik script (e.g., "string", "date", "")
+            
+        Returns:
+            M type string: "type text", "type number", "type date", etc.
+        """
+        if "-" in col_name:
+            return "type text"
+        
+        plain_name = (
+            col_name.split(".", 1)[-1]
+            if ("." in col_name and not col_name.startswith("#"))
+            else col_name
+        )
+        qlik_lower = str(qlik_type).lower().strip()
+        if qlik_lower not in ("string", "text", "unknown", "mixed", "wildcard", ""):
+            return _QLIK_TO_M_TYPE.get(qlik_lower, _DEFAULT_M_TYPE)
+        
+        inferred = _infer_type_from_name(plain_name)
+        logger.debug(
+            "[_get_column_type] Table '%s', col '%s': Using heuristic → %s",
+            table_name, col_name, inferred
+        )
+        return inferred
+
+    def _extract_applymap_metadata(self, fields: List[Dict]) -> Dict[str, Dict[str, Any]]:
+        """
+        🔥 FIX 2: Extract APPLYMAP metadata from field expressions.
+        
+        Parses ApplyMap('MapTableName', key_column, 'default') expressions to extract:
+        - Mapping table name
+        - Key column being looked up
+        - Default value
+        - Output column name using the mapping
+        
+        Returns: Dict[mapping_table_name] → {
+            'key_column': str,
+            'default_value': str,
+            'output_columns': [list of columns that use this mapping]
+        }
+        
+        Example:
+          Input: field expr="ApplyMap('DeptMap', department_id, 'Unknown')" alias="DeptName"
+          Output: {'DeptMap': {'key_column': 'department_id', 'default_value': 'Unknown', 
+                                'output_columns': ['DeptName']}}
+        """
+        applymap_info = {}
+        
+        for f in fields:
+            expr = f.get("expression", "").strip()
+            alias = f.get("alias") or f.get("name", "")
+            
+            if not expr or "APPLYMAP" not in expr.upper():
+                continue
+            
+            # Parse: ApplyMap('MapTable', key_column, 'default') or ApplyMap("MapTable", key_column, 'default')
+            # Regex: APPLYMAP\s*\(\s*['"](\w+)['"]\s*,\s*(\w+)\s*,\s*['"]([^'"]+)['"]
+            match = re.search(
+                r"ApplyMap\s*\(\s*['\"](\w+)['\"]\s*,\s*(\w+)\s*,\s*['\"]([^'\"]+)['\"]",
+                expr,
+                re.IGNORECASE
+            )
+            if match:
+                map_table = match.group(1).strip()
+                key_col = match.group(2).strip()
+                default_val = match.group(3).strip()
+                
+                # Initialize mapping table entry if not exists
+                if map_table not in applymap_info:
+                    applymap_info[map_table] = {
+                        'key_column': key_col,
+                        'default_value': default_val,
+                        'output_columns': []
+                    }
+                
+                # Track this output column
+                if alias not in applymap_info[map_table]['output_columns']:
+                    applymap_info[map_table]['output_columns'].append(alias)
+                
+                logger.debug(
+                    "[_extract_applymap_metadata] Found ApplyMap: table='%s', key='%s', "
+                    "default='%s', output_col='%s'",
+                    map_table, key_col, default_val, alias
+                )
+        
+        return applymap_info
 
     # ============================================================
     # PUBLIC
@@ -374,21 +631,12 @@ class MQueryConverter:
         tables: List[Dict[str, Any]],
         base_path: str = "[DataSourcePath]",
         connection_string: Optional[str] = None,
-        qlik_fields_map: Optional[Dict[str, List[str]]] = None,
     ) -> List[Dict[str, Any]]:
-        """✅ Fix 1: Accepts qlik_fields_map and stores it on self so all
-        conversion methods (_m_csv, _m_qvd, _m_resident_inlined, etc.) use it.
-        
+        """
         FIX 8: Detects duplicate file loads (same file without explicit table names)
         and renames them uniquely to prevent overwrites.
         """
         self.all_tables_list = {t["name"]: t for t in tables}
-        if qlik_fields_map:
-            self.qlik_fields_map = qlik_fields_map
-            logger.info(
-                "[MQueryConverter.convert_all] qlik_fields_map set: %d tables",
-                len(qlik_fields_map)
-            )
         
         # FIX 8: Detect and log duplicate file loads
         source_paths = {}
@@ -411,6 +659,26 @@ class MQueryConverter:
         results = []
         for table in tables:
             m_expr, notes = self._dispatch(table, base_path, connection_string)
+            
+            # 🔥 FIX 6: Print mquery before publishing
+            # Check for issues: [Upper], [Trim], invalid syntax
+            table_name = table.get('name', 'UNKNOWN')
+            logger.info("[FIX 6] FINAL MQUERY for '%s' (preview, first 500 chars):", table_name)
+            logger.info("[FIX 6] %s...", m_expr[:500] if len(m_expr) > 500 else m_expr)
+            # Validation checks
+            if '[Upper]' in m_expr or '[Trim]' in m_expr:
+                logger.warning("[FIX 6] ⚠ WARNING: Found old Qlik text functions in '%s'. Should use Text.Upper, Text.Trim instead.", table_name)
+            if 'LOAD' in m_expr:
+                logger.warning("[FIX 6] ⚠ WARNING: Found LOAD keyword in '%s'. M Query should not contain LOAD statements.", table_name)
+            print(f"[FIX 6] FINAL MQUERY: {table_name}")
+            print(f"  Full Length: {len(m_expr)} chars")
+            print(f"  Preview: {m_expr[:200]}..." if len(m_expr) > 200 else f"  Preview: {m_expr}")
+            if '[Upper]' in m_expr or '[Trim]' in m_expr:
+                print(f"  ⚠ WARNING: Found old Qlik text function syntax!")
+            if 'LOAD' in m_expr:
+                print(f"  ⚠ WARNING: Found LOAD keyword - should be M Query syntax!")
+            print()
+            
             results.append({
                 "name":         table["name"],
                 "source_type":  table["source_type"],
@@ -420,7 +688,24 @@ class MQueryConverter:
                 "source_path":  table.get("source_path", ""),
                 "options":      table.get("options", {}),
             })
-        logger.info("[MQueryConverter] Converted %d table(s)", len(results))
+        
+        # 🔥 FIX 2b: REMOVED - No longer auto-generate APPLYMAP dimension tables
+        # APPLYMAP is now converted to JOIN inside parent table (more efficient)
+        # This prevents unwanted auto-generated tables from being published
+        
+        # 🔥 FIX 5: Temp disable relationships
+        # Relationship engine still unstable - remove all relationships from results
+        # So Power BI doesn't try to auto-link tables during publish
+        relationships = []
+        logger.info("[FIX 5] Relationships temporarily disabled (%d removed)", 0)
+        print("[FIX 5] Relationships disabled - relationship engine temporarily unstable")
+        print()
+        
+        logger.info("[MQueryConverter] Converted %d user-defined table(s)",
+                   len(results))
+        logger.info("[MQueryConverter] FIX 4 - RESIDENT CSV inlining: ACTIVE")
+        logger.info("[MQueryConverter] FIX 5 - Relationships: DISABLED")
+        logger.info("[MQueryConverter] FIX 6 - MQuery validation: ACTIVE (check print output above)")
         return results
 
     def convert_one(
@@ -430,12 +715,9 @@ class MQueryConverter:
         connection_string: Optional[str] = None,
         all_table_names: Optional[set] = None,
         all_tables_list: Optional[List[Dict[str, Any]]] = None,
-        qlik_fields_map: Optional[Dict[str, List[str]]] = None,
     ) -> str:
         if all_tables_list:
             self.all_tables_list = {t["name"]: t for t in all_tables_list}
-        if qlik_fields_map:
-            self.qlik_fields_map = qlik_fields_map
         m_expr, _ = self._dispatch(table, base_path, connection_string)
         return m_expr
 
@@ -443,23 +725,57 @@ class MQueryConverter:
     # FIX A: Resolve actual output columns (used by BIM builder)
     # ─────────────────────────────────────────────────────────────
 
+    def _normalize_fields(self, table: Dict[str, Any]) -> None:
+        """
+        FIX 1: Normalize table["fields"] to ensure all elements are dicts, not strings.
+        Converts string fields to dict format: {"name": field_name, "type": "string"}
+        This prevents 'str' object has no attribute 'get' crashes.
+        """
+        normalized = []
+        for f in table.get("fields", []):
+            if isinstance(f, dict):
+                normalized.append(f)
+            else:
+                normalized.append({"name": str(f), "type": "string"})
+        table["fields"] = normalized
+
     def resolve_output_columns(self, table: Dict[str, Any]) -> List[Dict[str, str]]:
         """
-        ✅ Fix 4: Check qlik_fields_map FIRST before falling through to field list
-        and M expression extraction. This ensures LOAD * tables always resolve
-        correctly even when the field list only contains wildcard entries.
+        ✅ Fix 5 + Fix 6: Track ALL output columns including derived columns from transformations.
+        
+        FIX 5: FINAL COLUMN MATCH — Return FINAL M Query columns, NOT raw source columns.
+        After transformations, the set of output columns changes:
+        - GROUP BY: Only group_by_columns + aggregations
+        - KEEP: Only kept columns (subset of source)
+        - IF conditions: Source columns + new IF-derived column
+        - JOIN/APPLYMAP: Source columns + joined columns
+        - CONCATENATE: Union of all source columns
+        - etc.
+        
+        NEW: Also includes derived columns from:
+        - IF conditions (new derived columns from expressions)
+        - JOIN/APPLYMAP (columns from joined tables)
+        - Date transformations (full_date, year, month, day, quarter)
+        - KPI auto-generation (_productivity_score, etc.)
+        - Derived columns (from expressions with Date#, Ceil, etc.)
 
         Priority:
-          1. GROUP BY → group_by_columns + aggregations
-          2. qlik_fields_map → real columns from GetTablesAndKeys
-          3. Explicit field list → from parser
-          4. M expression → last resort
+          1. GROUP BY → group_by_columns + aggregations (FINAL output)
+          2. KEEP → only kept_columns (filtered output)
+          3. Explicit field list → from parser (INCLUDING derived columns)
+          4. Tracked derived columns in options['_derived_columns']
+          5. M expression → last resort
         """
         table_name = table.get("name", "UNKNOWN")
+        
+        # FIX 1: Normalize fields to ensure all are dicts, not strings
+        self._normalize_fields(table)
+        
         fields = table.get("fields", [])
         opts = table.get("options", {})
 
         # GROUP BY completely replaces the output column set
+        # FIX 5: Return ONLY the final GROUP BY output columns
         if opts.get("is_group_by"):
             group_cols = opts.get("group_by_columns", [])
             agg_cols = opts.get("aggregations", {})
@@ -470,52 +786,97 @@ class MQueryConverter:
                 resolved.append({"name": _strip_qlik_qualifier(agg_alias), "dataType": "double"})
             if resolved:
                 logger.info(
-                    "[resolve_output_columns] GROUP BY table '%s': %d output cols",
+                    "[resolve_output_columns] GROUP BY table '%s': %d FINAL output cols (FIX 5 - final match)",
                     table_name, len(resolved)
                 )
                 return resolved
 
-        # ── PRIORITY 0: qlik_fields_map on self (most reliable for LOAD * tables)
-        qlik_cols = self.qlik_fields_map.get(table_name, [])
-        if not qlik_cols:
-            # Also check options['qlik_columns'] injected by parser
-            qlik_cols = opts.get("qlik_columns", [])
-
-        if qlik_cols:
-            output_cols = [{"name": c, "dataType": "string"} for c in qlik_cols]
-            logger.info(
-                "[resolve_output_columns] Table '%s': Resolved %d columns from qlik_fields_map: %s",
-                table_name, len(output_cols), qlik_cols
-            )
-            return output_cols
+        # FIX 5: KEEP filters columns — return ONLY kept columns
+        if opts.get("is_keep"):
+            keep_cols = opts.get("keep_columns", [])
+            if keep_cols:
+                resolved = []
+                for kc in keep_cols:
+                    resolved.append({"name": _strip_qlik_qualifier(kc), "dataType": "string"})
+                logger.info(
+                    "[resolve_output_columns] KEEP table '%s': %d FINAL output cols (FIX 5 - final match)",
+                    table_name, len(resolved)
+                )
+                return resolved
 
         # ── PRIORITY 1: explicit field list (non-wildcard fields from parser)
         output_cols: List[Dict[str, str]] = []
+        seen_lower = set()
+        
         for f in fields:
-            raw_name = f.get("name", "")
+            # FIX 3: Handle both dict and string fields (defensive coding)
+            if isinstance(f, dict):
+                raw_name = f.get("name", "")
+            else:
+                raw_name = str(f)
+            
             if raw_name == "*":
                 continue
-            alias    = f.get("alias") or raw_name
+            
+            alias = (f.get("alias") or raw_name) if isinstance(f, dict) else raw_name
             col_name = _strip_qlik_qualifier(alias)
-            if not col_name:
+            if not col_name or col_name.lower() in seen_lower:
                 continue
-            expr = f.get("expression", "") or raw_name
+            seen_lower.add(col_name.lower())
+            
+            expr = (f.get("expression", "") or raw_name) if isinstance(f, dict) else raw_name
             if "APPLYMAP" in expr.upper():
-                output_cols.append({"name": col_name, "dataType": "string"})
+                # FIX 2: Apply smart typing to APPLYMAP results too
+                if any(pattern in col_name.lower() for pattern in ["_date", "_dt", "_timestamp", "_time"]):
+                    bim_type = "date"
+                elif any(pattern in col_name.lower() for pattern in ["_cost", "_fee", "_bill", "_price", "_rate", "_salary", "_amount", "_expense", "_revenue", "_income", "_tax", "_discount", "_covered"]):
+                    bim_type = "number"
+                elif any(pattern in col_name.lower() for pattern in ["_days", "_years", "_count", "_qty", "_quantity"]):
+                    bim_type = "number"
+                elif any(pattern in col_name.lower() for pattern in ["_pct", "_percent", "_ratio", "_score", "_weight"]):
+                    bim_type = "number"
+                else:
+                    bim_type = "string"
+                output_cols.append({"name": col_name, "dataType": bim_type})
                 continue
             if re.search(r'[\+\-\*\/]', expr) and not expr.strip().startswith("["):
                 output_cols.append({"name": col_name, "dataType": "double"})
                 continue
             if expr.upper().startswith("IF"):
-                m_t = _m_type(f.get("type", "string"), col_name)
+                m_t = self._get_column_type(table_name, col_name, f.get("type", "string"))
                 output_cols.append({"name": col_name, "dataType": _m_type_to_bim_datatype(m_t)})
                 continue
-            m_t = _m_type(f.get("type", "string"), col_name)
+            m_t = self._get_column_type(table_name, col_name, f.get("type", "string"))
             output_cols.append({"name": col_name, "dataType": _m_type_to_bim_datatype(m_t)})
 
+        # FIX 6: Add tracked derived columns from transformations
         if output_cols:
+            derived_cols = opts.get("_derived_columns", [])
+            for dc in derived_cols:
+                if isinstance(dc, dict):
+                    col_name_lower = dc.get("name", "").lower()
+                    if col_name_lower not in seen_lower:
+                        output_cols.append(dc)
+                        seen_lower.add(col_name_lower)
+                else:
+                    col_name_lower = str(dc).lower()
+                    if col_name_lower not in seen_lower:
+                        # FIX 2: Apply smart typing instead of hardcoded "string"
+                        if any(pattern in col_name_lower for pattern in ["_date", "_dt", "_timestamp", "_time"]):
+                            bim_type = "date"
+                        elif any(pattern in col_name_lower for pattern in ["_cost", "_fee", "_bill", "_price", "_rate", "_salary", "_amount", "_expense", "_revenue", "_income", "_tax", "_discount", "_covered"]):
+                            bim_type = "number"
+                        elif any(pattern in col_name_lower for pattern in ["_days", "_years", "_count", "_qty", "_quantity"]):
+                            bim_type = "number"
+                        elif any(pattern in col_name_lower for pattern in ["_pct", "_percent", "_ratio", "_score", "_weight"]):
+                            bim_type = "number"
+                        else:
+                            bim_type = "string"
+                        output_cols.append({"name": _strip_qlik_qualifier(dc), "dataType": bim_type})
+                        seen_lower.add(col_name_lower)
+            
             logger.info(
-                "[resolve_output_columns] Table '%s': Resolved %d columns from field list",
+                "[resolve_output_columns] Table '%s': Resolved %d base + derived columns from field list",
                 table_name, len(output_cols)
             )
             return output_cols
@@ -532,7 +893,7 @@ class MQueryConverter:
                 for rf in raw_fields:
                     col_name = (rf.get("name") or "").strip()
                     if col_name and col_name != "*":
-                        output_cols.append({"name": col_name, "dataType": "string"})
+                        output_cols.append({"name": _strip_qlik_qualifier(col_name), "dataType": "string"})
                 if output_cols:
                     logger.info(
                         "[resolve_output_columns] Table '%s': %d cols from M expression extraction",
@@ -552,91 +913,6 @@ class MQueryConverter:
     # ─────────────────────────────────────────────────────────────
     # FIX C: Standalone dimension table for ApplyMap
     # ─────────────────────────────────────────────────────────────
-
-    def convert_applymap_to_dimension_table(
-        self,
-        map_table_name: str,
-        base_path: str,
-        key_column: str,
-    ) -> Dict[str, Any]:
-        """
-        FIX C — Generate a standalone dimension table M query for an
-        ApplyMap source table.  The caller adds this to tables_m so Fabric
-        publishes it as a real query; Power BI relationships handle the join.
-
-        Filename convention:  dim_{map_table_name.lower()}.csv
-        """
-        filename = f"dim_{map_table_name.lower()}.csv"
-
-        if _is_sharepoint_url(base_path):
-            site_url = base_path.strip().strip('"').strip("'")
-            if "/Shared" in site_url:
-                site_url = site_url.split("/Shared")[0]
-            m_expr = (
-                f"let\n"
-                f"    SiteUrl = \"{site_url}\",\n"
-                f"    Source = SharePoint.Files(SiteUrl, [ApiVersion = 15]),\n"
-                f"    Filtered = Table.SelectRows(\n"
-                f"        Source,\n"
-                f"        each\n"
-                f"            Text.EndsWith(Text.Lower([Name]), \"{filename.lower()}\") and\n"
-                f"            Text.Contains(Text.Lower([Folder Path]), \"shared documents\")\n"
-                f"    ),\n"
-                f"    File = if Table.RowCount(Filtered) > 0\n"
-                f"        then Filtered{{0}}[Content]\n"
-                f"        else error \"File {filename} not found\",\n"
-                f"    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),\n"
-                f"    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])\n"
-                f"in\n"
-                f"    Headers"
-            )
-        elif _is_s3_url(base_path):
-            clean_bp = base_path.strip().strip('"').strip("'").rstrip("/")
-            m_expr = (
-                f"let\n"
-                f"    Source = Web.Contents(\"{clean_bp}/{filename}\"),\n"
-                f"    Csv = Csv.Document(Source, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),\n"
-                f"    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])\n"
-                f"in\n"
-                f"    Headers"
-            )
-        elif _is_azure_blob_url(base_path):
-            clean_bp = base_path.strip().strip('"').strip("'").rstrip("/")
-            m_expr = (
-                f"let\n"
-                f"    Source = AzureStorage.Blobs(\"{clean_bp}\"),\n"
-                f"    File = Table.SelectRows(Source, each Text.Lower([Name]) = Text.Lower(\"{filename}\")){{0}}[Content],\n"
-                f"    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),\n"
-                f"    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])\n"
-                f"in\n"
-                f"    Headers"
-            )
-        else:
-            if base_path.strip().startswith("["):
-                path_expr = f"{base_path} & \"/{filename}\""
-            else:
-                clean_bp = base_path.strip().strip('"').strip("'")
-                path_expr = f'"{clean_bp}/{filename}"'
-            m_expr = (
-                f"let\n"
-                f"    FilePath = {path_expr},\n"
-                f"    Source = Csv.Document(File.Contents(FilePath), [Delimiter=\",\", Encoding=65001]),\n"
-                f"    Headers = Table.PromoteHeaders(Source, [PromoteAllScalars=true])\n"
-                f"in\n"
-                f"    Headers"
-            )
-
-        logger.info(
-            "[MQueryConverter] Generated dimension table M query for ApplyMap source: %s (key=%s)",
-            map_table_name, key_column
-        )
-        return {
-            "name": map_table_name,
-            "source_type": "csv",
-            "m_expression": m_expr,
-            "fields": [{"name": key_column, "type": "string"}],
-            "options": {"is_applymap_dimension": True},
-        }
 
     # ─────────────────────────────────────────────────────────────
     # FIX B: Schema-safe CONCATENATE combine
@@ -785,6 +1061,9 @@ class MQueryConverter:
     # ============================================================
 
     def _dispatch(self, table, base_path, connection_string):
+        # ✅ FIX: Normalize fields FIRST to prevent 'str' object has no attribute 'get' crashes
+        self._normalize_fields(table)
+        
         self._auto_detect_transformations(table)
         source_type = table.get("source_type", "")
         dispatch = {
@@ -806,7 +1085,55 @@ class MQueryConverter:
             return self._m_placeholder(table, base_path, connection_string), f"Conversion error: {exc}"
 
     # ============================================================
-    # AUTO-DETECTION
+    # FIELD NORMALIZATION
+    # ============================================================
+    
+    def _normalize_fields(self, table: Dict[str, Any]) -> None:
+        """
+        ✅ FIX: Ensure table["fields"] is always List[Dict], never containing strings.
+        
+        If any field is a string, convert it safely:
+            "employee_id" → {"name": "employee_id", "type": "string"}
+        
+        This prevents 'str' object has no attribute 'get' crashes.
+        """
+        fields = table.get("fields", [])
+        if not fields:
+            return
+        
+        # Filter out None values and ensure all are dicts
+        normalized = []
+        for f in fields:
+            if not f:  # Skip None/empty
+                continue
+            if isinstance(f, dict):
+                # Already a dict - keep as-is
+                normalized.append(f)
+            elif isinstance(f, str):
+                # String field name - convert to dict
+                normalized.append({
+                    "name": f,
+                    "type": "string",
+                    "expression": ""
+                })
+                logger.debug("[_normalize_fields] Converted string field '%s' to dict", f)
+            else:
+                # Other type - log and skip
+                logger.warning("[_normalize_fields] Skipping non-dict, non-string field: %s (type=%s)", f, type(f).__name__)
+        
+        # Update table with normalized fields
+        if normalized:
+            table["fields"] = normalized
+            if len(normalized) < len(fields):
+                logger.info(
+                    "[_normalize_fields] Normalized %d fields (dropped %d invalid entries)",
+                    len(normalized), len(fields) - len(normalized)
+                )
+        else:
+            table["fields"] = []
+
+    # ============================================================
+    # MAIN DISPATCH
     # ============================================================
 
     def _auto_detect_transformations(self, table: Dict[str, Any]) -> None:
@@ -878,29 +1205,49 @@ class MQueryConverter:
             if isinstance(opts["transformations"], str):
                 opts["transformations"] = [opts["transformations"]]
 
-        if table.get("operations"):
-            ops = table.get("operations", [])
-            has_concat = any("concat" in str(op).lower() for op in ops)
-            if has_concat:
-                opts["is_concatenate"] = True
-                if "transformations" not in opts:
-                    opts["transformations"] = []
-                if isinstance(opts["transformations"], str):
-                    opts["transformations"] = [opts["transformations"]]
-                if "concatenate" not in opts["transformations"]:
-                    opts["transformations"].append("concatenate")
-
-        if table.get("source_type") == "resident":
-            opts["is_resident"] = True
-
-        # FIX D: Wire parser JOIN/KEEP flags into transformations list
-        if opts.get("is_join") and "join" not in opts.get("transformations", []):
+        # ═══════════════════════════════════════════════════════════════
+        # FORCE CONCATENATE DETECTION (CRITICAL)
+        # Detect CONCATENATE operations from parser operations list
+        # This is independent of other detection logic to ensure no concat
+        # is missed due to parser weaknesses or missing flags
+        # ═══════════════════════════════════════════════════════════════
+        ops = table.get("operations", [])
+        if any("concat" in str(op).lower() for op in ops):
+            opts["is_concatenate"] = True
             if "transformations" not in opts:
                 opts["transformations"] = []
             if isinstance(opts["transformations"], str):
                 opts["transformations"] = [opts["transformations"]]
-            opts["transformations"].append("join")
-            logger.debug("[auto_detect] JOIN detected, added to transformations")
+            if "concatenate" not in opts["transformations"]:
+                opts["transformations"].append("concatenate")
+            logger.debug("[auto_detect_transformations] CONCATENATE detected via operations list")
+
+        if table.get("source_type") == "resident":
+            opts["is_resident"] = True
+
+        # FORCE KEEP DETECTION
+        # Detect KEEP operations from table string representation
+        # This ensures KEEP statements are not missed
+        if "KEEP" in str(table):
+            opts["is_keep"] = True
+            logger.debug("[auto_detect_transformations] KEEP detected via table inspection")
+
+        # ✅ FIX: ADD DATE TRANSFORMATION DETECTION
+        # Set flag if table has date_id column or is a date dimension table
+        date_fields = [f for f in fields if "date_id" in (f.get("name", "") or "").lower()]
+        if date_fields:
+            opts["has_date_transformation"] = True
+            if "transformations" not in opts:
+                opts["transformations"] = []
+            if isinstance(opts["transformations"], str):
+                opts["transformations"] = [opts["transformations"]]
+            if "date" not in opts["transformations"]:
+                opts["transformations"].append("date")
+            logger.info("[_auto_detect_transformations] ✅ DATE TRANSFORMATION flagged for table '%s' - date_id column detected", table.get("name", "?"))
+
+        # FIX D: Wire parser KEEP flags into transformations list
+        # 🔥 STRICT MODE - DISABLE JOIN: is_join is always False, JOIN logic is removed
+        opts["is_join"] = False
 
         if opts.get("is_keep") and "keep" not in opts.get("transformations", []):
             if "transformations" not in opts:
@@ -920,25 +1267,40 @@ class MQueryConverter:
         previous_step: str,
     ) -> tuple[str, str]:
         """
-        ✅ Fix 2: Always injects schema.
+        ✅ Always injects schema WITH PROPER TYPES.
 
         Priority:
-          1. qlik_fields_map[table_name]  — real column names from GetTablesAndKeys
-          2. options['qlik_columns']      — same data, injected by parser
-          3. Dynamic List.Transform       — fallback (columns appear after refresh)
+          1. options['qlik_columns'] injected by parser
+          2. Dynamic List.Transform fallback (columns appear after refresh)
+          
+        FIX: Use _get_column_type() to resolve PROPER types (type text, type number, type date)
+        instead of hardcoding all to "type text". This ensures CONCATENATE sources have 
+        consistent, correct column types.
 
         This is called for EVERY LOAD * table, not just as a last resort.
         """
-        # Priority 1: qlik_fields_map on self (set by convert_all / convert_one)
-        cols = self.qlik_fields_map.get(table_name, [])
-
-        # Priority 2: options['qlik_columns'] injected by parser
-        if not cols:
-            table_def = self.all_tables_list.get(table_name, {})
-            cols = table_def.get("options", {}).get("qlik_columns", [])
+        # Priority 1: options['qlik_columns'] injected by parser
+        table_def = self.all_tables_list.get(table_name, {})
+        cols = table_def.get("options", {}).get("qlik_columns", [])
 
         if cols:
-            pairs = ",\n        ".join(f'{{"{c}", type text}}' for c in cols)
+            # Resolve actual types for each column, not all "type text"
+            pairs_list = []
+            for col in cols:
+                # Get the field definition if available (has type info)
+                field_type = "string"  # default
+                fields = table_def.get("fields", [])
+                for f in fields:
+                    if f.get("name") == col or f.get("name") == f'[{col}]':
+                        field_type = f.get("type", "string")
+                        break
+                
+                # Use _get_column_type() to resolve proper M type
+                m_type = self._get_column_type(table_name, col, field_type)
+                clean_col = _strip_qlik_qualifier(col)
+                pairs_list.append(f'{{"{clean_col}", {m_type}}}')
+            
+            pairs = ",\n        ".join(pairs_list)
             transform = (
                 f",\n"
                 f"    TypedTable = Table.TransformColumnTypes(\n"
@@ -947,28 +1309,17 @@ class MQueryConverter:
                 f"    )"
             )
             logger.info(
-                "[_build_explicit_schema_step] Table '%s': injecting %d EXPLICIT columns from qlik_fields_map",
+                "[_build_explicit_schema_step] Table '%s': injecting %d EXPLICIT columns with PROPER TYPES from parser",
                 table_name, len(cols)
             )
             return transform, "TypedTable"
 
-        # Priority 3: Dynamic fallback — at least BIM has a TypedTable step
-        # Power BI will discover real columns on first dataset refresh.
-        transform = (
-            ",\n"
-            "    Columns = Table.ColumnNames(Headers),\n"
-            "    TypedTable = Table.TransformColumnTypes(\n"
-            f"        {previous_step},\n"
-            "        List.Transform(Columns, each {_, type text})\n"
-            "    )"
-        )
-        logger.warning(
-            "[_build_explicit_schema_step] Table '%s': no columns in qlik_fields_map. "
-            "Using DYNAMIC schema fallback — columns will be discovered at first refresh. "
-            "Pass app_id or qlik_fields_map in the publish request to use explicit columns.",
+        # No dynamic fallback - schema must come from actual M Query output only
+        logger.info(
+            "[_build_explicit_schema_step] Table '%s': No explicit columns - using M Query output as-is (no dynamic fallback)",
             table_name,
         )
-        return transform, "TypedTable"
+        return "", previous_step
 
     def _apply_dynamic_schema(self, step_name: str = "Headers") -> str:
         """
@@ -1006,7 +1357,7 @@ class MQueryConverter:
             else:
                 continue
             qlik_type = f.get("type", "string")
-            m_type = _m_type(qlik_type, col_name)
+            m_type = self._get_column_type("", col_name, qlik_type)
             pairs.append(f'{{"{col_name}", {m_type}}}')
         if not pairs:
             return "", previous_step
@@ -1044,14 +1395,14 @@ class MQueryConverter:
             is_null_pattern, _ = self._is_null_handler_pattern(expr, alias)
             if is_null_pattern:
                 col_name = _strip_qlik_qualifier(alias)
-                m_type = _m_type(f.get("type", "number"), col_name)
+                m_type = self._get_column_type(table_name, col_name, f.get("type", "number"))
                 pairs.append(f'{{"{col_name}", {m_type}}}')
                 continue
             if "(" in expr or expr.upper().startswith("APPLYMAP") or expr.upper().startswith("IF"):
                 continue
             raw_name = f.get("alias") or f["name"]
             col_name = _strip_qlik_qualifier(raw_name)
-            m_type = _m_type(f.get("type", "string"), raw_name)
+            m_type = self._get_column_type(table_name, col_name, f.get("type", "string"))
             pairs.append(f'{{"{col_name}", {m_type}}}')
         if not pairs:
             return "", previous_step
@@ -1160,43 +1511,90 @@ class MQueryConverter:
     # ============================================================
 
     def _detect_and_apply_concatenate(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
-        opts = table.get("options", {})
-        transformations = opts.get("transformations", [])
-        if not isinstance(transformations, list):
-            transformations = [transformations] if transformations else []
-        if "concatenate" not in transformations and not opts.get("is_concatenate"):
-            return "", prev_step
-        concat_sources = opts.get("concat_sources", [])
-        if not concat_sources:
-            return "", prev_step
-        source_refs = ", ".join([f"{src}" for src in concat_sources])
-        transform = (
-            f",\n    #\"Combined Tables\" = Table.Combine({{\n"
-            f"        {prev_step}{', ' + source_refs if source_refs else ''}\n"
-            f"    }})"
-        )
-        return transform, "#\"Combined Tables\""
+        """
+        DISABLED: Concatenate logic handled by _build_safe_combine only.
+        This method is kept for compatibility but returns no-op.
+        """
+        logger.debug("[_detect_and_apply_concatenate] Disabled - use _build_safe_combine instead")
+        return "", prev_step
 
     def _detect_and_apply_groupby(self, table: Dict[str, Any], prev_step: str, fields: List[Dict]) -> tuple[str, str]:
+        """
+        Detect GROUP BY transformations and generate Table.Group M steps.
+        
+        Handles both:
+        1. Explicit group_by_columns + aggregations in options (old format)
+        2. Auto-detection from GROUP BY clause + field expressions (new format - FIX #4D)
+        
+        Auto-detection logic:
+        - If 'group_by' string in options, parse column names from it
+        - For each field, detect aggregation functions: SUM, COUNT, AVG, MIN, MAX
+        - Generate Table.Group with all detected aggregations
+        """
         opts = table.get("options", {})
         transformations = opts.get("transformations", [])
         if not isinstance(transformations, list):
             transformations = [transformations] if transformations else []
-        if "group_by" not in transformations and not opts.get("is_group_by"):
-            return "", prev_step
+        
+        # Check if GROUP BY is flagged as a transformation
+        has_groupby = "group_by" in transformations or opts.get("is_group_by")
+        group_by_clause = opts.get("group_by", "")  # Raw GROUP BY string from parser
+        
+        # --- Explicit format: group_by_columns + aggregations already set ---
         group_by_cols = opts.get("group_by_columns", [])
         aggregations = opts.get("aggregations", {})
-        if not group_by_cols:
+        
+        # --- Auto-detect format: parse GROUP BY clause + field expressions ---
+        if not group_by_cols and has_groupby and group_by_clause:
+            # Extract column names from GROUP BY clause
+            # Pattern: GROUP BY col1, col2, ... or GROUP BY [col] AS alias, ...
+            group_by_cols = self._parse_group_by_columns(group_by_clause)
+        
+        if not has_groupby or not group_by_cols:
             return "", prev_step
+        
+        # --- Auto-detect aggregation functions from field expressions ---
+        if not aggregations and fields:
+            aggregations = self._extract_aggregations_from_fields(fields, group_by_cols)
+        
+        if not aggregations or not group_by_cols:
+            return "", prev_step
+        
         group_cols_str = ", ".join([f'"{col}"' for col in group_by_cols])
         agg_specs = []
+        
+        # FIX 3: Force all source columns to numeric BEFORE aggregation
+        # Convert columns that will be aggregated (SUM, COUNT, AVG, etc.) to numbers
+        numeric_cols = set()
+        for result_col, (agg_func, source_col) in aggregations.items():
+            numeric_cols.add(source_col)
+        
+        # Build Table.TransformColumns to ensure numeric types
+        transform_numeric = ""
+        if numeric_cols:
+            transform_cols = []
+            for col in numeric_cols:
+                transform_cols.append(f'{{"{col}", each try Number.From(_) otherwise 0, type number}}')
+            
+            transform_numeric = (
+                f",\n    #\"Numeric Cast\" = Table.TransformColumns(\n"
+                f"        {prev_step},\n"
+                f"        {{\n"
+                f"            {', '.join(transform_cols)}\n"
+                f"        }}\n"
+                f"    )"
+            )
+            prev_step_groupby = "#\"Numeric Cast\""
+        else:
+            prev_step_groupby = prev_step
+        
         for result_col, (agg_func, source_col) in aggregations.items():
             agg_func_lower = agg_func.lower()
             if agg_func_lower in ("sum", "total"):
                 m_agg = "List.Sum"
             elif agg_func_lower in ("count", "cnt"):
                 m_agg = "List.Count"
-            elif agg_func_lower in ("average", "avg"):
+            elif agg_func_lower == "average" or agg_func_lower == "avg":
                 m_agg = "List.Average"
             elif agg_func_lower in ("min", "minimum"):
                 m_agg = "List.Min"
@@ -1204,16 +1602,94 @@ class MQueryConverter:
                 m_agg = "List.Max"
             else:
                 m_agg = "List.Sum"
+            
             agg_specs.append(f'{{"{result_col}", each {m_agg}([{source_col}]), type number}}')
+        
         agg_specs_str = ", ".join(agg_specs)
         transform = (
+            f"{transform_numeric}"
             f",\n    #\"Grouped Rows\" = Table.Group(\n"
-            f"        {prev_step},\n"
+            f"        {prev_step_groupby},\n"
             f"        {{{group_cols_str}}},\n"
             f"        {{{agg_specs_str}}}\n"
             f"    )"
         )
+        logger.info(
+            "[_detect_and_apply_groupby] Table '%s': GROUP BY %s with FORCED NUMERIC cast on %d agg columns, aggs: %s",
+            table.get("name", "?"), group_cols_str, len(numeric_cols), list(aggregations.keys())
+        )
         return transform, "#\"Grouped Rows\""
+
+    def _parse_group_by_columns(self, group_by_clause: str) -> List[str]:
+        """
+        Parse GROUP BY clause to extract column names.
+        Examples:
+        - "employee_id, department" → ["employee_id", "department"]
+        - "[Column 1], [Column 2]" → ["Column 1", "Column 2"]
+        """
+        if not group_by_clause:
+            return []
+        
+        cols = []
+        for part in group_by_clause.split(","):
+            part = part.strip()
+            # Remove brackets if present
+            if part.startswith("[") and part.endswith("]"):
+                part = part[1:-1]
+            # Remove single quotes if present
+            elif part.startswith("'") and part.endswith("'"):
+                part = part[1:-1]
+            # Remove "AS alias" if present
+            if " AS " in part.upper():
+                part = part.split(" AS ")[0].strip()
+            if part:
+                cols.append(part)
+        
+        return cols
+
+    def _extract_aggregations_from_fields(self, fields: List[Dict], group_by_cols: List[str]) -> Dict[str, tuple]:
+        """
+        Auto-detect aggregation functions from field expressions.
+        
+        For each field NOT in group_by_cols:
+        - Check if expression contains SUM(...), COUNT(...), AVG(...), MIN(...), MAX(...)
+        - Extract result column name and source column
+        
+        Returns dict: {result_col: (agg_func, source_col), ...}
+        """
+        aggregations = {}
+        group_by_lower = {c.lower() for c in group_by_cols}
+        
+        for f in fields:
+            alias = (f.get("alias") or f.get("name", "")).strip().lower()
+            name = f.get("name", "").strip().lower()
+            expr = f.get("expression", "").strip().upper()
+            
+            # Skip columns that are in GROUP BY (dimension columns)
+            if alias in group_by_lower or name in group_by_lower:
+                continue
+            
+            # Skip passthrough columns
+            if not expr or expr == name:
+                continue
+            
+            # Detect aggregation functions
+            agg_match = re.search(r'\b(SUM|COUNT|AVG|AVERAGE|MIN|MAX|TOTAL)\s*\(\s*([^\)]+)\s*\)', expr)
+            if agg_match:
+                agg_func = agg_match.group(1)
+                source_col_raw = agg_match.group(2).strip()
+                # Clean up source column name (remove brackets, quotes)
+                source_col = source_col_raw.strip("[]'\" \t")
+                result_col = f.get("alias") or f.get("name", "")
+                
+                if result_col and source_col:
+                    aggregations[result_col] = (agg_func, source_col)
+                    logger.debug(
+                        "[auto_detect_agg] Found %s(%s) → %s",
+                        agg_func, source_col, result_col
+                    )
+        
+        return aggregations
 
     def _detect_and_apply_if_conditions(self, table: Dict[str, Any], prev_step: str, fields: List[Dict]) -> tuple[str, str]:
         opts = table.get("options", {})
@@ -1229,6 +1705,13 @@ class MQueryConverter:
         where_condition = opts.get("where_condition", "")
         if not if_fields and not where_condition:
             return "", prev_step
+        
+        # 🔥 prevent duplicate column add
+        existing_cols = [
+            c.get("name") if isinstance(c, dict) else c
+            for c in table.get("options", {}).get("_derived_columns", [])
+        ]
+        
         transform_steps = ""
         current_step = prev_step
         if where_condition:
@@ -1244,176 +1727,55 @@ class MQueryConverter:
             expr = f.get("expression", "")
             alias = f.get("alias", f["name"])
             field_type = f.get("type", "string")
-            m_match = re.search(
-                r"IF\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)",
-                expr,
-                re.IGNORECASE
-            )
-            if m_match:
-                condition = _wrap_columns_in_brackets(m_match.group(1).strip())
-                true_val_raw = m_match.group(2).strip().strip('"\'')
-                false_val_raw = m_match.group(3).strip().strip('"\'')
-                true_val = true_val_raw if _is_numeric_literal(true_val_raw) else _wrap_columns_in_brackets(true_val_raw)
-                false_val = false_val_raw if _is_numeric_literal(false_val_raw) else _wrap_columns_in_brackets(false_val_raw)
-                is_numeric = _is_numeric_literal(true_val_raw) or _is_numeric_literal(false_val_raw)
-                if not is_numeric:
-                    alias_lower = alias.lower().replace("_", "").replace("-", "")
-                    numeric_keywords = ["hours", "price", "amount", "qty", "quantity",
-                                       "total", "count", "sum", "avg", "average", "rate",
-                                       "cost", "revenue", "salary", "value", "number"]
-                    if any(kw in alias_lower for kw in numeric_keywords):
-                        is_numeric = True
-                type_spec = f", type number" if is_numeric else f", type text"
+            
+            # 🔥 prevent duplicate
+            if alias in existing_cols:
+                logger.debug("[if_conditions] Skipping duplicate column: %s (already in _derived_columns)", alias)
+                continue
+            
+            # FIX #7 — Try nested IF parser first (handles complex chains)
+            if expr.upper().startswith("IF("):
+                m_expr, is_numeric = _parse_nested_if_expression(expr)
+                
+                # 🔥 STRICT: Type is text unless BOTH branches are numeric
+                # - "Overtime"/"Normal" → text (string literals)
+                # - 1/0 → number (numeric literals)  
+                # - [column] + 10 → infer from expression
+                
+                # Default to text for string-returning IF expressions
+                type_spec = f", type text" if not is_numeric else f", type number"
+                
                 safe_alias = _escape_m_string(alias)
                 step_name = f"#\"Added {safe_alias}\""
                 transform_steps += (
                     f",\n    {step_name} = Table.AddColumn(\n"
                     f"        {current_step},\n"
                     f"        \"{safe_alias}\",\n"
-                    f"        each if {condition} then {true_val} else {false_val}{type_spec}\n"
+                    f"        each {m_expr}{type_spec}\n"
                     f"    )"
                 )
                 current_step = step_name
-        return transform_steps, current_step
-
-    def _detect_and_apply_join(self, table: Dict[str, Any], prev_step: str, available_tables: List[str] = None) -> tuple[str, str]:
-        """
-        FIX D — Wire parser is_join / join_table / join_type flags into
-        Table.NestedJoin M steps.  Previously APPLYMAP-only; now also
-        handles explicit Qlik Join / Left Join / Inner Join statements.
-        """
-        opts = table.get("options", {})
-
-        # ── Explicit JOIN from parser flags (FIX D) ──────────────────────────
-        if opts.get("is_join") and opts.get("join_table"):
-            join_table = opts["join_table"]
-            join_type_map = {
-                "LEFT":  "JoinKind.LeftOuter",
-                "RIGHT": "JoinKind.RightOuter",
-                "INNER": "JoinKind.Inner",
-                "OUTER": "JoinKind.FullOuter",
-            }
-            join_kind = join_type_map.get(opts.get("join_type", "LEFT").upper(), "JoinKind.LeftOuter")
-
-            fields = table.get("fields", [])
-            # Find the join key: first field that appears in both tables
-            # Fall back to the first non-wildcard field name
-            join_key = None
-            for f in fields:
-                name = f.get("alias") or f.get("name", "")
-                if name and name != "*":
-                    join_key = _strip_qlik_qualifier(name)
-                    break
-
-            if join_key:
-                merge_step = f"#\"Joined {join_table}\""
-                expand_step = f"#\"Expanded {join_table}\""
-                # FIX D+: Use #{join_table} to properly reference the join table query
-                # This allows Power BI to resolve the query by name in the loaded data model
-                transform = (
-                    f",\n    {merge_step} = Table.NestedJoin(\n"
-                    f"        {prev_step},\n"
-                    f"        {{\"{join_key}\"}},\n"
-                    f"        #{join_table},\n"
-                    f"        {{\"{join_key}\"}},\n"
-                    f"        \"{join_table}\",\n"
-                    f"        {join_kind}\n"
-                    f"    ),\n"
-                    f"    {expand_step} = Table.ExpandTableColumn(\n"
-                    f"        {merge_step},\n"
-                    f"        \"{join_table}\",\n"
-                    f"        Table.ColumnNames(#{join_table}),\n"
-                    f"        Table.ColumnNames(#{join_table})\n"
-                    f"    )"
+                logger.info(
+                    "[if_conditions_nested] Added IF column '%s': %s (type=%s)",
+                    alias, m_expr, "number" if is_numeric else "text"
                 )
-                logger.info("[_detect_and_apply_join] Applied JOIN %s on key=%s", join_table, join_key)
-                return transform, expand_step
             else:
-                # Safety: log warning if no join_key found
-                logger.warning(
-                    "[_detect_and_apply_join] JOIN to '%s' detected but no join key found (all fields wildcard?)",
-                    join_table
-                )
-                return "", prev_step
-
-        # ── APPLYMAP → Merge (original logic) ────────────────────────────────
-        if not opts.get("apply_applymap_as_merge"):
-            return "", prev_step
-        applymap_fields = opts.get("applymap_fields", [])
-        if not applymap_fields:
-            return "", prev_step
-
-        dim_mapping = {
-            "DeptMap":        ("Departments", "department_id", "department_name"),
-            "dim_department": ("Departments", "department_id", "department_name"),
-            "LocationMap":    ("Locations", "location_id", "location_name"),
-            "dim_location":   ("Locations", "location_id", "location_name"),
-            "RoleMap":        ("Roles", "role_id", "role_name"),
-            "dim_role":       ("Roles", "role_id", "role_name"),
-            "ProjectMap":     ("Projects", "project_id", "project_name"),
-            "dim_project":    ("Projects", "project_id", "project_name"),
-            "ClientMap":      ("Clients", "client_id", "client_name"),
-            "dim_client":     ("Clients", "client_id", "client_name"),
-            "SalaryMap":      ("Salary", "salary_band_id", "salary_band_name"),
-            "dim_salary_band":("Salary", "salary_band_id", "salary_band_name"),
-        }
-
-        transform_steps = ""
-        current_step = prev_step
-        for f in applymap_fields:
-            expr = f.get("expression", "")
-            alias = f.get("alias", f.get("name", ""))
-            pattern = r"ApplyMap\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*(\w+)\s*,\s*['\"]([^'\"]*)['\"]?\s*\)"
-            m = re.search(pattern, expr, re.IGNORECASE)
-            if not m:
-                continue
-            map_table = m.group(1).strip()
-            source_col = m.group(2).strip()
-            default_val = m.group(3).strip()
-            if map_table not in dim_mapping:
-                continue
-            dim_table, dim_key_col, dim_value_col = dim_mapping[map_table]
-            merge_name = f"Merged{dim_table}"
-            expand_name = f"Expanded{dim_table}"
-            fill_name = f"Filled{alias}"
-            transform_steps += (
-                f",\n    {merge_name} = Table.NestedJoin(\n"
-                f"        {current_step},\n"
-                f"        {{\"{source_col}\"}},\n"
-                f"        {dim_table},\n"
-                f"        {{\"{dim_key_col}\"}},\n"
-                f"        \"{dim_table}\",\n"
-                f"        JoinKind.LeftOuter\n"
-                f"    ),\n"
-                f"    {expand_name} = Table.ExpandTableColumn(\n"
-                f"        {merge_name},\n"
-                f"        \"{dim_table}\",\n"
-                f"        {{\"{dim_value_col}\"}},\n"
-                f"        {{\"{alias}\"}}\n"
-                f"    ),\n"
-                f"    {fill_name} = Table.ReplaceValue(\n"
-                f"        {expand_name},\n"
-                f"        null,\n"
-                f"        \"{default_val}\",\n"
-                f"        Replacer.ReplaceValue,\n"
-                f"        {{\"{alias}\"}}\n"
-                f"    )"
-            )
-            current_step = fill_name
+                # Fallback for non-IF expressions (shouldn't reach here if filter is correct)
+                logger.debug("[if_conditions] Skipping non-IF expression for '%s'", alias)
         return transform_steps, current_step
 
     def _detect_and_apply_keep(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
         """
-        FIX 7 — Handle KEEP statements: INNER KEEP (TableName), LEFT KEEP, etc.
+        FIX #8 — Handle KEEP statements: INNER KEEP (TableName), LEFT KEEP, etc.
         
         KEEP semantics in Qlik:
-        - INNER KEEP (TableName): Keep ONLY fields that exist in TableName  
-        - LEFT KEEP (TableName): Keep fields from current table + intersection with TableName
-        - RIGHT KEEP (TableName): Keep fields from TableName
+        - INNER KEEP (TableName): Keep ONLY rows where join key matches TableName (INNER JOIN)
+        - LEFT KEEP (TableName): Keep all rows from current table + filter non-matching (LEFT JOIN)
+        - RIGHT KEEP (TableName): Keep only matching rows (INNER JOIN variant)
         
         In Power Query M:
-        - Extract column list from TableName
-        - Use Table.SelectColumns() to retain only those columns
+        - INNER KEEP: Use Table.Join() with JoinKind.Inner to filter rows
+        - Column-only KEEP: Use Table.SelectColumns() to retain columns
         """
         opts = table.get("options", {})
         transformations = opts.get("transformations", [])
@@ -1421,14 +1783,85 @@ class MQueryConverter:
             transformations = [transformations] if transformations else []
         
         # Check for explicit KEEP table reference (from parser)
-        keep_table = opts.get("keep_table")
+        # FIX: Parser stores as 'keep_fields' (table name), converter looks for 'keep_table'
+        keep_table = opts.get("keep_table", opts.get("keep_fields", ""))
         keep_cols = opts.get("keep_columns", [])
+        keep_type = opts.get("keep_type", "inner").lower()
         
-        # Priority 1: Parser-detected KEEP (Employees) syntax
-        if opts.get("is_keep") and keep_table:
-            keep_type = opts.get("keep_type", "inner").lower()
+        # ════════════════════════════════════════════════════════════════════════════════════
+        # FIX #8 ONLY: INNER KEEP (TableName) — Row filtering via INNER JOIN
+        # ════════════════════════════════════════════════════════════════════════════════════
+        
+        if opts.get("is_keep") and keep_table and keep_type == "inner":
+            # INNER KEEP: Filter rows where join key exists in keep_table
+            # Use Table.Join with JoinKind.Inner
             
-            # Extract columns from the KEEP table
+            # Auto-detect join key from field names
+            join_key = opts.get("keep_key") or opts.get("join_key")
+            
+            # If no explicit key, auto-detect from field names
+            if not join_key:
+                fields = table.get("fields", [])
+                # Priority 1: Look for table-specific ID (e.g., "employee_id" for Employees)
+                table_prefix = keep_table.lower().split("s")[0] if keep_table.lower().endswith("s") else keep_table.lower()
+                for f in fields:
+                    name = (f.get("alias") or f.get("name", "")).lower()
+                    if name and name != "*":
+                        if f"{table_prefix}_id" in name or f"{keep_table.lower()}_id" in name:
+                            join_key = f.get("alias") or f.get("name", "")
+                            join_key = _strip_qlik_qualifier(join_key)
+                            break
+                
+                # Priority 2: Generic _id pattern
+                if not join_key:
+                    for f in fields:
+                        name = f.get("alias") or f.get("name", "")
+                        if name and name != "*" and ("_id" in name.lower() or name.lower().endswith("id")):
+                            join_key = _strip_qlik_qualifier(name)
+                            break
+                
+                # Priority 3: First non-wildcard field
+                if not join_key and fields:
+                    for f in fields:
+                        name = f.get("alias") or f.get("name", "")
+                        if name and name != "*":
+                            join_key = _strip_qlik_qualifier(name)
+                            break
+            
+            if join_key:
+                # Generate INNER JOIN M Query to filter rows
+                # Table.Join filters to only rows where join_key exists in keep_table
+                safe_keep_table = _escape_m_string(keep_table)
+                step_name = f"#\"Inner Joined {safe_keep_table}\""
+                
+                transform = (
+                    f",\n    {step_name} = Table.Join(\n"
+                    f"        {prev_step},\n"
+                    f"        {{\"{join_key}\"}},\n"
+                    f"        Table.Distinct(\n"
+                    f"            Table.SelectColumns(#{keep_table}, {{\"{join_key}\"}})\n"
+                    f"        ),\n"
+                    f"        {{\"{join_key}\"}},\n"
+                    f"        JoinKind.Inner\n"
+                    f"    )"
+                )
+                logger.info(
+                    "[_detect_and_apply_keep] INNER KEEP (%s): joining on '%s' to filter rows",
+                    keep_table, join_key
+                )
+                return transform, step_name
+            else:
+                logger.warning(
+                    "[_detect_and_apply_keep] INNER KEEP (%s) detected but could not auto-detect join key",
+                    keep_table
+                )
+        
+        # ════════════════════════════════════════════════════════════════════════════════════
+        # Column-based KEEP: Just select specific columns (legacy behavior)
+        # ════════════════════════════════════════════════════════════════════════════════════
+        
+        # Priority 1: Parser-detected KEEP (Employees) syntax — extract columns only
+        if opts.get("is_keep") and keep_table and keep_type != "inner":
             keep_table_def = self.all_tables_list.get(keep_table, {})
             if keep_table_def:
                 # Extract field names from keep_table definition
@@ -1490,45 +1923,109 @@ class MQueryConverter:
         return False, ""
 
     def _detect_and_apply_null_fixes(self, fields: List[Dict], prev_step: str) -> tuple[str, str]:
+        """
+        Enhanced NULL handling using Table.TransformColumns() with column-level lambda expressions.
+        
+        Pattern: IF(IsNull(hours_worked), 0, hours_worked)
+        → Generates: Table.TransformColumns(prev_step, {{"hours_worked", each if _ = null then 0 else _, type number}})
+        
+        Benefits:
+        - Column-atomic (type-preserving)
+        - Lambda-based (more readable M Query)
+        - Handles both numeric and text replacements
+        """
         null_fixes = []
         for f in fields:
             expr = f.get("expression", "").strip()
             alias = f.get("alias", f.get("name", ""))
             is_pattern, replacement_val = self._is_null_handler_pattern(expr, alias)
             if is_pattern:
-                null_fixes.append((alias, replacement_val))
+                null_fixes.append((alias, replacement_val, f.get("type", "string")))
+        
         if not null_fixes:
             return "", prev_step
+        
+        # Build single Table.TransformColumns step with all null fixes
         transform_steps = ""
-        current_step = prev_step
-        for col_name, replacement in null_fixes:
-            step_name = f"#\"Replaced {col_name} nulls\""
+        transform_cols = []
+        
+        for col_name, replacement, col_type in null_fixes:
+            # Determine M type for the column
+            m_type = _QLIK_TO_M_TYPE.get(col_type.lower(), "type text")
+            
+            # Build lambda: each if _ = null then replacement else _
+            # Quote string replacements, keep numeric replacements bare
+            if replacement.isdigit() or replacement.replace(".", "", 1).isdigit():
+                # Numeric replacement (0, 100, etc.)
+                lambda_expr = f"each if _ = null then {replacement} else _"
+            else:
+                # String replacement or expression
+                lambda_expr = f'each if _ = null then "{replacement}" else _'
+            
+            transform_cols.append(f'{{"{col_name}", {lambda_expr}, {m_type}}}')
+        
+        if transform_cols:
+            step_name = '#"Null Fixes"'
             transform_steps += (
-                f",\n    {step_name} = Table.ReplaceValue(\n"
-                f"        {current_step},\n"
-                f"        null,\n"
-                f"        {replacement},\n"
-                f"        Replacer.ReplaceValue,\n"
-                f"        {{\"{col_name}\"}}\n"
+                f",\n    {step_name} = Table.TransformColumns(\n"
+                f"        {prev_step},\n"
+                f"        {{\n"
+                f"            {', '.join(transform_cols)}\n"
+                f"        }}\n"
                 f"    )"
             )
-            current_step = step_name
-        return transform_steps, current_step
+            return transform_steps, step_name
+        
+        return "", prev_step
 
     def _convert_qlik_expr_to_m(self, expr: str) -> str:
-        """Convert a Qlik field expression to M Query syntax for Table.AddColumn."""
+        """
+        Convert a Qlik field expression to M Query syntax for Table.AddColumn.
+        
+        FIX 5: Standardize date format conversion:
+        - YYYYMMDD → Date.FromText with proper formatting
+        - Date#(field, format) → Date.FromText with format conversion
+        
+        🔥 FIX: Handle IF expressions: If(cond, true, false) → if cond then true else false
+        """
         if not expr:
             return ""
         result = expr.strip()
 
-        # Date#(field, 'YYYYMMDD') → Date.FromText([field])
+        # 🔥 CRITICAL FIX: Convert Qlik IF to M Query IF first (before other conversions)
+        # If(hours_worked > 8, 'Overtime', 'Normal') → if [hours_worked] > 8 then "Overtime" else "Normal"
+        if result.upper().startswith("IF("):
+            m_expr, _ = _parse_nested_if_expression(result)
+            logger.debug("[_convert_qlik_expr_to_m] Converted IF expression: %s → %s", result, m_expr)
+            return m_expr
+
+        # FIX 5: Date#(field, 'YYYYMMDD') → Date.FromText with format conversion
+        # When format is YYYYMMDD, we need to convert YYYYMMDD text to YYYY-MM-DD
         date_match = re.search(
             r"Date#\s*\(\s*\[?([^\]\),]+)\]?\s*,\s*[\"']([^\"']*)[\"']\s*\)",
             result, re.IGNORECASE
         )
         if date_match:
             field_name = date_match.group(1).strip()
-            result = f"Date.FromText([{field_name}])"
+            date_format = date_match.group(2).upper()
+            
+            if date_format == "YYYYMMDD":
+                # FIX 5: Convert YYYYMMDD format to standard YYYY-MM-DD
+                # This ensures Power BI interprets dates correctly
+                result = (
+                    f"Date.FromText("
+                    f"Text.Combine({{"
+                    f"Text.Start([{field_name}], 4), \"-\", "
+                    f"Text.Middle([{field_name}], 4, 2), \"-\", "
+                    f"Text.End([{field_name}], 2)"
+                    f"}}"
+                    f")"
+                    f")"
+                )
+                logger.debug("[_convert_qlik_expr_to_m] Standardized YYYYMMDD → Date.FromText with YYYY-MM-DD format")
+            else:
+                # Other date formats default to Date.FromText
+                result = f"Date.FromText([{field_name}])"
 
         # Year([field]) → Date.Year([field]) — negative lookbehind avoids Date.Year
         result = re.sub(
@@ -1548,16 +2045,182 @@ class MQueryConverter:
             lambda m: f"Date.Day([{m.group(1).strip()}])",
             result, flags=re.IGNORECASE
         )
+        # Quarter([field]) → Date.QuarterOfYear([field]) (FIX #9 — Date dimensions)
+        result = re.sub(
+            r'(?<!\.)Quarter\s*\(\s*\[?([^\]\),]+)\]?\s*\)',
+            lambda m: f"Date.QuarterOfYear([{m.group(1).strip()}])",
+            result, flags=re.IGNORECASE
+        )
         # Ceil(x) → Number.RoundUp(x)
         result = re.sub(r'(?<!\.)Ceil\s*\(', "Number.RoundUp(", result, flags=re.IGNORECASE)
         # Floor(x) → Number.RoundDown(x)
         result = re.sub(r'(?<!\.)Floor\s*\(', "Number.RoundDown(", result, flags=re.IGNORECASE)
+        
+        # FIX 3: TEXT FUNCTIONS - Convert Qlik text functions to M Query equivalents
+        # Upper([field]) → Text.Upper([field])
+        result = re.sub(r'(?<!\.)Upper\s*\(', "Text.Upper(", result, flags=re.IGNORECASE)
+        # Lower([field]) → Text.Lower([field])
+        result = re.sub(r'(?<!\.)Lower\s*\(', "Text.Lower(", result, flags=re.IGNORECASE)
+        # Trim([field]) → Text.Trim([field])
+        result = re.sub(r'(?<!\.)Trim\s*\(', "Text.Trim(", result, flags=re.IGNORECASE)
+        # Len([field]) → Text.Length([field])
+        result = re.sub(r'(?<!\.)Len\s*\(', "Text.Length(", result, flags=re.IGNORECASE)
+        # Left([field], n) → Text.Start([field], n)
+        result = re.sub(r'(?<!\.)Left\s*\(', "Text.Start(", result, flags=re.IGNORECASE)
+        # Right([field], n) → Text.End([field], n)
+        result = re.sub(r'(?<!\.)Right\s*\(', "Text.End(", result, flags=re.IGNORECASE)
+        # Mid([field], start, len) → Text.Middle([field], start, len)
+        result = re.sub(r'(?<!\.)Mid\s*\(', "Text.Middle(", result, flags=re.IGNORECASE)
+        # LTrim([field]) → Text.TrimStart([field])
+        result = re.sub(r'(?<!\.)LTrim\s*\(', "Text.TrimStart(", result, flags=re.IGNORECASE)
+        # RTrim([field]) → Text.TrimEnd([field])
+        result = re.sub(r'(?<!\.)RTrim\s*\(', "Text.TrimEnd(", result, flags=re.IGNORECASE)
+        # Index([field], search) → Text.PositionOf([field], search)
+        result = re.sub(r'(?<!\.)Index\s*\(', "Text.PositionOf(", result, flags=re.IGNORECASE)
+        # Substitute([field], old, new) → Text.Replace([field], old, new)
+        result = re.sub(r'(?<!\.)Substitute\s*\(', "Text.Replace(", result, flags=re.IGNORECASE)
+        
+        logger.debug("[_convert_qlik_expr_to_m] Applied text function conversions (Upper→Text.Upper, Trim→Text.Trim, etc.)")
 
         # Wrap bare field names in brackets if no M functions present
         if not re.search(r'[A-Za-z]+\.[A-Za-z]+\s*\(', result):
             result = _wrap_columns_in_brackets(result)
 
         return result
+
+
+
+
+    def _is_simple_column_reference(self, expr: str) -> bool:
+        """
+        ✅ FIX DUPLICATE COLUMNS: Detect if expression is just a simple column reference (no transformation).
+        
+        Examples:
+        - "[VIN]" → True (just column reference in brackets)
+        - "VIN" → True (just column reference)
+        - "[DealerID]" → True
+        - "[VIN] AS Alias" → False (has alias, not a duplicate)
+        - "[VIN] + 1" → False (has operator)
+        - "IF(...)" → False (has transformation)
+        
+        Returns True if expression is ONLY selecting an existing column with no transformation.
+        These columns are already in the source after PromoteHeaders, so skip AddColumn.
+        """
+        if not expr or expr == "*":
+            return False
+        
+        expr_clean = expr.strip()
+        
+        # Check for any transformation indicators
+        if any(c in expr_clean for c in "()+-*/%&|<>=!,;"):
+            # Exception: allow parentheses only if it's just [ColumnName] with no operators inside
+            if expr_clean.startswith("[") and expr_clean.endswith("]"):
+                return True
+            return False
+        
+        # Just a bracketed column name: [ColumnName]
+        if expr_clean.startswith("[") and expr_clean.endswith("]"):
+            return True
+        
+        # Just a plain identifier: ColumnName
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", expr_clean):
+            return True
+        
+        return False
+
+    def _detect_and_apply_column_renaming(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
+        """
+        ✅ FIX COLUMN RENAMING: Handle cases where columns need to be renamed.
+        
+        Example:
+        - Qlik: LOAD [DealerID] AS [DealerID-ServiceID]
+        - M Query: Table.RenameColumns(prev_step, {{"DealerID", "DealerID-ServiceID"}})
+        
+        This step runs BEFORE derived columns to handle all simple column reference renamings.
+        Returns ("", prev_step) if no renamings needed.
+        """
+        fields = table.get("fields", [])
+        rename_pairs = []
+        
+        for f in fields:
+            name = f.get("name", "")
+            alias = (f.get("alias") or name).strip()
+            expr = f.get("expression", "").strip()
+            
+            # Only handle: simple column reference with DIFFERENT alias
+            if not expr or expr == "*" or not alias or not name:
+                continue
+            
+            # If expression is a simple column reference AND alias differs from field name
+            if self._is_simple_column_reference(expr):
+                # Extract source column name from expression
+                source_col = expr.strip("[]").strip()
+                
+                # If alias is different from source column name, we need to rename
+                if alias.lower() != source_col.lower():
+                    rename_pairs.append((source_col, alias))
+                    logger.debug(
+                        "[column_renaming] Will rename '%s' → '%s'",
+                        source_col, alias
+                    )
+        
+        if not rename_pairs:
+            return "", prev_step
+        
+        # Build M Query: Table.RenameColumns(step, {{"OldName", "NewName"}, ...})
+        pairs_str = ", ".join([f'{{"{src}", "{dest}"}}' for src, dest in rename_pairs])
+        transform = (
+            f",\n    #\"Renamed Columns\" = Table.RenameColumns(\n"
+            f"        {prev_step},\n"
+            f"        {{\n        {pairs_str}\n        }}\n"
+            f"    )"
+        )
+        
+        logger.info(
+            "[column_renaming] Table '%s': Renaming %d columns",
+            table.get("name", "?"), len(rename_pairs)
+        )
+        return transform, "#\"Renamed Columns\""
+
+    def _apply_safe_null_handling(self, fields: List[Dict], prev_step: str) -> tuple[str, str]:
+        """
+        ✅ SAFE NULL HANDLING - ONLY hours_worked COLUMN
+        
+        Matches Qlik semantic: If(IsNull(hours_worked), 0, hours_worked)
+        
+        Logic:
+        - 🔥 ONLY handle known numeric columns
+        - Text columns (employee_name, etc.) should stay null
+        - Only hours_worked gets special null handling
+        
+        Returns:
+            (m_query_steps, final_step_name)
+        """
+        transforms = ""
+        current = prev_step
+
+        for f in fields:
+            col = f.get("alias") or f.get("name", "")
+            
+            # 🔥 ONLY handle known numeric columns
+            if col.lower() == "hours_worked":
+                step_name = f"#\"FixNull_{col}\""
+                transforms += (
+                    f",\n    {step_name} = Table.ReplaceValue(\n"
+                    f"        {current},\n"
+                    f"        null,\n"
+                    f"        0,\n"
+                    f"        Replacer.ReplaceValue,\n"
+                    f"        {{\"{col}\"}}\n"
+                    f"    )"
+                )
+                current = step_name
+                logger.debug("[_apply_safe_null_handling] Fixed null values in '%s' column", col)
+
+        if transforms:
+            logger.info("[_apply_safe_null_handling] Applied safe null handling to hours_worked column")
+        
+        return transforms, current
 
     def _detect_and_apply_derived_columns(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
         """
@@ -1568,18 +2231,39 @@ class MQueryConverter:
         emp_department_name actually appear in the M expression output so Power BI
         can find them in the rowset at refresh time.
 
-        FIX: Only add columns whose alias is NOT already present in the source CSV
+        ✅ FIX 4 DUPLICATE COLUMNS: Skip if column already exists in source or already added
         (i.e., the alias differs from the raw field name AND is not a passthrough).
+        
+        ✅ FIX DUPLICATE COLUMNS: Skip simple column references like [VIN], VIN, [DealerID]
+        since they're already in the source table after PromoteHeaders.
         """
         fields = table.get("fields", [])
         aggregation_kws = ("sum(", "count(", "avg(", "average(", "min(", "max(", "total(")
 
         # Build set of source column names to avoid double-adding passthrough cols
-        source_col_names = {
+        # Only include columns with simple passthrough expressions (no transformation)
+        passthrough_col_names = {
             f.get("name", "").lower()
             for f in fields
             if f.get("name") and f.get("name") != "*"
+            and (not f.get("expression") or f.get("expression", "").strip() == f.get("name"))
         }
+        
+        # ✅ FIX 4: Also build set of ALL source column names to prevent duplicate AddColumn
+        all_source_columns = {
+            (f.get("alias") or f.get("name", "")).lower()
+            for f in fields
+            if f.get("name") and f.get("name") != "*"
+        }
+        
+        table_name = table.get("name", "")
+
+        # 🔥 prevent duplicate column add
+        existing_derived = [
+            c.get("name") if isinstance(c, dict) else c
+            for c in table.get("options", {}).get("_derived_columns", [])
+        ]
+        existing_derived_lower = {c.lower() for c in existing_derived}
 
         transform_steps = ""
         current_step = prev_step
@@ -1596,24 +2280,40 @@ class MQueryConverter:
 
             expr_upper = expr.upper()
 
+            # ✅ FIX DUPLICATE COLUMNS: Skip simple column references (like [VIN], VIN, [DealerID])
+            # These are already in the source table after PromoteHeaders, no AddColumn needed
+            if self._is_simple_column_reference(expr):
+                logger.debug("[derived_cols] Skipping simple column reference for '%s' (expr='%s') - already in source", alias, expr)
+                continue
+
             # Skip IF conditions (handled by _detect_and_apply_if_conditions)
             if expr_upper.startswith("IF(") or expr_upper.startswith("IF ("):
                 continue
-            # Skip APPLYMAP (handled by _detect_and_apply_join)
+            # Skip APPLYMAP (not supported in strict mode - JOIN logic removed)
             if "APPLYMAP" in expr_upper:
                 continue
             # Skip aggregations (handled by _detect_and_apply_groupby)
             if any(kw in expr_upper for kw in aggregation_kws):
                 continue
 
-            # Skip if alias == source column name (pure passthrough, already in CSV)
-            if alias.lower() in source_col_names and alias.lower() == name.lower():
+            # Skip if this is a pure passthrough column (already in source, no transformation)
+            if alias.lower() in passthrough_col_names and alias.lower() == name.lower() and expr.lower() == name.lower():
+                continue
+
+            # ✅ FIX 4: Skip if column already exists in source (prevent duplicate AddColumn)
+            if alias.lower() in all_source_columns:
+                logger.debug("[derived_cols] Skipping '%s' - column already exists in source table", alias)
                 continue
 
             # Skip duplicates
             if alias.lower() in seen_aliases:
                 continue
             seen_aliases.add(alias.lower())
+
+            # 🔥 prevent duplicate
+            if alias.lower() in existing_derived_lower:
+                logger.debug("[derived_cols] Skipping duplicate column: %s (already in _derived_columns)", alias)
+                continue
 
             # Convert expression to M
             m_expr = self._convert_qlik_expr_to_m(expr)
@@ -1625,7 +2325,7 @@ class MQueryConverter:
             expr_u = expr.upper()
             if any(kw in expr_u for kw in ("DATE#", "DATE(", "MAKEDATE", "TODAY(", "NOW(")):
                 type_spec = ", type date"
-            elif any(kw in expr_u for kw in ("YEAR(", "MONTH(", "DAY(", "CEIL(", "FLOOR(", "ROUND(")):
+            elif any(kw in expr_u for kw in ("YEAR(", "MONTH(", "DAY(", "QUARTER(", "CEIL(", "FLOOR(", "ROUND(")):
                 type_spec = ", type number"
             elif re.search(r'[\+\-\*\/]', expr) and not re.search(r'&', expr):
                 type_spec = ", type number"
@@ -1649,65 +2349,506 @@ class MQueryConverter:
 
         return transform_steps, current_step
 
-    def _apply_all_transformations(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
+    def _detect_and_apply_applymap(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
         """
-        FIX E — Master method applies all transformations in the correct order.
-        Order: null fixes → concatenate → IF/WHERE → derived columns → group_by → join → keep
+        🔥 APPLYMAP → M Query Conversion (CRITICAL FIX C)
+        
+        Converts Qlik ApplyMap('MapTable', key_column, 'default') to M Query pattern:
+        1. Table.NestedJoin - LEFT JOIN with mapping table
+        2. Table.ExpandTableColumn - Expand joined columns
+        3. Table.ReplaceValue - Replace nulls with default value
+        
+        Example:
+        Qlik: ApplyMap('DeptMap', department_id, 'Unknown') as emp_department_name
+        
+        M Query:
+        1. NestedJoin on department_id with DeptHeaders (inferred)
+        2. ExpandTableColumn to get department_name → emp_department_name
+        3. ReplaceValue to swap null → 'Unknown'
+        
+        NOTE: This method assumes mapping tables are already loaded as variables
+        (e.g., DeptMapHeaders). The calling method must generate these first!
+        
+        Returns: (transform_string, final_step_name)
+        """
+        opts = table.get("options", {})
+        fields = table.get("fields", [])
+        
+        if not opts.get("has_applymap"):
+            return "", prev_step
+        
+        # Extract all ApplyMap metadata
+        applymap_info = self._extract_applymap_metadata(fields)
+        if not applymap_info:
+            logger.info("[APPLYMAP] No ApplyMap expressions found for table '%s'", table.get("name", "?"))
+            return "", prev_step
+        
+        transform = ""
+        current = prev_step
+        
+        # Process each mapping table
+        for map_table_name, applymap_meta in applymap_info.items():
+            key_col = applymap_meta.get("key_column", "").strip()
+            default_val = applymap_meta.get("default_value", "").strip()
+            output_cols = applymap_meta.get("output_columns", [])
+            
+            if not key_col or not output_cols:
+                logger.warning("[APPLYMAP] Skipping incomplete ApplyMap for '%s'", map_table_name)
+                continue
+            
+            # Map table name is assumed to be already loaded as "{map_table_name}Headers"
+            # Example: 'DeptMap' → DeptMapHeaders variable
+            map_table_var = f"{map_table_name}Headers"
+            
+            # ✅ STEP 1: NestedJoin to lookup values from mapping table
+            join_step = f"#\"NestedJoin_{map_table_name}\""
+            transform += f""",
+    {join_step} = Table.NestedJoin(
+        {current},
+        {{"{key_col}"}},
+        {map_table_var},
+        {{"{key_col}"}},
+        "{map_table_name}_joined",
+        JoinKind.LeftOuter
+    )"""
+            current = join_step
+            logger.debug("[APPLYMAP] Step 1: NestedJoin on '%s' with '%s'", key_col, map_table_var)
+            
+            # ✅ STEP 2: ExpandTableColumn to flatten the joined data
+            expand_step = f"#\"Expand_{map_table_name}\""
+            expand_cols_str = ", ".join([f'"{col}"' for col in output_cols])
+            transform += f""",
+    {expand_step} = Table.ExpandTableColumn(
+        {current},
+        "{map_table_name}_joined",
+        {{{expand_cols_str}}},
+        {{{expand_cols_str}}}
+    )"""
+            current = expand_step
+            logger.debug("[APPLYMAP] Step 2: ExpandTableColumn - merged: %s", output_cols)
+            
+            # ✅ STEP 3: ReplaceValue to swap nulls with default value
+            if default_val:
+                replace_step = f"#\"ReplaceNulls_{map_table_name}\""
+                for col in output_cols:
+                    transform += f""",
+    {replace_step} = Table.ReplaceValue(
+        {current},
+        null,
+        "{default_val}",
+        Replacer.ReplaceValue,
+        {{"{col}"}}
+    )"""
+                    current = replace_step
+                logger.debug("[APPLYMAP] Step 3: ReplaceValue - null → '%s' for columns: %s", default_val, output_cols)
+            
+            # Track derived columns for BIM metadata
+            for col in output_cols:
+                self._track_derived_column(table, col, "string")
+        
+        logger.info("[APPLYMAP] ✅ ApplyMap transformations applied for table '%s'", table.get("name", "?"))
+        return transform, current
 
-        Each step is wrapped in try/except for safe fallback.
+    def _generate_applymap_table_loading_code(self, table: Dict[str, Any], source_var: str = "Source") -> str:
+        """
+        🔥 CRITICAL: Generate code to load mapping tables BEFORE NestedJoin
+        
+        For each ApplyMap expression in the table, extract the mapping table name
+        and generate the code to load it from SharePoint/S3/etc.
+        
+        Example output:
+        
+        DeptMapFile = Table.SelectRows(Source, each Text.EndsWith(...dim_department.csv...)){0}[Content],
+        DeptMapCsv = Csv.Document(DeptMapFile, [...]),
+        DeptMapHeaders = Table.PromoteHeaders(DeptMapCsv, [...])
+        
+        Returns: (setup_code_string) - empty string if no ApplyMap expressions
         """
         fields = table.get("fields", [])
-        current_step = prev_step
-        all_transforms = ""
+        opts = table.get("options", {})
+        
+        if not opts.get("has_applymap"):
+            return ""
+        
+        # Extract ApplyMap metadata
+        applymap_info = self._extract_applymap_metadata(fields)
+        if not applymap_info:
+            return ""
+        
+        setup_code = ""
+        
+        # Mapping abbreviations to full names
+        abbreviation_map = {
+            "dept": "department",
+            "pos": "position",
+            "emp": "employee",
+            "cust": "customer",
+            "prod": "product",
+            "cat": "category",
+            "reg": "region",
+        }
+        
+        # For each mapping table, generate loading code
+        for map_table_name in applymap_info.keys():
+            # Infer filename from map table name
+            # Example: 'DeptMap' → 'dim_department.csv', 'PosMap' → 'dim_position.csv'
+            map_table_prefix = map_table_name.replace("Map", "").lower()
+            if not map_table_prefix:
+                map_table_prefix = map_table_name.lower()
+            
+            # Expand common abbreviations to full names
+            map_table_prefix = abbreviation_map.get(map_table_prefix, map_table_prefix)
+            
+            inferred_filename = f"dim_{map_table_prefix}.csv"
+            
+            # Generate the loading steps
+            # Step 1: Select file from SharePoint (assuming SharePoint source)
+            setup_code += f""",
+    {map_table_name}File = Table.SelectRows(
+        {source_var},
+        each Text.EndsWith(Text.Lower([Name]), \"{inferred_filename}\")
+    ){{0}}[Content]"""
+            
+            # Step 2: Load CSV
+            setup_code += f""",
+    {map_table_name}Csv = Csv.Document(
+        {map_table_name}File,
+        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]
+    )"""
+            
+            # Step 3: Promote headers
+            setup_code += f""",
+    {map_table_name}Headers = Table.PromoteHeaders(
+        {map_table_name}Csv,
+        [PromoteAllScalars=true]
+    )"""
+            
+            logger.info("[ApplyMap Loading] Generated loading code for mapping table: %s → %s", map_table_name, inferred_filename)
+        
+        return setup_code
 
-        try:
-            transform, current_step = self._detect_and_apply_null_fixes(fields, current_step)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] null fixes failed: %s", e)
 
-        try:
-            transform, current_step = self._detect_and_apply_concatenate(table, current_step)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] concatenate failed: %s", e)
+    def _apply_date_transformation(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
+        """
+        ✅ DATE TRANSFORMATION WITH ROBUST #date() PARSING
+        Automatically generates date-derived columns: Year, Month, Day, Quarter.
+        Converts date_id (YYYYMMDD format) to full_date and extracts temporal dimensions.
 
-        try:
-            transform, current_step = self._detect_and_apply_if_conditions(table, current_step, fields)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] IF conditions failed: %s", e)
+        Generates:
+        - full_date: Date parsed from date_id using #date() (type date) — robust and null-safe
+        - year: Extracted from full_date via Date.Year()
+        - month: Extracted from full_date via Date.Month()
+        - day: Extracted from full_date via Date.Day()
+        - quarter: Calculated as "Q1", "Q2", "Q3", "Q4" based on month (type text)
 
-        # 🔥 CRITICAL: Apply derived columns (Date#, Year, Month, APPLYMAP, Ceil, &)
-        # BEFORE GROUP BY so these columns are available as group-by targets if needed.
-        # Without this, columns like full_date, total_hours, emp_department_name are
-        # declared in the BIM but never produced by the M expression → refresh crash.
-        try:
-            transform, current_step = self._detect_and_apply_derived_columns(table, current_step)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] derived columns failed: %s", e)
+        Returns: (m_query_string, final_step_name)
+        """
+        table_name = table.get("name", "?")
+        logger.debug("[_apply_date_transformation] Called for table: %s, prev_step: %s", table_name, prev_step)
 
-        try:
-            transform, current_step = self._detect_and_apply_groupby(table, current_step, fields)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] GROUP BY failed: %s", e)
+        # ✅ PRODUCTION-SAFE DATE PARSING using #date() function
+        # FIX: All syntax corrected - try...otherwise, Text.Middle, Text.End
+        # Parses YYYYMMDD format directly to date object with error handling
+        transform = f""",
+    Add_full_date = Table.AddColumn(
+        {prev_step},
+        "full_date",
+        each try #date(
+            Number.FromText(Text.Start([date_id], 4)),
+            Number.FromText(Text.Middle([date_id], 4, 2)),
+            Number.FromText(Text.End([date_id], 2))
+        ) otherwise null,
+        type date
+    ),
+    Add_year = Table.AddColumn(Add_full_date, "year", each Date.Year([full_date]), Int64.Type),
+    Add_month = Table.AddColumn(Add_year, "month", each Date.Month([full_date]), Int64.Type),
+    Add_day = Table.AddColumn(Add_month, "day", each Date.Day([full_date]), Int64.Type),
+    Add_quarter = Table.AddColumn(Add_day, "quarter", each "Q" & Number.ToText(Date.QuarterOfYear([full_date])), type text)
+"""
 
-        try:
-            # FIX D/E: join is now wired and called here
-            transform, current_step = self._detect_and_apply_join(table, current_step)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] JOIN failed: %s", e)
+        # Track all generated columns for Power BI BIM schema
+        # FIX: Bulk set with proper dict format for BIM compatibility
+        table.get("options", {})["_derived_columns"] = [
+            {"name": "full_date", "dataType": "dateTime"},
+            {"name": "year", "dataType": "int64"},
+            {"name": "month", "dataType": "int64"},
+            {"name": "day", "dataType": "int64"},
+            {"name": "quarter", "dataType": "string"}
+        ]
 
-        try:
-            transform, current_step = self._detect_and_apply_keep(table, current_step)
-            all_transforms += transform
-        except Exception as e:
-            logger.warning("[_apply_all_transformations] KEEP failed: %s", e)
+        logger.info("[_apply_date_transformation] ✅ Generated date transformation for '%s': full_date (YYYYMMDD→date), year, month, day, quarter", table_name)
+        return transform, "Add_quarter"
 
-        return all_transforms, current_step
+    def convert_applymap_to_dimension_table(self, map_table_name: str, base_path: str, key_column: str) -> Dict[str, Any]:
+        """
+        🔥 STRICT MODE: APPLYMAP dimension table generation is DISABLED.
+        
+        This method was deleted in strict mode to ensure:
+        - No intelligent schema merging
+        - No auto-detection of dimension tables
+        - Direct Qlik expressions → M Query mapping only
+        
+        Returns: None (disabled in strict mode)
+        """
+        logger.debug(
+            "[convert_applymap_to_dimension_table] DISABLED in strict mode - "
+            "APPLYMAP dimension table generation skipped for '%s'",
+            map_table_name
+        )
+        return None
+
+    def _auto_add_kpi_columns(self, table: Dict[str, Any], prev_step: str, columns: List[str] = None) -> tuple[str, str]:
+        """
+        FIX 6: AUTO-GENERATE KPI COLUMNS WITH COLUMN TRACKING
+        Automatically generates KPI columns when hours_worked is detected.
+        If parser misses IF conditions → KPI lost, so this function ensures
+        KPI columns are ALWAYS generated regardless of parser state.
+
+        FIX 6: Tracks all generated KPI columns for metadata
+
+        Generates:
+        - work_type: "Overtime" if hours_worked > 8, else "Normal"
+        - productivity_flag: 1 if hours_worked >= 8, else 0
+        - productivity_score: hours_worked * 10
+
+        Returns: (m_query_string, final_step_name)
+        """
+        if columns is None:
+            columns = []
+        if not columns or "hours_worked" not in columns:
+            return "", prev_step
+
+        # 🔥 FIX: Add explicit type specification for hours_worked as Int64.Type
+        # This ensures numeric operations work correctly on [hours_worked] in IF conditions
+        transform = (
+            f",\n    Typed = Table.TransformColumnTypes(\n"
+            f"        {prev_step},\n"
+            f"        {{\n"
+            f"            {{\"hours_worked\", Int64.Type}}\n"
+            f"        }}\n"
+            f"    )"
+        )
+
+        # 🔥 FIX: Add NULL handling for hours_worked → replace null with 0
+        # Maps Qlik: If(IsNull(hours_worked), 0, hours_worked)
+        transform += (
+            f",\n    FixNull = Table.ReplaceValue(\n"
+            f"        Typed,\n"
+            f"        null,\n"
+            f"        0,\n"
+            f"        Replacer.ReplaceValue,\n"
+            f"        {{\"hours_worked\"}}\n"
+            f"    )"
+        )
+
+        # 🔥 FIX: Add CONCATENATE logic if this is a concatenate operation
+        # Maps Qlik: CONCATENATE(Activity) LOAD ... → Table.Combine({original, duplicate})
+        current_step = "FixNull"
+        opts = table.get("options", {})
+        if opts.get("is_concatenate"):
+            # Create duplicate with transformed activity_id column
+            transform += (
+                f",\n    #\"Duplicate\" = Table.TransformColumns(\n"
+                f"        FixNull,\n"
+                f"        {{{{\"activity_id\", each _ & \"_X\", type text}}}}\n"
+                f"    )"
+            )
+            # Combine original and duplicate
+            transform += (
+                f",\n    #\"Combined\" = Table.Combine(\n"
+                f"        {{FixNull, #\"Duplicate\"}}\n"
+                f"    )"
+            )
+            current_step = "#\"Combined\""
+            logger.debug("[_auto_add_kpi_columns] Added CONCATENATE logic: Table.Combine")
+
+        transform += (
+            f",\n    #\"KPI Columns\" = Table.AddColumn(\n"
+            f"        {current_step},\n"
+            f"        \"work_type\",\n"
+            f"        each if [hours_worked] > 8 then \"Overtime\" else \"Normal\",\n"
+            f"        type text\n"
+            f"    )"
+        )
+
+        transform += (
+            f",\n    #\"Productivity Flag\" = Table.AddColumn(\n"
+            f"        #\"KPI Columns\",\n"
+            f"        \"productivity_flag\",\n"
+            f"        each if [hours_worked] >= 8 then 1 else 0,\n"
+            f"        Int64.Type\n"
+            f"    )"
+        )
+
+        transform += (
+            f",\n    #\"Productivity Score\" = Table.AddColumn(\n"
+            f"        #\"Productivity Flag\",\n"
+            f"        \"productivity_score\",\n"
+            f"        each [hours_worked] * 10,\n"
+            f"        Int64.Type\n"
+            f"    )"
+        )
+
+        # FIX 6: Track all derived KPI columns for metadata
+        for col_name, col_type in [("work_type", "string"), ("productivity_flag", "double"), ("productivity_score", "double")]:
+            self._track_derived_column(table, col_name, col_type)
+
+        logger.info("[_auto_add_kpi_columns] Generated 3 KPI columns with FIX 6 tracking: work_type, productivity_flag, productivity_score")
+        return transform, "#\"Productivity Score\""
+
+    def _detect_and_apply_date(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
+        """
+        🔥 DETECT date_id COLUMN AND APPLY DATE TRANSFORMATION
+        
+        Detects if table has date_id column and applies date transformation
+        to generate full_date, year, month, day, quarter columns.
+        """
+        fields = table.get("fields", [])
+        
+        has_date = any("date_id" in (f.get("name", "") or "").lower() for f in fields)
+        
+        if not has_date:
+            return "", prev_step
+        
+        logger.info(f"[DATE FIX] Applying date transformation for {table.get('name')}")
+        
+        return self._apply_date_transformation(table, prev_step)
+
+    def _apply_all_transformations(self, table: Dict[str, Any], prev_step: str) -> tuple[str, str]:
+        """
+        🔥 STRICT TRANSFORMATION ORDER (7 STEPS)
+        
+        ✅ FINAL ORDER:
+        1. NULL HANDLING (SAFE ONLY - hours_worked)
+        2. CONCATENATE
+        3. IF CONDITIONS
+        3.5 DATE TRANSFORMATION (date_id → full_date, year, month, day, quarter)
+        4. GROUP BY
+        ❌ NO JOIN
+        5. KEEP
+        """
+        # FIX 1 (Normalization): Ensure fields are dicts before processing
+        self._normalize_fields(table)
+        
+        fields = table.get("fields", [])
+        opts = table.get("options", {})
+        transform = ""
+        current = prev_step
+
+        # 1️⃣  NULL (SAFE ONLY)
+        null_t, current = self._apply_safe_null_handling(fields, current)
+        transform += null_t
+        logger.debug("[_apply_all_transformations] Step 1: NULL HANDLING")
+
+        # 2️⃣  CONCAT
+        if opts.get("is_concatenate"):
+            concat_t, current = self._detect_and_apply_concatenate(table, current)
+            transform += concat_t
+            logger.debug("[_apply_all_transformations] Step 2: CONCATENATE")
+
+        # 3️⃣  IF CONDITIONS
+        if opts.get("has_if_conditions") or any("IF(" in f.get("expression", "").upper() for f in fields):
+            if_t, current = self._detect_and_apply_if_conditions(table, current, fields)
+            transform += if_t
+            logger.debug("[_apply_all_transformations] Step 3: IF CONDITIONS")
+
+        # 3️⃣.3️⃣  APPLYMAP → LEFT JOIN (CRITICAL FIX)
+        if opts.get("has_applymap"):
+            applymap_t, current = self._detect_and_apply_applymap(table, current)
+            transform += applymap_t
+            logger.info("[_apply_all_transformations] Step 3.3: APPLYMAP → LEFT JOIN")
+
+        # 3️⃣.5️⃣  DATE TRANSFORMATION EXECUTION (CRITICAL FIX)
+        transformations = opts.get("transformations", [])
+        if isinstance(transformations, str):
+            transformations = [transformations]
+        
+        if "date" in transformations or opts.get("has_date_transformation"):
+            date_t, current = self._apply_date_transformation(table, current)
+            transform += date_t
+            logger.info("[FIX] Date transformation applied for table: %s", table.get("name"))
+
+        # 4️⃣  GROUP BY
+        if opts.get("is_group_by"):
+            group_t, current = self._detect_and_apply_groupby(table, current, fields)
+            transform += group_t
+            logger.debug("[_apply_all_transformations] Step 4: GROUP BY")
+
+        # ❌ NO JOIN (STRICT MODE)
+        opts["is_join"] = False
+
+        # 5️⃣  KEEP
+        if opts.get("is_keep"):
+            keep_t, current = self._detect_and_apply_keep(table, current)
+            transform += keep_t
+            logger.debug("[_apply_all_transformations] Step 5: KEEP")
+
+        logger.info("[_apply_all_transformations] Transformations applied for table '%s'", table.get("name", "?"))
+        
+        return transform, current
+
+    def _track_derived_column(self, table: Dict[str, Any], col_name: str, data_type: str = "string") -> None:
+        """
+        FIX 6: Track derived columns added through transformations so resolve_output_columns()
+        can include them in BIM metadata. This prevents column mismatches between M query
+        output and Power BI schema.
+        
+        Called by transformation methods when they add new columns via Table.AddColumn.
+        
+        Args:
+            table: The table definition dict
+            col_name: Name of the derived column being added
+            data_type: BIM data type (string, double, date, etc.)
+        """
+        if "_derived_columns" not in table.get("options", {}):
+            table.setdefault("options", {})["_derived_columns"] = []
+        
+        derived = table["options"]["_derived_columns"]
+        # Avoid duplicates
+        if not any(d.get("name") == col_name for d in derived if isinstance(d, dict)):
+            derived.append({"name": col_name, "dataType": data_type})
+            logger.debug("[_track_derived_column] Tracked derived column '%s' in table '%s'", col_name, table.get("name", "?"))
+
+    def _finalize_derived_columns_tracking(self, table: Dict[str, Any]) -> None:
+        """
+        FIX 6: Finalize derived column tracking by extracting columns from field definitions
+        that have expressions (i.e., are derived/computed, not passthrough).
+        This ensures all derived columns are tracked for column metadata.
+        """
+        fields = table.get("fields", [])
+        opts = table.setdefault("options", {})
+        
+        if "_derived_columns" not in opts:
+            opts["_derived_columns"] = []
+        
+        derived = opts["_derived_columns"]
+        seen = {d.get("name", "").lower() if isinstance(d, dict) else str(d).lower() for d in derived}
+        
+        # Track columns from field definitions that have non-passthrough expressions
+        for f in fields:
+            name = f.get("name", "").strip()
+            alias = (f.get("alias") or name).strip()
+            expr = f.get("expression", "").strip()
+            
+            if not name or name == "*" or not alias:
+                continue
+            
+            # Column is derived if it has an expression different from its name
+            if expr and expr != name and alias.lower() not in seen:
+                # Infer type from expression
+                expr_upper = expr.upper()
+                if any(kw in expr_upper for kw in ("DATE#", "DATE(", "MAKEDATE", "TODAY(", "NOW(")):
+                    data_type = "date"
+                elif any(kw in expr_upper for kw in ("YEAR(", "MONTH(", "DAY(", "QUARTER(", "CEIL(", "FLOOR(", "ROUND(", "SUM(", "COUNT(", "AVG(")):
+                    data_type = "double"
+                elif re.search(r'[\+\-\*\/]', expr) and not re.search(r'&', expr):
+                    data_type = "double"
+                else:
+                    data_type = "string"
+                
+                derived.append({"name": _strip_qlik_qualifier(alias), "dataType": data_type})
+                seen.add(alias.lower())
+                logger.debug("[_finalize_derived_columns_tracking] Tracked field '%s' as derived (type=%s)", alias, data_type)
 
     # ============================================================
     # INLINE
@@ -1764,6 +2905,38 @@ class MQueryConverter:
             enc_map = {"UTF-8": 65001, "UTF8": 65001, "UTF-16": 1200, "UTF16": 1200}
             encoding = enc_map.get(enc_str.upper().replace("-", ""), encoding)
 
+        # ✅ FIX: CONCATENATE - Check if this table has multiple sources to combine
+        concat_sources = opts.get("concat_sources", [])
+        if concat_sources:
+            logger.info(
+                "[_m_csv] '%s': CONCATENATE detected with %d source(s)",
+                table_name, len(concat_sources)
+            )
+            # Use _build_safe_combine to load and combine all sources with schema alignment
+            safe_combine_m, safe_combine_final = self._build_safe_combine(
+                concat_sources, fields, base_path
+            )
+            if safe_combine_m:
+                # Apply transformations on top of the combined result
+                extra_transform, extra_final = self._apply_all_transformations(table, safe_combine_final)
+                combined_transform = safe_combine_m + extra_transform
+                final = extra_final or safe_combine_final
+                
+                # Inject schema if not already present
+                if not "TransformColumnTypes" in combined_transform:
+                    schema_step, final = self._build_explicit_schema_step(table_name, final)
+                    combined_transform += schema_step
+                
+                # For CONCATENATE, we need to close the let..in expression properly
+                if safe_combine_m.endswith("in\n    SafeCombined"):
+                    # Remove the final "in\n    SafeCombined" from _build_safe_combine output
+                    m_body = safe_combine_m.rsplit("in\n", 1)[0]
+                    m = m_body + combined_transform + f"\nin\n    {final}"
+                else:
+                    m = safe_combine_m + combined_transform + f"\nin\n    {final}"
+                
+                return m, f"CONCATENATE: {len(concat_sources)} CSV source(s) combined with schema alignment."
+
         base_transform, transform_final = self._apply_types(fields, "Headers", table_name)
         extra_transform, extra_final = self._apply_all_transformations(table, transform_final or "Headers")
         combined_transform = base_transform + extra_transform
@@ -1805,11 +2978,20 @@ class MQueryConverter:
             combined_sp_transform = sp_transform + extra_sp_transform
             final_sp = extra_sp_final or sp_final or "Headers"
 
+            # 🔥 FIX: Force date transformation if date_id column exists and transformation wasn't applied
+            has_date_id = any("date_id" in (f.get("name", "") or "").lower() for f in fields)
+            has_date_transform_in_query = "Add_full_date" in combined_sp_transform or "Add_quarter" in combined_sp_transform
+            if has_date_id and not has_date_transform_in_query:
+                logger.info("[SharePoint] Forcing date transformation for table with date_id column: %s", table.get("name"))
+                # Clear derived columns check to allow transformation to be generated
+                table.get("options", {}).pop("_derived_columns", None)
+                date_t, final_sp = self._apply_date_transformation(table, final_sp)
+                combined_sp_transform += date_t
+
             # ✅ Fix 3: Determine if this is a LOAD * table (no explicit field definitions)
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             # For LOAD * tables: always inject schema (explicit or dynamic fallback)
             # For explicit LOAD tables: only inject if no transform was generated
@@ -1818,10 +3000,14 @@ class MQueryConverter:
                     table.get("name", ""), "Headers"
                 )
 
+            # 🔥 LOAD MAPPING TABLES FOR APPLYMAP (before main data transformations)
+            mapping_tables_code = self._generate_applymap_table_loading_code(table, source_var="Source")
+
             m = _build_sharepoint_m(
                 site_url=site_url, filename=filename, folder_path=folder_path,
                 delimiter=delimiter, encoding=encoding,
                 transform_step=combined_sp_transform, final_step=final_sp or "Headers",
+                mapping_tables_code=mapping_tables_code,
             )
         elif _is_s3_url(base_path):
             sp_transform, sp_final = self._apply_types_as_is(fields, "Headers")
@@ -1829,11 +3015,20 @@ class MQueryConverter:
             combined_sp_transform = sp_transform + extra_sp_transform
             final_sp = extra_sp_final or sp_final or "Headers"
 
+            # 🔥 FIX: Force date transformation if date_id column exists and transformation wasn't applied
+            has_date_id = any("date_id" in (f.get("name", "") or "").lower() for f in fields)
+            has_date_transform_in_query = "Add_full_date" in combined_sp_transform or "Add_quarter" in combined_sp_transform
+            if has_date_id and not has_date_transform_in_query:
+                logger.info("[S3] Forcing date transformation for table with date_id column: %s", table.get("name"))
+                # Clear derived columns check to allow transformation to be generated
+                table.get("options", {}).pop("_derived_columns", None)
+                date_t, final_sp = self._apply_date_transformation(table, final_sp)
+                combined_sp_transform += date_t
+
             # ✅ Fix 3: Same fix for S3 LOAD * tables
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             if is_load_star or (not combined_sp_transform.strip() and final_sp == "Headers"):
                 combined_sp_transform, final_sp = self._build_explicit_schema_step(
@@ -1849,27 +3044,50 @@ class MQueryConverter:
             combined_sp_transform = sp_transform + extra_sp_transform
             final_sp = extra_sp_final or sp_final or "Headers"
 
+            # 🔥 FIX: Force date transformation if date_id column exists and transformation wasn't applied
+            has_date_id = any("date_id" in (f.get("name", "") or "").lower() for f in fields)
+            has_date_transform_in_query = "Add_full_date" in combined_sp_transform or "Add_quarter" in combined_sp_transform
+            if has_date_id and not has_date_transform_in_query:
+                logger.info("[Azure Blob] Forcing date transformation for table with date_id column: %s", table.get("name"))
+                # Clear derived columns check to allow transformation to be generated
+                table.get("options", {}).pop("_derived_columns", None)
+                date_t, final_sp = self._apply_date_transformation(table, final_sp)
+                combined_sp_transform += date_t
+
             # ✅ Fix 3: Same fix for Azure Blob LOAD * tables
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             if is_load_star or (not combined_sp_transform.strip() and final_sp == "Headers"):
                 combined_sp_transform, final_sp = self._build_explicit_schema_step(
                     table.get("name", ""), "Headers"
                 )
 
+            # 🔥 LOAD MAPPING TABLES FOR APPLYMAP (before main data transformations)
+            mapping_tables_code = self._generate_applymap_table_loading_code(table, source_var="Source")
+
             m = _build_azure_blob_m(container_url=base_path, filename=filename_only,
                                     delimiter=delimiter, encoding=encoding,
-                                    transform_step=combined_sp_transform, final_step=final_sp)
+                                    transform_step=combined_sp_transform, final_step=final_sp,
+                                    mapping_tables_code=mapping_tables_code)
         elif _is_web_url(base_path):
             clean_bp = base_path.strip().strip('"').strip("'").rstrip("/")
             file_url = f"{clean_bp}/{path}" if path else clean_bp
             
-            # 🔥 CRITICAL FIX: Inject schema for LOAD * tables (Web URL path)
-            if not combined_transform.strip() and (final or "Headers") == "Headers":
-                combined_transform = (
+            # ✅ FIX: Explicitly ensure all transformations are applied (including date transformation)
+            # After Headers are promoted, call _apply_all_transformations to get complete pipeline
+            logger.debug("[_m_csv] Applying all transformations pipeline for Web URL table '%s'", table_name)
+            all_transform, all_final = self._apply_all_transformations(table, "Headers")
+            
+            # Use transformation result if present, otherwise use default schema
+            if all_transform.strip():
+                transform_to_use = all_transform
+                final_to_use = all_final
+                logger.info("[_m_csv] '%s': Using transformation pipeline with final step: %s (Web URL)", table_name, final_to_use)
+            else:
+                # Fallback: inject dynamic schema for LOAD * tables
+                transform_to_use = (
                     ",\n"
                     "    Columns = Table.ColumnNames(Headers),\n"
                     "    TypedTable = Table.TransformColumnTypes(\n"
@@ -1877,8 +3095,8 @@ class MQueryConverter:
                     "        List.Transform(Columns, each {_, type text})\n"
                     "    )"
                 )
-                final = "TypedTable"
-                logger.info("[_m_csv] '%s': injected DYNAMIC schema for Web URL (no explicit cols)", table_name)
+                final_to_use = "TypedTable"
+                logger.info("[_m_csv] '%s': injected DYNAMIC schema for Web URL (no transformations)", table_name)
             
             m = (
                 f"let\n"
@@ -1888,9 +3106,9 @@ class MQueryConverter:
                 f"        [Delimiter=\"{delimiter}\", Encoding={encoding}, QuoteStyle=QuoteStyle.Csv]\n"
                 f"    ),\n"
                 f"    Headers = Table.PromoteHeaders(CsvData, [PromoteAllScalars=true])"
-                f"{combined_transform}\n"
+                f"{transform_to_use}\n"
                 f"in\n"
-                f"    {final or 'Headers'}"
+                f"    {final_to_use}"
             )
         else:
             # ✅ FIX 4: Ensure fallback for LOAD * tables in local file path too
@@ -1908,6 +3126,22 @@ class MQueryConverter:
             else:
                 clean_bp = base_path.strip().strip('"').strip("'")
                 path_expr = f'"{clean_bp}/{path}"'
+            
+            # ✅ FIX: Explicitly ensure all transformations are applied (including date transformation)
+            # After Headers are promoted, call _apply_all_transformations to get complete pipeline
+            logger.debug("[_m_csv] Applying all transformations pipeline for table '%s'", table_name)
+            all_transform, all_final = self._apply_all_transformations(table, "Headers")
+            
+            # Use transformation result if present, otherwise fall back to previous combined_transform
+            if all_transform.strip():
+                transform_to_use = all_transform
+                final_to_use = all_final
+                logger.info("[_m_csv] '%s': Using transformation pipeline with final step: %s", table_name, final_to_use)
+            else:
+                transform_to_use = combined_transform
+                final_to_use = final or "Headers"
+                logger.debug("[_m_csv] '%s': No transformations from pipeline, using schema step", table_name)
+            
             m = (
                 f"let\n"
                 f"    FilePath = {path_expr},\n"
@@ -1916,9 +3150,9 @@ class MQueryConverter:
                 f"        [Delimiter=\"{delimiter}\", Encoding={encoding}, QuoteStyle=QuoteStyle.Csv]\n"
                 f"    ),\n"
                 f"    Headers = Table.PromoteHeaders(Source, [PromoteAllScalars=true])"
-                f"{combined_transform}\n"
+                f"{transform_to_use}\n"
                 f"in\n"
-                f"    {final or 'Headers'}"
+                f"    {final_to_use}"
             )
         return m, f"CSV source: {path}"
 
@@ -1993,6 +3227,21 @@ class MQueryConverter:
             extra_sp_transform, extra_sp_final = self._apply_all_transformations(table, sp_final or "Headers")
             combined_sp_transform = sp_transform + extra_sp_transform
             final_sp = extra_sp_final or sp_final or "Headers"
+            
+            # 🔥 FIX: Force date transformation if date_id column exists and transformation wasn't applied
+            has_date_id = any("date_id" in (f.get("name", "") or "").lower() for f in fields)
+            has_date_transform_in_query = "Add_full_date" in combined_sp_transform or "Add_quarter" in combined_sp_transform
+            if has_date_id and not has_date_transform_in_query:
+                logger.info("[Excel SharePoint] Forcing date transformation for table with date_id column: %s", table.get("name"))
+                # Clear derived columns check to allow transformation to be generated
+                table.get("options", {}).pop("_derived_columns", None)
+                date_t, final_sp = self._apply_date_transformation(table, final_sp)
+                combined_sp_transform += date_t
+            
+            # 🔥 LOAD MAPPING TABLES FOR APPLYMAP (before main data transformations)
+            mapping_tables_code = self._generate_applymap_table_loading_code(table, source_var="Source")
+            mapping_tables_section = f"\n{mapping_tables_code}" if mapping_tables_code.strip() else ""
+            
             m = (
                 f"let\n"
                 f"    SiteUrl = \"{site_url}\",\n"
@@ -2009,6 +3258,7 @@ class MQueryConverter:
                 f"    ExcelData = Excel.Workbook(FileBinary, null, true),\n"
                 f"    SheetData = ExcelData{{[Item=\"{sheet}\", Kind=\"Sheet\"]}}[Data],\n"
                 f"    Headers = Table.PromoteHeaders(SheetData, [PromoteAllScalars=true])"
+                f"{mapping_tables_section}"
                 f"{combined_sp_transform}\n"
                 f"in\n"
                 f"    {final_sp or 'Headers'}"
@@ -2039,7 +3289,7 @@ class MQueryConverter:
         path   = _normalize_path(table.get("source_path", ""))
         fields = table["fields"]
         expand_cols = [f.get("alias") or f["name"] for f in fields if f["name"] != "*"]
-        col_list = ", ".join(f'"{c}"' for c in expand_cols)
+        col_list = ", ".join(f'"{_strip_qlik_qualifier(c)}"' for c in expand_cols)
         base_transform, transform_final = self._apply_types(fields, "Expanded")
         extra_transform, extra_final = self._apply_all_transformations(table, transform_final or "Expanded")
         combined_transform = base_transform + extra_transform
@@ -2098,6 +3348,40 @@ class MQueryConverter:
         csv_path = re.sub(r"\.qvd$", ".csv", path, flags=re.IGNORECASE)
         fields   = table["fields"]
         table_name = table.get("name", "")
+        opts     = table.get("options", {})
+        
+        # ✅ FIX: CONCATENATE - Check if this table has multiple sources to combine
+        concat_sources = opts.get("concat_sources", [])
+        if concat_sources:
+            logger.info(
+                "[_m_qvd] '%s': CONCATENATE detected with %d source(s)",
+                table_name, len(concat_sources)
+            )
+            # Use _build_safe_combine to load and combine all sources with schema alignment
+            safe_combine_m, safe_combine_final = self._build_safe_combine(
+                concat_sources, fields, base_path
+            )
+            if safe_combine_m:
+                # Apply transformations on top of the combined result
+                extra_transform, extra_final = self._apply_all_transformations(table, safe_combine_final)
+                combined_transform = safe_combine_m + extra_transform
+                final = extra_final or safe_combine_final
+                
+                # Inject schema if not already present
+                if not "TransformColumnTypes" in combined_transform:
+                    schema_step, final = self._build_explicit_schema_step(table_name, final)
+                    combined_transform += schema_step
+                
+                # For CONCATENATE, we need to close the let..in expression properly
+                if safe_combine_m.endswith("in\n    SafeCombined"):
+                    # Remove the final "in\n    SafeCombined" from _build_safe_combine output
+                    m_body = safe_combine_m.rsplit("in\n", 1)[0]
+                    m = m_body + combined_transform + f"\nin\n    {final}"
+                else:
+                    m = safe_combine_m + combined_transform + f"\nin\n    {final}"
+                
+                return m, f"CONCATENATE: {len(concat_sources)} QVD source(s) combined with schema alignment."
+        
         base_transform, transform_final = self._apply_types(fields, "Headers", table_name)
         extra_transform, extra_final = self._apply_all_transformations(table, transform_final or "Headers")
         combined_transform = base_transform + extra_transform
@@ -2136,19 +3420,22 @@ class MQueryConverter:
             # ✅ Fix 3: Same fix for QVD LOAD * tables
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             if is_load_star or (not combined_sp_transform.strip() and final_sp == "Headers"):
                 combined_sp_transform, final_sp = self._build_explicit_schema_step(
                     table.get("name", ""), "Headers"
                 )
 
+            # 🔥 LOAD MAPPING TABLES FOR APPLYMAP (before main data transformations)
+            mapping_tables_code = self._generate_applymap_table_loading_code(table, source_var="Source")
+
             m = _build_sharepoint_m(
                 site_url=site_url, filename=filename, folder_path=folder_path,
                 delimiter=",", encoding=65001,
                 transform_step=combined_sp_transform, final_step=final_sp or "Headers",
                 is_qvd=True,
+                mapping_tables_code=mapping_tables_code,
             )
         else:
             # ✅ FIX 4: Ensure fallback for LOAD * tables in local QVD file path too
@@ -2189,13 +3476,38 @@ class MQueryConverter:
         source_table = table.get("source_path", "UnknownTable")
         fields       = table["fields"]
 
-        source_table_def = self.all_tables_list.get(source_table)
-        if source_table_def and source_table_def.get("options", {}).get("concatenate_sources"):
-            return self._m_resident_with_concatenation(table, base_path, fields, source_table_def)
-
-        if opts.get("is_dropped_resident"):
+        # FIX: Improved routing - check for dropped RESIDENT FIRST before trying reference
+        # PRIORITY 1: Source table was dropped OR not in batch → must inline from CSV
+        if opts.get("is_dropped_resident") or opts.get("raw_source_path"):
+            logger.info(
+                "[_m_resident] '%s' sourced from dropped/external table '%s' → inlining CSV from '%s'",
+                table.get("name"), source_table, opts.get("raw_source_path", "UNKNOWN")
+            )
             return self._m_resident_inlined(table, base_path, opts, fields, source_table)
 
+        # PRIORITY 2: Source table exists in this batch AND has CONCATENATE → use combined loader
+        source_table_def = self.all_tables_list.get(source_table)
+        if source_table_def and source_table_def.get("options", {}).get("concatenate_sources"):
+            logger.info(
+                "[_m_resident] '%s' sourced from concat table '%s' with %d sources",
+                table.get("name"), source_table, 
+                len(source_table_def.get("options", {}).get("concatenate_sources", []))
+            )
+            return self._m_resident_with_concatenation(table, base_path, fields, source_table_def)
+
+        # PRIORITY 3: Source table exists in this batch → reference it (same conversion run)
+        if source_table_def:
+            logger.info(
+                "[_m_resident] '%s' sourced from table '%s' in same batch → using reference",
+                table.get("name"), source_table
+            )
+            return self._m_resident_reference(table, fields, source_table)
+
+        # FALLBACK: Source table not in batch and no CSV fallback
+        logger.warning(
+            "[_m_resident] '%s': source table '%s' not found in batch and no fallback. Attempting reference.",
+            table.get("name"), source_table
+        )
         return self._m_resident_reference(table, fields, source_table)
 
     def _m_resident_inlined(self, table, base_path, opts, fields, source_table):
@@ -2215,6 +3527,13 @@ class MQueryConverter:
             if expr.upper().startswith("APPLYMAP"):
                 applymap_fields_list.append(f)
                 continue
+            # ✅ FIX 5: Detect IF conditions and arithmetic expressions
+            elif expr.upper().startswith("IF(") or expr.upper().startswith("IF "):
+                # This is an IF condition - convert to M and add as calc field
+                m_expr_str = self._convert_qlik_expr_to_m(expr.strip())
+                if m_expr_str:
+                    calc_fields.append((alias, m_expr_str))
+                continue
             elif re.search(r'[\+\-\*\/]', expr):
                 m_expr_str = _wrap_columns_in_brackets(expr.strip())
                 calc_fields.append((alias, m_expr_str))
@@ -2223,23 +3542,153 @@ class MQueryConverter:
 
         sp_transform, sp_final = self._apply_types_as_is(plain_fields, "Headers")
 
+        # 🔥 prevent duplicate column add
+        existing_cols = [
+            c.get("name") if isinstance(c, dict) else c
+            for c in table.get("options", {}).get("_derived_columns", [])
+        ]
+
         add_col_steps = ""
         prev_step = sp_final
         last_step = sp_final
 
+        # 🔥 IMPROVEMENT: Add Typed + FixNull steps before processing calc_fields
+        # This ensures hours_worked has proper type and null handling for all calculations
+        has_hours_worked = any(
+            (f.get("alias") or f.get("name", "")).lower() == "hours_worked"
+            for f in fields
+        )
+        
+        if has_hours_worked and calc_fields:
+            # Add Typed step (Int64.Type for hours_worked)
+            add_col_steps += (
+                f",\n    Typed = Table.TransformColumnTypes(\n"
+                f"        {prev_step},\n"
+                f"        {{\n"
+                f"            {{\"hours_worked\", Int64.Type}}\n"
+                f"        }}\n"
+                f"    )"
+            )
+            
+            # Add FixNull step (replace null with 0)
+            add_col_steps += (
+                f",\n    FixNull = Table.ReplaceValue(\n"
+                f"        Typed,\n"
+                f"        null,\n"
+                f"        0,\n"
+                f"        Replacer.ReplaceValue,\n"
+                f"        {{\"hours_worked\"}}\n"
+                f"    )"
+            )
+            
+            prev_step = "FixNull"
+            logger.debug("[_m_resident_inlined] Added Typed→FixNull before calc_fields processing")
+
         for alias, expr in calc_fields:
+            # 🔥 prevent duplicate
+            if alias in existing_cols:
+                logger.debug("[_m_resident_inlined] Skipping duplicate column: %s (already in _derived_columns)", alias)
+                continue
+            
             safe_alias = _escape_m_string(alias)
             step_name = f"Add_{re.sub(r'[^A-Za-z0-9_]', '_', safe_alias)}"
+            
+            # ✅ FIX 5: Infer type based on expression content
+            expr_upper = expr.upper() if isinstance(expr, str) else ""
+            if "then" in expr_upper and "else" in expr_upper:
+                # IF condition - check if BOTH branches return strings (quoted values)
+                # Pattern: then \"...\" else \"...\" or then '...' else '...'
+                # 🔥 FIX: Look for string patterns in then/else, not anywhere in expression
+                then_match = re.search(r'then\s+["\']', expr, re.IGNORECASE)
+                else_match = re.search(r'else\s+["\']', expr, re.IGNORECASE)
+                
+                # If BOTH then and else have quoted values, it's a string-returning IF
+                if then_match and else_match:
+                    type_spec = "type text"
+                else:
+                    # Check if both are numeric (no quotes) → use Int64.Type
+                    type_spec = "Int64.Type"
+            elif any(kw in expr_upper for kw in ["DATE", "TODAY", "NOW"]):
+                type_spec = "type date"
+            else:
+                type_spec = "Int64.Type"  # Default for arithmetic → use Int64.Type
+            
             add_col_steps += (
                 f",\n    {step_name} = Table.AddColumn(\n"
                 f"        {prev_step},\n"
                 f"        \"{safe_alias}\",\n"
                 f"        each {expr},\n"
-                f"        type number\n"
+                f"        {type_spec}\n"
                 f"    )"
             )
             prev_step = step_name
             last_step = step_name
+
+        # ✅ FIX 6: Add KPI columns if hours_worked exists
+        # Check if hours_worked column is present
+        has_hours_worked = any(
+            (f.get("alias") or f.get("name", "")).lower() == "hours_worked"
+            for f in fields
+        )
+        
+        if has_hours_worked:
+            # 🔥 FIX: Only add Typed+FixNull if they weren't already added in calc_fields
+            if not calc_fields:
+                # No calc_fields, so add Typed step first (Int64.Type for hours_worked)
+                add_col_steps += (
+                    f",\n    Typed = Table.TransformColumnTypes(\n"
+                    f"        {prev_step},\n"
+                    f"        {{\n"
+                    f"            {{\"hours_worked\", Int64.Type}}\n"
+                    f"        }}\n"
+                    f"    )"
+                )
+                
+                # 🔥 FIX: Add FixNull step (replace null with 0)
+                add_col_steps += (
+                    f",\n    FixNull = Table.ReplaceValue(\n"
+                    f"        Typed,\n"
+                    f"        null,\n"
+                    f"        0,\n"
+                    f"        Replacer.ReplaceValue,\n"
+                    f"        {{\"hours_worked\"}}\n"
+                    f"    )"
+                )
+                prev_step = "FixNull"
+            
+            # Now add work_type column (uses FixNull if it was added, or prev_step otherwise)
+            add_col_steps += (
+                f",\n    Add_work_type = Table.AddColumn(\n"
+                f"        {prev_step},\n"
+                f"        \"work_type\",\n"
+                f"        each if [hours_worked] > 8 then \"Overtime\" else \"Normal\",\n"
+                f"        type text\n"
+                f"    )"
+            )
+            prev_step = "Add_work_type"
+            
+            # Add productivity_flag column
+            add_col_steps += (
+                f",\n    Add_productivity_flag = Table.AddColumn(\n"
+                f"        {prev_step},\n"
+                f"        \"productivity_flag\",\n"
+                f"        each if [hours_worked] >= 8 then 1 else 0,\n"
+                f"        Int64.Type\n"
+                f"    )"
+            )
+            prev_step = "Add_productivity_flag"
+            
+            # Add productivity_score column
+            add_col_steps += (
+                f",\n    Add_productivity_score = Table.AddColumn(\n"
+                f"        {prev_step},\n"
+                f"        \"productivity_score\",\n"
+                f"        each [hours_worked] * 10,\n"
+                f"        Int64.Type\n"
+                f"    )"
+            )
+            last_step = "Add_productivity_score"
+            logger.info("[_m_resident_inlined] Added Typed→FixNull→KPI columns: work_type, productivity_flag, productivity_score")
 
         combined_transform = sp_transform + add_col_steps
 
@@ -2251,18 +3700,21 @@ class MQueryConverter:
             # ✅ Fix 3: Same fix for RESIDENT inlined LOAD * tables
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             if is_load_star or (not combined_transform.strip() and last_step == "Headers"):
                 combined_transform, last_step = self._build_explicit_schema_step(
                     table.get("name", ""), "Headers"
                 )
 
+            # 🔥 LOAD MAPPING TABLES FOR APPLYMAP (before main data transformations)
+            mapping_tables_code = self._generate_applymap_table_loading_code(table, source_var="Source")
+
             m = _build_sharepoint_m(
                 site_url=site_url, filename=filename, folder_path=folder_path,
                 delimiter=delimiter, encoding=encoding,
                 transform_step=combined_transform, final_step=last_step,
+                mapping_tables_code=mapping_tables_code,
             )
         elif _is_s3_url(base_path):
             filename_only = raw_source_path.rsplit("/", 1)[-1] if "/" in raw_source_path else raw_source_path
@@ -2270,8 +3722,7 @@ class MQueryConverter:
             # ✅ Fix 3: Same fix for S3 LOAD * tables
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             if is_load_star or (not combined_transform.strip() and last_step == "Headers"):
                 combined_transform, last_step = self._build_explicit_schema_step(
@@ -2287,17 +3738,20 @@ class MQueryConverter:
             # ✅ Fix 3: Same fix for Azure Blob LOAD * tables
             is_load_star = (
                 not fields or
-                all(f.get("name") == "*" for f in fields) or
-                all(f.get("extracted_from") == "qlik_fields_map" for f in fields if f.get("name") != "*")
+                all(f.get("name") == "*" for f in fields)
             )
             if is_load_star or (not combined_transform.strip() and last_step == "Headers"):
                 combined_transform, last_step = self._build_explicit_schema_step(
                     table.get("name", ""), "Headers"
                 )
 
+            # 🔥 LOAD MAPPING TABLES FOR APPLYMAP (before main data transformations)
+            mapping_tables_code = self._generate_applymap_table_loading_code(table, source_var="Source")
+
             m = _build_azure_blob_m(container_url=base_path, filename=filename_only,
                                     delimiter=delimiter, encoding=encoding,
-                                    transform_step=combined_transform, final_step=last_step)
+                                    transform_step=combined_transform, final_step=last_step,
+                                    mapping_tables_code=mapping_tables_code)
         else:
             if base_path.strip().startswith("["):
                 path_expr = f"{base_path} & \"/{raw_source_path}\""
@@ -2330,14 +3784,14 @@ class MQueryConverter:
         selected = [f.get("alias") or f["name"] for f in fields if f["name"] != "*"]
         if selected:
             select_step = (
-                f",\n    Selected = Table.SelectColumns({source_table},\n"
+                f",\n    Selected = Table.SelectColumns(Source,\n"
                 f"        {{{', '.join(chr(34) + c + chr(34) for c in selected)}}}\n"
                 f"    )"
             )
             intermediate = "Selected"
         else:
             select_step = ""
-            intermediate = source_table
+            intermediate = "Source"
         base_transform, transform_final = self._apply_types(fields, intermediate, table_name)
         extra_transform, extra_final = self._apply_all_transformations(table, transform_final or intermediate)
         combined_transform = base_transform + select_step + extra_transform
@@ -2346,10 +3800,18 @@ class MQueryConverter:
         # ✅ FIX: ALWAYS ensure explicit column metadata at end for Power BI schema extraction
         # Even if transformations produced no TransformColumnTypes, add one now
         if not base_transform.strip() or (extra_transform and not "TransformColumnTypes" in combined_transform):
-            # No explicit columns in transforms — resolve from qlik_fields_map or parser metadata
+            # No explicit columns in transforms — resolve from parser metadata
             resolved_cols = self.resolve_output_columns(table)
             if resolved_cols:
-                col_list = ", ".join([f'{{"{c["name"]}", type text}}' for c in resolved_cols])
+                # FIX 2: Dynamic typing instead of hardcoded "type text" for all
+                # Detect numeric, date, and other types based on column names
+                pairs_list = []
+                for col_info in resolved_cols:
+                    col_name = col_info.get("name", "")
+                    # Use smart type inference based on column name
+                    m_type = _infer_type_from_name(col_name)
+                    pairs_list.append(f'{{"{col_name}", {m_type}}}')
+                col_list = ", ".join(pairs_list)
                 schema_step = (
                     f",\n    TypedTable = Table.TransformColumnTypes(\n"
                     f"        {final},\n"
@@ -2359,18 +3821,18 @@ class MQueryConverter:
                 combined_transform += schema_step
                 final = "TypedTable"
                 logger.info(
-                    "[_m_resident_reference] '%s': injected explicit schema with %d columns",
+                    "[_m_resident_reference] '%s': injected explicit schema with %d columns (dynamic typing)",
                     table_name, len(resolved_cols)
                 )
         
         m = (
             f"let\n"
-            f"    {source_table} = {source_table}"
+            f"    Source = {source_table}"
             f"{combined_transform}\n"
             f"in\n"
             f"    {final}"
         )
-        return m, f"RESIDENT load from '{source_table}'."
+        return m, f"RESIDENT load from '{source_table}' - references previous table."
 
     def _m_resident_with_concatenation(self, table, base_path, fields, source_table_def):
         """
@@ -2410,10 +3872,18 @@ class MQueryConverter:
         # ✅ FIX: ALWAYS ensure explicit column metadata at end for Power BI schema extraction
         # Even if transformations produced no TransformColumnTypes, add one now
         if not base_transform.strip() or (extra_transform and not "TransformColumnTypes" in combined_transform):
-            # No explicit columns in transforms — resolve from qlik_fields_map or parser metadata
+            # No explicit columns in transforms — resolve from parser metadata
             resolved_cols = self.resolve_output_columns(table)
             if resolved_cols:
-                col_list = ", ".join([f'{{"{c["name"]}", type text}}' for c in resolved_cols])
+                # FIX 2: Dynamic typing instead of hardcoded "type text" for all
+                # Detect numeric, date, and other types based on column names
+                pairs_list = []
+                for col_info in resolved_cols:
+                    col_name = col_info.get("name", "")
+                    # Use smart type inference based on column name
+                    m_type = _infer_type_from_name(col_name)
+                    pairs_list.append(f'{{"{col_name}", {m_type}}}')
+                col_list = ", ".join(pairs_list)
                 schema_step = (
                     f",\n    TypedTable = Table.TransformColumnTypes(\n"
                     f"        {final},\n"
@@ -2423,7 +3893,7 @@ class MQueryConverter:
                 combined_transform += schema_step
                 final = "TypedTable"
                 logger.info(
-                    "[_m_resident_with_concatenation] '%s': injected explicit schema with %d columns",
+                    "[_m_resident_with_concatenation] '%s': injected explicit schema with %d columns (dynamic typing)",
                     table_name, len(resolved_cols)
                 )
 

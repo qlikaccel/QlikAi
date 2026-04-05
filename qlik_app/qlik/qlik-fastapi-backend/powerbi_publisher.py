@@ -45,19 +45,9 @@ def publish_semantic_model(
     data_source_path: str = "",
     db_connection_string: str = "",
     workspace_id: str = "",
-    qlik_fields_map: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, Any]:
     """
-    qlik_fields_map: optional dict mapping table name → list of real column names
-    from the Qlik data model (GetTablesAndKeys). When supplied, LOAD * tables get
-    explicit TransformColumnTypes with real column names instead of the dynamic
-    List.Transform pattern, so Power BI sees correct columns immediately.
-
-    Example:
-        qlik_fields_map = {
-            "Departments": ["department_id", "department_name"],
-            "Locations":   ["location_id", "location_name", "country"],
-        }
+    Publish semantic model to Power BI workspace.
     """
     relationships = relationships or []
     if not workspace_id:
@@ -69,7 +59,6 @@ def publish_semantic_model(
     token = access_token or _acquire_sp_token()
     return _Publisher(workspace_id=workspace_id, access_token=token).publish(
         dataset_name, tables_m, relationships, data_source_path,
-        qlik_fields_map=qlik_fields_map or {},
     )
 
 
@@ -517,7 +506,6 @@ def _resolve_schema_universal(
     table: Dict[str, Any],
     expr_str: str,
     is_file: bool,
-    qlik_fields_map: Optional[Dict[str, List[str]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     UNIVERSAL SCHEMA RESOLVER - FIX for future-proof column detection
@@ -526,8 +514,7 @@ def _resolve_schema_universal(
     1. Check table.columns (already extracted)
     2. Extract from M expression (regex + semantic analysis)
     3. Infer from source type hints
-    4. 🔥 NEW — qlik_fields_map from GetTablesAndKeys (real column names for LOAD * tables)
-    5. Last resort: check options metadata
+    4. Last resort: check options metadata
     
     Returns: List of column definitions or empty list if unresolvable
     
@@ -663,43 +650,7 @@ def _resolve_schema_universal(
                     })
             return columns
 
-    # 🔥 Step 4: qlik_fields_map from GetTablesAndKeys — real column names for LOAD * tables.
-    # This is the most reliable source for tables whose M expression uses the dynamic
-    # List.Transform(Columns, each {_, type text}) pattern (i.e. LOAD * with no explicit
-    # column list in the script). The map is populated by LoadScriptFetcher.fetch_and_parse()
-    # via WebSocket GetTablesAndKeys and threaded through publish_semantic_model().
-    # Previously this map was stored on _Publisher but never consumed here — so LOAD * tables
-    # with dynamic M schema always fell through to the empty return below.
-    if qlik_fields_map:
-        # Try exact name match first, then case-insensitive
-        real_cols = qlik_fields_map.get(table_name) or next(
-            (v for k, v in qlik_fields_map.items() if k.lower() == table_name.lower()),
-            None
-        )
-        if real_cols:
-            logger.info(
-                "[_resolve_schema_universal] '%s': 🔥 Resolved %d columns from qlik_fields_map "
-                "(GetTablesAndKeys). This covers LOAD * / dynamic schema tables.",
-                table_name, len(real_cols)
-            )
-            for col_name in real_cols:
-                if col_name and not col_name.startswith("$"):  # skip Qlik system fields
-                    columns.append({
-                        "name": col_name,
-                        "dataType": "string" if is_file else _infer_type_from_name(col_name),
-                        "sourceColumn": col_name,
-                        "summarizeBy": "none",
-                        "annotations": [{"name": "SummarizationSetBy", "value": "Automatic"}],
-                    })
-            if columns:
-                return columns
-        else:
-            logger.debug(
-                "[_resolve_schema_universal] '%s': Not found in qlik_fields_map (%d tables available).",
-                table_name, len(qlik_fields_map)
-            )
-
-    # Step 5: Last resort - return empty and log (don't add fake schema)
+    # Step 4: Last resort - return empty and log (don't add fake schema)
     logger.debug(
         "[_resolve_schema_universal] '%s': No resolvable schema found. "
         "Table will have dynamic schema from M expression at refresh time.",
@@ -728,9 +679,7 @@ class _Publisher:
         tables_m: List[Dict[str, Any]],
         relationships: List[Dict[str, Any]],
         data_source_path: str,
-        qlik_fields_map: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, Any]:
-        self.qlik_fields_map = qlik_fields_map or {}
         if not self.token:
             flow = initiate_device_code_flow()
             return {
@@ -755,9 +704,6 @@ class _Publisher:
     ) -> str:
         from mquery_converter import MQueryConverter
         converter = MQueryConverter()
-        # Supply real Qlik column names so resolve_output_columns works for LOAD * tables
-        if getattr(self, "qlik_fields_map", {}):
-            converter.qlik_fields_map = self.qlik_fields_map
 
         tmd_tables = []
         skipped_tables = []
@@ -930,12 +876,10 @@ class _Publisher:
 
             # ── SMART SCHEMA RESOLUTION (Future-Proof FIX) ──────────────────
             # Use universal schema resolver instead of fake _schema_loaded_on_refresh hack.
-            # 🔥 FIX: pass qlik_fields_map so LOAD * tables with dynamic M schema can be
-            # resolved from GetTablesAndKeys real column data rather than returning [].
+            # FIX: resolve table schema from M expression and metadata
             if not columns:
                 resolved = _resolve_schema_universal(
                     t, expr_str, is_file,
-                    qlik_fields_map=getattr(self, "qlik_fields_map", {}),
                 )
                 columns.extend(resolved)
                 

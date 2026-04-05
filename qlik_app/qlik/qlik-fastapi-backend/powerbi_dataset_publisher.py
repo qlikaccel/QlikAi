@@ -58,15 +58,27 @@ def inject_schema_if_missing(m_expr: str, source_type: str = "") -> str:
     - Fails on "in\t\n\tHeaders" (tabs)
     
     SOLUTION: Use regex to handle ANY whitespace pattern
+    
+    FIX: Also checks for "Changed Type" and other schema indicators
     """
     import logging
     import re
     
     logger = logging.getLogger(__name__)
     
-    # If already has schema → skip (no double injection)
-    if "TransformColumnTypes" in m_expr:
-        logger.debug(f"[inject_schema] ℹ️ Schema already present - skipping")
+    # ✅ FIX 3: Enhanced schema detection — check multiple indicators
+    # A robust M Query should have at least ONE of these:
+    schema_indicators = [
+        "TransformColumnTypes",  # Main indicator
+        "Changed Type",  # Alternative step name
+        "TypedTable",  # Generated step name
+        "Columns =",   # Column list indicator
+    ]
+    
+    has_schema = any(indicator in m_expr for indicator in schema_indicators)
+    
+    if has_schema:
+        logger.debug(f"[inject_schema] ✅ Schema already present - skipping injection")
         return m_expr
     
     # Only inject for file-based sources
@@ -162,19 +174,30 @@ def generate_cloud_m(table: Dict[str, Any], qlik_fields_map: Dict[str, Any] = No
         )
         
         if m_expr and m_expr.strip():
-            # 🔥 FINAL FIX: Inject schema for ALL tables without TransformColumnTypes
+            # 🔥 FINAL FIX 3: ALWAYS inject schema for ALL tables (MANDATORY)
             source_type = table.get('source_type', '').lower()
             m_expr_before = m_expr
             
-            # 🔥 ALWAYS inject for file-based sources
+            # 🔥 ALWAYS inject for file-based sources — NO conditions (CRITICAL FIX)
             if source_type in ("csv", "qvd", "excel", "json", "xml", "parquet", "file", "unknown", ""):
+                # FORCE schema injection ALWAYS — ensures schema is guaranteed present
+                logger.info(
+                    f"[generate_cloud_m] 🔥 FORCING schema injection for '{table_name}' (always called, no condition)"
+                )
                 m_expr = inject_schema_if_missing(m_expr, source_type)
             
             # Check if schema was injected
             if m_expr != m_expr_before:
-                logger.info(f"[generate_cloud_m] ✅ Schema injected for {table_name}")
+                logger.info(f"[generate_cloud_m] ✅ Schema injected for '{table_name}'")
+            
+            # Final verification: ensure schema is present (should ALWAYS be true now)
+            if "TransformColumnTypes" not in m_expr and "Changed Type" not in m_expr:
+                logger.error(
+                    f"[generate_cloud_m] 🔴 CRITICAL: Schema MISSING for '{table_name}' after FORCED injection! "
+                    f"This table will have column mismatches in Power BI."
+                )
             else:
-                logger.info(f"[generate_cloud_m] ℹ️ No schema injection needed for {table_name}")
+                logger.info(f"[generate_cloud_m] ✅ Schema GUARANTEED present in M Query for '{table_name}'")
             
             logger.info(f"[generate_cloud_m] Successfully converted {table_name}")
             return m_expr

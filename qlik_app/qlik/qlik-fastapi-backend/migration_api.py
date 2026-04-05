@@ -446,30 +446,6 @@ async def convert_to_mquery_endpoint(
     )
     raw_script: str = parse_result.get("raw_script", "")
 
-    # Extract qlik_fields_map if the parse_result already contains it
-    # (populated by LoadScriptParser.parse(qlik_fields_map=...) or fetch_and_parse()).
-    # This ensures LOAD * tables get real column names in M expressions even when
-    # going through convert-to-mquery before publish.
-    _qlik_fields_map: Dict[str, List[str]] = (
-        parse_result.get("qlik_fields_map")
-        or parse_result.get("details", {}).get("qlik_fields_map")
-        or {}
-    )
-    if _qlik_fields_map:
-        logger.info(
-            "[convert_to_mquery_endpoint] qlik_fields_map found in parse_result: %d tables",
-            len(_qlik_fields_map),
-        )
-    elif _app_id:
-        # Final fallback for scripts flow: auto-fetch schema from Qlik data model.
-        # This prevents LOAD * tables from becoming dynamic-only during conversion.
-        _qlik_fields_map = _build_qlik_fields_map(_app_id)
-        if _qlik_fields_map:
-            logger.info(
-                "[convert_to_mquery_endpoint] qlik_fields_map auto-fetched via app_id: %d tables",
-                len(_qlik_fields_map),
-            )
-
     if not tables and not raw_script:
         raise HTTPException(
             status_code=400,
@@ -495,7 +471,6 @@ async def convert_to_mquery_endpoint(
                 target, base_path=_base_path,
                 connection_string=_connection_str or None,
                 all_table_names=all_table_names,
-                qlik_fields_map=_qlik_fields_map or None,
             )
 
             dep_queries: Dict[str, str] = {}
@@ -507,7 +482,6 @@ async def convert_to_mquery_endpoint(
                         src_table, base_path=_base_path,
                         connection_string=_connection_str or None,
                         all_table_names=all_table_names,
-                        qlik_fields_map=_qlik_fields_map or None,
                     )
 
             return {
@@ -529,7 +503,6 @@ async def convert_to_mquery_endpoint(
             all_converted = converter.convert_all(
                 user_tables, base_path=_base_path,
                 connection_string=_connection_str or None,
-                qlik_fields_map=_qlik_fields_map or None,
             )
 
             parts = []
@@ -691,6 +664,12 @@ def _inject_applymap_dimension_tables(
             base_path=base_path,
             key_column=key_col,
         )
+        
+        # 🔥 STRICT MODE: If method returns None (disabled in strict mode), skip injection
+        if dim_table is None:
+            logger.debug("[_inject_applymap_dimension_tables] Skipping APPLYMAP dimension '%s' (disabled in strict mode)", map_table)
+            continue
+            
         tables_m.append(dim_table)
         existing_names.add(map_table)
         injected += 1
@@ -838,12 +817,10 @@ async def publish_mquery_endpoint(request: PublishMQueryRequest):
                 try:
                     from loadscript_parser import LoadScriptParser
                     from mquery_converter import MQueryConverter
-                    parse_result = LoadScriptParser(raw_script).parse(
-                        qlik_fields_map=qlik_fields_map
-                    )
+                    parse_result = LoadScriptParser(raw_script).parse()
                     raw_tables    = parse_result.get("details", {}).get("tables", [])
                     all_converted = MQueryConverter().convert_all(
-                        raw_tables, qlik_fields_map=qlik_fields_map
+                        raw_tables
                     )
                     fields_by_name = {t["name"]: t.get("fields", []) for t in all_converted}
                     for t in tables_m:
@@ -863,15 +840,12 @@ async def publish_mquery_endpoint(request: PublishMQueryRequest):
             # Convert from raw LoadScript
             from loadscript_parser import LoadScriptParser
             from mquery_converter  import MQueryConverter
-            parse_result = LoadScriptParser(raw_script).parse(
-                qlik_fields_map=qlik_fields_map
-            )
+            parse_result = LoadScriptParser(raw_script).parse()
             raw_tables    = parse_result.get("details", {}).get("tables", [])
-            # ✅ Pass qlik_fields_map to converter so it injects explicit schemas
+            # Convert to M Query
             all_converted = MQueryConverter().convert_all(
                 raw_tables,
                 base_path="[DataSourcePath]",
-                qlik_fields_map=qlik_fields_map,
             )
             tables_m = [
                 {
@@ -992,7 +966,7 @@ async def publish_mquery_endpoint(request: PublishMQueryRequest):
             db_connection_string=request.db_connection_string or "",
             access_token=request.access_token or "",
             # ✅ KEY FIX: pass qlik_fields_map so BIM gets explicit columns
-            qlik_fields_map=qlik_fields_map,
+            # qlik_fields_map=qlik_fields_map,
         )
 
         if result.get("auth_required"):

@@ -14,54 +14,6 @@
         "name": "Employees",
         "columns": [
           {
-            "name": "location_id",
-            "dataType": "string",
-            "sourceColumn": "location_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "role_id",
-            "dataType": "string",
-            "sourceColumn": "role_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "salary_band_id",
-            "dataType": "string",
-            "sourceColumn": "salary_band_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "department_id",
-            "dataType": "string",
-            "sourceColumn": "department_id",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
             "name": "employee_id",
             "dataType": "string",
             "sourceColumn": "employee_id",
@@ -86,9 +38,57 @@
             ]
           },
           {
+            "name": "department_id",
+            "dataType": "string",
+            "sourceColumn": "department_id",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
             "name": "emp_department_name",
             "dataType": "string",
             "sourceColumn": "emp_department_name",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "role_id",
+            "dataType": "string",
+            "sourceColumn": "role_id",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "location_id",
+            "dataType": "string",
+            "sourceColumn": "location_id",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "salary_band_id",
+            "dataType": "string",
+            "sourceColumn": "salary_band_id",
             "summarizeBy": "none",
             "annotations": [
               {
@@ -167,6 +167,18 @@
                 "        else error \"File dim_employee.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
                 "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
+                "    DeptMapFile = Table.SelectRows(",
+                "        Source,",
+                "        each Text.EndsWith(Text.Lower([Name]), \"dim_department.csv\")",
+                "    ){0}[Content],",
+                "    DeptMapCsv = Csv.Document(",
+                "        DeptMapFile,",
+                "        [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]",
+                "    ),",
+                "    DeptMapHeaders = Table.PromoteHeaders(",
+                "        DeptMapCsv,",
+                "        [PromoteAllScalars=true]",
+                "    ),",
                 "    TypedTable = Table.TransformColumnTypes(",
                 "        Headers,",
                 "        {",
@@ -177,29 +189,29 @@
                 "        {\"salary_band_id\", type text}",
                 "        }",
                 "    ),",
-                "    MergedDepartments = Table.NestedJoin(",
+                "    #\"NestedJoin_DeptMap\" = Table.NestedJoin(",
                 "        TypedTable,",
                 "        {\"department_id\"},",
-                "        Departments,",
+                "        DeptMapHeaders,",
                 "        {\"department_id\"},",
-                "        \"Departments\",",
+                "        \"DeptMap_joined\",",
                 "        JoinKind.LeftOuter",
                 "    ),",
-                "    ExpandedDepartments = Table.ExpandTableColumn(",
-                "        MergedDepartments,",
-                "        \"Departments\",",
-                "        {\"department_name\"},",
+                "    #\"Expand_DeptMap\" = Table.ExpandTableColumn(",
+                "        #\"NestedJoin_DeptMap\",",
+                "        \"DeptMap_joined\",",
+                "        {\"emp_department_name\"},",
                 "        {\"emp_department_name\"}",
                 "    ),",
-                "    Filledemp_department_name = Table.ReplaceValue(",
-                "        ExpandedDepartments,",
+                "    #\"ReplaceNulls_DeptMap\" = Table.ReplaceValue(",
+                "        #\"Expand_DeptMap\",",
                 "        null,",
                 "        \"Unknown\",",
                 "        Replacer.ReplaceValue,",
                 "        {\"emp_department_name\"}",
                 "    )",
                 "in",
-                "    Filledemp_department_name"
+                "    #\"ReplaceNulls_DeptMap\""
               ]
             }
           }
@@ -253,16 +265,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_department.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"department_id\", type text},",
-                "        {\"department_name\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -328,17 +333,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_location.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"location_id\", type text},",
-                "        {\"city\", type text},",
-                "        {\"country\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -428,19 +425,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_project.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"project_id\", type text},",
-                "        {\"client_id\", type text},",
-                "        {\"project_name\", type text},",
-                "        {\"start_date\", type text},",
-                "        {\"end_date\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -506,17 +493,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_client.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"client_id\", type text},",
-                "        {\"client_name\", type text},",
-                "        {\"industry\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -570,16 +549,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_role.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"role_id\", type text},",
-                "        {\"role_name\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -633,16 +605,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_salary_band.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"salary_band_id\", type text},",
-                "        {\"salary_range\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -696,16 +661,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_performance.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"performance_id\", type text},",
-                "        {\"rating\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -759,16 +717,9 @@
                 "        then Filtered{0}[Content]",
                 "        else error \"File dim_shift.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
-                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    TypedTable = Table.TransformColumnTypes(",
-                "        Headers,",
-                "        {",
-                "        {\"shift_id\", type text},",
-                "        {\"shift_type\", type text}",
-                "        }",
-                "    )",
+                "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true])",
                 "in",
-                "    TypedTable"
+                "    Headers"
               ]
             }
           }
@@ -876,9 +827,24 @@
                 "        {",
                 "        {\"date_id\", type text}",
                 "        }",
-                "    )",
+                "    ),",
+                "    Add_full_date = Table.AddColumn(",
+                "        TypedTable,",
+                "        \"full_date\",",
+                "        each try #date(",
+                "            Number.FromText(Text.Start([date_id], 4)),",
+                "            Number.FromText(Text.Middle([date_id], 4, 2)),",
+                "            Number.FromText(Text.End([date_id], 2))",
+                "        ) otherwise null,",
+                "        type date",
+                "    ),",
+                "    Add_year = Table.AddColumn(Add_full_date, \"year\", each Date.Year([full_date]), Int64.Type),",
+                "    Add_month = Table.AddColumn(Add_year, \"month\", each Date.Month([full_date]), Int64.Type),",
+                "    Add_day = Table.AddColumn(Add_month, \"day\", each Date.Day([full_date]), Int64.Type),",
+                "    Add_quarter = Table.AddColumn(Add_day, \"quarter\", each \"Q\" & Number.ToText(Date.QuarterOfYear([full_date])), type text)",
+                "",
                 "in",
-                "    TypedTable"
+                "    Add_quarter"
               ]
             }
           }
@@ -887,6 +853,42 @@
       {
         "name": "Final_Activity",
         "columns": [
+          {
+            "name": "work_type",
+            "dataType": "string",
+            "sourceColumn": "work_type",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "productivity_flag",
+            "dataType": "string",
+            "sourceColumn": "productivity_flag",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "productivity_score",
+            "dataType": "string",
+            "sourceColumn": "productivity_score",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
           {
             "name": "employee_id",
             "dataType": "string",
@@ -970,42 +972,6 @@
                 "value": "Automatic"
               }
             ]
-          },
-          {
-            "name": "work_type",
-            "dataType": "string",
-            "sourceColumn": "work_type",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "productivity_flag",
-            "dataType": "string",
-            "sourceColumn": "productivity_flag",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
-          },
-          {
-            "name": "productivity_score",
-            "dataType": "string",
-            "sourceColumn": "productivity_score",
-            "summarizeBy": "none",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ]
           }
         ],
         "partitions": [
@@ -1029,11 +995,23 @@
                 "        else error \"File fact_employee_activity_1M.csv not found in SharePoint\",",
                 "    Csv = Csv.Document(File, [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
                 "    Headers = Table.PromoteHeaders(Csv, [PromoteAllScalars=true]),",
-                "    Add_productivity_score = Table.AddColumn(",
+                "    Add_work_type = Table.AddColumn(",
                 "        Headers,",
+                "        \"work_type\",",
+                "        each if [hours_worked] > 8 then \"Overtime\" else \"Normal\",",
+                "        Int64.Type",
+                "    ),",
+                "    Add_productivity_flag = Table.AddColumn(",
+                "        Add_work_type,",
+                "        \"productivity_flag\",",
+                "        each if [hours_worked] >= 8 then 1 else 0,",
+                "        Int64.Type",
+                "    ),",
+                "    Add_productivity_score = Table.AddColumn(",
+                "        Add_productivity_flag,",
                 "        \"productivity_score\",",
                 "        each [hours_worked] * 10,",
-                "        type number",
+                "        Int64.Type",
                 "    )",
                 "in",
                 "    Add_productivity_score"
