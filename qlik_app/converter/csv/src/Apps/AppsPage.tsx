@@ -7,6 +7,7 @@ import { downloadBusinessSpecificDoc, fetchApps, fetchTables } from "../api/qlik
 import { useNavigate } from "react-router-dom";
 import { useWizard } from "../context/WizardContext";
 import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
+import DocumentIcon from "../assets/document img.png";
 
 interface App {
   id: string;
@@ -147,28 +148,31 @@ export default function AppsPage() {
       {/* HEADER */}
       <div className="qlik-header">
          <div className="qlik-header-left">
-          {apps.length} Application{apps.length !== 1 ? 's' : ''} to explore
+          <span className="header-title">{apps.length} Application{apps.length !== 1 ? 's' : ''}</span>
+          <button
+            type="button"
+            className="business-doc-icon-btn"
+            onClick={handleBusinessDocDownload}
+            disabled={generatingBrd || apps.length === 0}
+            title={generatingBrd ? "Generating BRD..." : "Generate and download the consolidated Business Requirements Document for the entire project"}
+          >
+            {generatingBrd ? (
+              <div className="spinner"></div>
+            ) : (
+              <img src={DocumentIcon} alt="Business Requirement Document" className="doc-icon" />
+            )}
+          </button>
         </div>
 
         <div className="qlik-header-right">
           <div className="tools">
             <input
               type="search"
-              placeholder="Search apps..."
+              placeholder="Search Apps..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="apps-search"
             />
-
-            <button
-              type="button"
-              className="business-doc-btn"
-              onClick={handleBusinessDocDownload}
-              disabled={generatingBrd || apps.length === 0}
-              title="Generate and download the consolidated Business Requirements Document for the entire project"
-            >
-              {generatingBrd ? "Generating BRD..." : "Business Requirement Document"}
-            </button>
 
             {/* <buttonz
               className="sort-btn"

@@ -12,6 +12,7 @@
   color: #1a1a1a;
   margin-bottom: 24px;
   text-align: center;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* STEPPER STYLES */
@@ -525,7 +526,7 @@
 
 .export-wrap {
   padding: 24px;
-  font-family: "Inter", "Segoe UI", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .export-wrap h2 {

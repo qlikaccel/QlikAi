@@ -1,6 +1,6 @@
 .export-wrap {
   padding: 24px;
-  font-family: "Inter", "Segoe UI", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .export-wrap h2 {

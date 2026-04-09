@@ -1240,7 +1240,7 @@ export default function SummaryPage() {
                               className="convert-btn"
                               style={{ opacity: (isCsvLoadscript && !isValidUrl) ? 0.5 : 1, cursor: (isCsvLoadscript && !isValidUrl) ? "not-allowed" : "pointer" }}
                             >
-                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to MQuery"}
+                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to M Query"}
                             </button>
                           </>
                         )}
@@ -1261,7 +1261,7 @@ export default function SummaryPage() {
                               </button>
                               <button onClick={handlePublishMQuery} disabled={publishingMQuery} className="publish-pbi-btn">
                                 {publishingMQuery ? (<><span className="publish-spinner" />Publishing…</>) : (
-                                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>Publish MQuery to PowerBI</>
+                                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>Publish M Query to PowerBI</>
                                 )}
                               </button>
                             </div>
