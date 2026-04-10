@@ -5,6 +5,7 @@ import axios from "axios";
 
 // Use environment variable for production (set by Render), fallback to localhost for dev
 const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const REQUEST_TIMEOUT_MS = 10000;
 // const BASE_URL = import.meta.env.VITE_API_URL || "https://qlikai-app-ltmrv.ondigitalocean.app"
 
 // Helper to get auth headers from sessionStorage
@@ -39,14 +40,35 @@ export const validateLogin = async (
   username: string,
   password: string
 ) => {
-  const res = await axios.post(`${BASE_URL}/validate-login`, {
-    tenant_url: tenantUrl,
-    connect_as_user: connectAsUser,
-    username,
-    password,
-  });
+  try {
+    const res = await axios.post(
+      `${BASE_URL}/validate-login`,
+      {
+        tenant_url: tenantUrl,
+        connect_as_user: connectAsUser,
+        username,
+        password,
+      },
+      {
+        timeout: REQUEST_TIMEOUT_MS,
+      }
+    );
 
-  return res.data;
+    return res.data;
+  } catch (error: any) {
+    const detail =
+      error?.response?.data?.detail ||
+      error?.message ||
+      "Connection failed. Please try again.";
+
+    if (error?.code === "ECONNABORTED") {
+      throw new Error(
+        "Connection timed out after 10 seconds. The backend service may be unresponsive."
+      );
+    }
+
+    throw new Error(detail);
+  }
 };
 
 // Validate SharePoint URL - STRICT validation
@@ -345,6 +367,79 @@ export const downloadCSVFile = (
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+};
+
+export const downloadBusinessSpecificDoc = async () => {
+  try {
+    const res = await axios.post(
+      `${BASE_URL}/project/brd/download`,
+      {},
+      {
+        responseType: "text",
+        headers: getAuthHeaders(),
+        validateStatus: (status) => status === 200 || status === 202,
+      }
+    );
+
+    if (res.status === 202) {
+      throw new Error("Business Requirement Document is still being prepared. Please try again in a few seconds.");
+    }
+
+    const disposition = res.headers["content-disposition"] || "";
+    const fileNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const downloadName =
+      fileNameMatch?.[1] || "QlikAI_End_to_End_Project_BRD.html";
+
+    const htmlContent = typeof res.data === "string" ? res.data : String(res.data || "");
+    downloadHtmlFile(htmlContent, downloadName);
+  } catch (error: any) {
+    const detail =
+      error?.response?.data?.detail ||
+      error?.response?.data?.message ||
+      error?.message ||
+      "Unknown error";
+    throw new Error(detail);
+  }
+};
+
+export const downloadHtmlFile = (htmlContent: string, fileName: string) => {
+  const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+
+  link.href = url;
+  link.download = fileName;
+  link.style.visibility = "hidden";
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+export const fetchApplicationBrdDocument = async (appId: string) => {
+  const res = await axios.post(
+    `${BASE_URL}/applications/${appId}/brd/download`,
+    {},
+    {
+      responseType: "text",
+      headers: getAuthHeaders(),
+    }
+  );
+
+  const disposition = res.headers["content-disposition"] || "";
+  const fileNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+
+  return {
+    htmlContent: typeof res.data === "string" ? res.data : String(res.data || ""),
+    fileName: fileNameMatch?.[1] || `application_${appId}_BRD.html`,
+  };
+};
+
+export const downloadApplicationBrdDocument = async (appId: string) => {
+  const document = await fetchApplicationBrdDocument(appId);
+  downloadHtmlFile(document.htmlContent, document.fileName);
+  return document;
 };
 
 // ✅ DOWNLOAD M QUERY - Convert Qlik to PowerBI M Query
