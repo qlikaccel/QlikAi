@@ -3,7 +3,7 @@
 
 import "./AppsPage.css";
 import { useEffect, useState } from "react";
-import { fetchApps, fetchTables } from "../api/qlikApi";
+import { downloadBusinessSpecificDoc, fetchApps, fetchTables } from "../api/qlikApi";
 import { useNavigate } from "react-router-dom";
 import { useWizard } from "../context/WizardContext";
 import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
@@ -18,6 +18,7 @@ export default function AppsPage() {
   const [apps, setApps] = useState<App[]>([]);
   const [tableCount, setTableCount] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [brdDownloading, setBrdDownloading] = useState(false);
   const [appsError, setAppsError] = useState<string | null>(null);
   const [favourites, setFavourites] = useState<string[]>([]);
   const [pageLoadTime, setPageLoadTime] = useState<string | null>(null);
