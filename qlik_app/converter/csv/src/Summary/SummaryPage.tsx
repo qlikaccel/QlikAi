@@ -588,7 +588,7 @@ export default function SummaryPage() {
   };
 
   const handlePublishMQuery = async () => {
-    if (!mquery && !loadscript) { setPublishStatus("error"); setPublishMessage("No M Query available. Click 'Convert to MQuery' first."); return; }
+    if (!mquery && !loadscript) { setPublishStatus("error"); setPublishMessage("No M Query available. Click 'Convert to M Query' first."); return; }
     try {
       setPublishingMQuery(true);
       let masterRowCount = totalRows || (rows?.length || 0);
@@ -1211,7 +1211,7 @@ export default function SummaryPage() {
                   <div className="app-spec-document-panel">
                     <div className="app-spec-document-content">
                       <p>
-                        This project aims to migrate the Qlik application '{appName}' to Microsoft Power BI using the QlikAI Accelerator, an AI-powered Qlik-to-Power BI transformation platform. The migration will leverage Qlik authentication, metadata extraction, QIX/REST integration, AI executive summary generation, and Power BI publishing. The target-state publishing strategies will be three mutually exclusive paths: Path A = Power Query M + XMLA semantic model publication, Path B = CSV + DAX + Power BI REST publication, and Path C = DB/ODBC detection with DirectQuery or Import configuration.
+                        Disclaimer: This document provides a high-fidelity baseline of the QlikAI Accelerator's architecture, integration design, and migration capabilities, generated through automated analysis of the application source code.It is designed to significantly accelerate stakeholder comprehension and enterprise adoption planning by providing a structured, AI-assisted foundation for Qlik Sense to Power BI modernization. As this document reflects architectural implementation derived from code analysis rather than original business design , it should be treated as a collaborative draft. We encourage Subject Matter Experts (SMEs), BI Engineers, and Enterprise Architects to review, refine, and validate and enrich these specifications to ensure full alignment with your organization's migration goals, governance requirements, and target-state Power BI architecture.
                       </p>
                       <div className="app-spec-actions">
                         <button
@@ -1314,7 +1314,7 @@ export default function SummaryPage() {
                               className="convert-btn"
                               style={{ opacity: (isCsvLoadscript && !isValidUrl) ? 0.5 : 1, cursor: (isCsvLoadscript && !isValidUrl) ? "not-allowed" : "pointer" }}
                             >
-                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to MQuery"}
+                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to M Query"}
                             </button>
                           </>
                         )}
