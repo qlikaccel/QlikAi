@@ -38,6 +38,7 @@ import sys
 import os
 import re
 import time
+import threading
 import requests
 import pandas as pd
 import json
@@ -45,7 +46,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body
+from fastapi import FastAPI, Query, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, PlainTextResponse, StreamingResponse
 from typing import List, Dict, Any, Optional
@@ -55,7 +56,7 @@ import io
 #from fastapi import HTTPException
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=False)
 #app = FastAPI()
 
 # Visualisation / numeric
@@ -68,7 +69,7 @@ import numpy as np
 from pydantic import BaseModel
 
 # Project imports
-from login_validation import router as login_router
+from login_validation import LoginPayload, router as login_router, validate_login as validate_login_handler
 from migration_api import router as migration_router
 from mquery_converter import validate_sharepoint_url_strict
 from qlik_websocket_client import QlikWebSocketClient
@@ -77,7 +78,25 @@ from simple_mquery_generator import SimpleMQueryGenerator
 from processor import PowerBIProcessor
 from table_tracker import enhance_tables_with_timestamps
 from powerbi_service_delegated import PowerBIService, infer_schema_from_rows
+from powerbi_relationships import apply_relationships, verify_relationships
 from powerbi_auth import get_auth_manager
+from relationship_service import (
+    _sanitize_col_name,
+    infer_relationships_unified,
+    sanitize_rel_columns,
+    normalize_table_rows,
+    resolve_relationships_unified,
+)
+from brd_generator import (
+    BRD_PROMPT_VERSION,
+    build_brd_prompt,
+    build_default_document,
+    build_download_filename,
+    build_prompt_context,
+    extract_json_object,
+    merge_defaults,
+    render_brd_html,
+)
 
 # Optional: new publisher (from powerbi_dataset_publisher.py)
 try:
@@ -98,6 +117,11 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+PROJECT_BRD_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_brd_cache")
+PROJECT_BRD_CACHE_TTL_SECONDS = 900
+project_brd_generation_state: Dict[str, bool] = {}
+project_brd_generation_lock = threading.Lock()
+
 # ==================== APP ====================
 
 app = FastAPI(
@@ -115,8 +139,9 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "https://qlik-frontend.onrender.com",
         "https://qlik-sense-cloud.onrender.com",
-        "https://qlikai-ld54.onrender.com"
-        
+        "https://qlikai-ld54.onrender.com",
+        "https://qlikaiv2-web.onrender.com",
+        "https://qlikai-app-ltmrv.ondigitalocean.app",
     ],
     allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+|https://.*\.onrender\.com",
     allow_credentials=True,
@@ -132,15 +157,17 @@ app.include_router(migration_router)
 
 qlik_client_instance = None  # FIX 3: lazy singleton
 
-def get_qlik_client():
-    """Get or initialize QlikClient on first use (lazy singleton)."""
-    global qlik_client_instance
-    if qlik_client_instance is None:
-        try:
-            qlik_client_instance = QlikClient()
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    return qlik_client_instance
+def get_qlik_client(
+    x_api_key: Optional[str] = Header(None),
+    x_tenant_url: Optional[str] = Header(None)
+):
+    try:
+        return QlikClient(
+            api_key=x_api_key or os.getenv("QLIK_API_KEY"),
+            tenant_url=x_tenant_url or os.getenv("QLIK_TENANT_URL")
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def get_qlik_websocket_client():
     """Dependency to provide QlikWebSocketClient for endpoints."""
@@ -800,7 +827,7 @@ import os
 # ==================== VALIDATE TENANT ====================
 TEST_USERNAME = "testuser"
 TEST_PASSWORD = "test123"
-HARDCODED_TENANT = "https://c8vlzp3sx6akvnh.in.qlikcloud.com"
+HARDCODED_TENANT = "https://vtcej92i1jgxph5.in.qlikcloud.com"
 
 class PowerBIRequest(BaseModel):
     csv_path: str
@@ -817,12 +844,9 @@ async def validate_tenant(payload: dict = Body(...)):
     if not tenant_url or not tenant_url.endswith("qlikcloud.com"):
         raise HTTPException(status_code=400, detail="Enter correct tenant URL")
 
-    # Runtime override (testing purpose)
-    os.environ["QLIK_TENANT_URL"] = tenant_url
-    os.environ["QLIK_API_BASE_URL"] = f"{tenant_url}/api/v1"
-
     try:
-        client = QlikClient()
+        api_key = payload.get("api_key") or os.getenv("QLIK_API_KEY")
+        client = QlikClient(api_key=api_key, tenant_url=tenant_url)
         result = client.test_connection()
 
         if result.get("status") != "success":
@@ -893,12 +917,15 @@ async def list_spaces(
 
 @app.get("/applications", response_model=List[Dict[str, Any]])
 async def list_applications(
-    tenant_url: Optional[str] = Query(None, description="Qlik Cloud tenant URL")
+    tenant_url: Optional[str] = Query(None, description="Qlik Cloud tenant URL"),
+    x_api_key: Optional[str] = Header(None),
+    x_tenant_url: Optional[str] = Header(None)
 ):
-    """List all available applications"""
     try:
-        # Use the provided tenant_url or fall back to environment
-        client = QlikClient(tenant_url=tenant_url)
+        client = QlikClient(
+            api_key=x_api_key or os.getenv("QLIK_API_KEY"),
+            tenant_url=tenant_url or x_tenant_url or os.getenv("QLIK_TENANT_URL")
+        )
         logger.info(f"📋 Fetching applications from tenant: {tenant_url or 'default'}")
         apps = client.get_applications()
         logger.info(f"✅ Found {len(apps)} application(s)")
@@ -1019,6 +1046,396 @@ async def get_app_script(app_id: str, ws_client: QlikWebSocketClient = Depends(g
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get script: {str(e)}")
 
+
+def _normalize_app_record(app: Dict[str, Any]) -> Dict[str, Any]:
+    attributes = app.get("attributes", {}) if isinstance(app, dict) else {}
+    return {
+        "app_id": attributes.get("id") or app.get("id") or app.get("qDocId") or "",
+        "name": attributes.get("name") or app.get("name") or app.get("title") or "Unnamed App",
+        "last_modified": attributes.get("modifiedDate") or attributes.get("lastReloadTime") or app.get("modifiedDate") or app.get("lastReloadTime") or "",
+    }
+
+
+def _build_prefixed_relationship_input(app_name: str, tables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    relationship_input = []
+    for table in tables:
+        field_defs = []
+        for field in table.get("fields", []) or []:
+            field_name = field.get("name")
+            if not field_name:
+                continue
+            field_defs.append({"name": field_name, "alias": field_name})
+        if field_defs:
+            relationship_input.append({"name": f"{app_name}::{table.get('name', 'Unknown')}", "fields": field_defs})
+    return relationship_input
+
+
+def _project_brd_cache_key(tenant_url: Optional[str]) -> str:
+    raw_value = f"{tenant_url or os.getenv('QLIK_TENANT_URL') or 'default'}_{BRD_PROMPT_VERSION}".strip().lower()
+    normalized = re.sub(r"[^a-z0-9]+", "_", raw_value).strip("_")
+    return normalized or "default"
+
+
+def _project_brd_cache_path(cache_key: str) -> str:
+    return os.path.join(PROJECT_BRD_CACHE_DIR, f"project_brd_{cache_key}.html")
+
+
+def _project_brd_cache_info(cache_key: str) -> Optional[Dict[str, Any]]:
+    cache_path = _project_brd_cache_path(cache_key)
+    if not os.path.exists(cache_path):
+        return None
+
+    modified_at = os.path.getmtime(cache_path)
+    return {
+        "path": cache_path,
+        "filename": build_download_filename("QlikAI End-to-End Project"),
+        "generated_at": datetime.fromtimestamp(modified_at).isoformat(),
+        "age_seconds": max(0, int(time.time() - modified_at)),
+    }
+
+
+def _project_brd_cache_is_fresh(cache_key: str) -> bool:
+    cache_info = _project_brd_cache_info(cache_key)
+    return bool(cache_info and cache_info["age_seconds"] <= PROJECT_BRD_CACHE_TTL_SECONDS)
+
+
+def _is_project_brd_generation_running(cache_key: str) -> bool:
+    with project_brd_generation_lock:
+        return project_brd_generation_state.get(cache_key, False)
+
+
+def _set_project_brd_generation_running(cache_key: str, is_running: bool) -> None:
+    with project_brd_generation_lock:
+        project_brd_generation_state[cache_key] = is_running
+
+
+def _generate_project_brd_content(
+    client: QlikClient,
+    ws_client: QlikWebSocketClient,
+) -> Dict[str, str]:
+    raw_apps = client.get_applications()
+    normalized_apps = []
+    for raw_app in raw_apps:
+        normalized = _normalize_app_record(raw_app)
+        if normalized["app_id"] and normalized["name"]:
+            normalized_apps.append(normalized)
+
+    if not normalized_apps:
+        raise HTTPException(status_code=404, detail="No applications were available for project BRD generation")
+
+    application_inventory: List[Dict[str, Any]] = []
+    all_tables: List[Dict[str, Any]] = []
+    all_fields: List[Dict[str, Any]] = []
+    all_sheets: List[Dict[str, Any]] = []
+    all_relationships: List[Dict[str, Any]] = []
+    table_samples: List[Dict[str, Any]] = []
+    combined_scripts: List[str] = []
+    failed_apps: List[str] = []
+    total_script_tables = 0
+
+    for app_meta in normalized_apps:
+        app_id = app_meta["app_id"]
+        app_name = app_meta["name"]
+        try:
+            app_snapshot = ws_client.get_app_tables_simple(app_id)
+            if not app_snapshot.get("success", False):
+                failed_apps.append(app_name)
+                logger.warning("Project BRD skipped app %s: %s", app_name, app_snapshot.get("error", "unknown error"))
+                continue
+
+            tables = app_snapshot.get("tables", []) or []
+            fields = app_snapshot.get("all_fields", []) or []
+            sheets = app_snapshot.get("sheets", []) or []
+            script = app_snapshot.get("script", "") or ""
+            summary = app_snapshot.get("summary", {}) or {}
+
+            for table in tables:
+                prefixed_table = dict(table)
+                prefixed_table["name"] = f"{app_name}::{table.get('name', 'Unknown')}"
+                all_tables.append(prefixed_table)
+
+            all_fields.extend(
+                [{**field, "name": f"{app_name}::{field.get('name', '')}", "app_name": app_name} for field in fields if field.get("name")]
+            )
+            all_sheets.extend(
+                [{**sheet, "name": f"{app_name} / {sheet.get('name', 'Unnamed Sheet')}", "app_name": app_name} for sheet in sheets]
+            )
+
+            prefixed_relationship_input = _build_prefixed_relationship_input(app_name, tables)
+            if prefixed_relationship_input:
+                try:
+                    all_relationships.extend(resolve_relationships_unified(prefixed_relationship_input))
+                except Exception as relationship_exc:
+                    logger.warning("Project BRD relationship resolution failed for %s: %s", app_name, relationship_exc)
+
+            if script.strip():
+                combined_scripts.append(f"// Application: {app_name}\n{script.strip()}")
+
+            total_script_tables += summary.get("script_table_count", 0)
+            application_inventory.append(
+                {
+                    "name": app_name,
+                    "app_id": app_id,
+                    "table_count": summary.get("table_count", len(tables)),
+                    "field_count": summary.get("total_fields", len(fields)),
+                    "sheet_count": summary.get("sheet_count", len(sheets)),
+                    "has_script": bool(script.strip()),
+                    "last_modified": app_meta.get("last_modified", ""),
+                }
+            )
+
+            ranked_tables = sorted(
+                tables,
+                key=lambda item: item.get("no_of_rows") or item.get("row_count") or 0,
+                reverse=True,
+            )
+            for table in ranked_tables[:1]:
+                if len(table_samples) >= 6:
+                    break
+                table_name = table.get("name")
+                if not table_name:
+                    continue
+                try:
+                    sample_result = ws_client.get_table_data(app_id, table_name, limit=5)
+                    if sample_result.get("success"):
+                        table_samples.append(
+                            {
+                                "table": f"{app_name}::{table_name}",
+                                "columns": sample_result.get("columns", [])[:8],
+                                "rows": (sample_result.get("rows", []) or [])[:3],
+                            }
+                        )
+                except Exception as sample_exc:
+                    logger.warning("Project BRD sample fetch failed for %s/%s: %s", app_name, table_name, sample_exc)
+        except Exception as app_exc:
+            failed_apps.append(app_name)
+            logger.warning("Project BRD skipped app %s due to inspection failure: %s", app_name, app_exc)
+            continue
+
+    if not application_inventory:
+        raise HTTPException(status_code=500, detail="Unable to inspect any applications for consolidated BRD generation")
+
+    project_title = "QlikAI Accelerator"
+    project_id = "PROJECT_PORTFOLIO"
+    project_summary = {
+        "application_count": len(application_inventory),
+        "failed_app_count": len(failed_apps),
+        "failed_apps": failed_apps,
+        "table_count": len(all_tables),
+        "total_fields": len(all_fields),
+        "sheet_count": len(all_sheets),
+        "has_script": bool(combined_scripts),
+        "script_table_count": total_script_tables,
+    }
+    combined_script_text = "\n\n".join(combined_scripts)
+
+    defaults = build_default_document(
+        app_title=project_title,
+        app_id=project_id,
+        summary=project_summary,
+        tables=all_tables,
+        fields=all_fields,
+        sheets=all_sheets,
+        script=combined_script_text,
+        relationships=all_relationships,
+        table_samples=table_samples,
+        project_scope="project",
+        application_inventory=application_inventory,
+    )
+
+    llm_sections: Dict[str, Any] = {}
+    try:
+        context_json = build_prompt_context(
+            app_title=project_title,
+            app_id=project_id,
+            summary=project_summary,
+            tables=all_tables,
+            fields=all_fields,
+            sheets=all_sheets,
+            script=combined_script_text,
+            relationships=all_relationships,
+            table_samples=table_samples,
+            project_scope="project",
+            application_inventory=application_inventory,
+        )
+        llm_raw = call_hf_model_with_options(
+            build_brd_prompt(context_json, project_scope="project"),
+            system_prompt="You are a senior enterprise business analyst producing structured project-level BRD content from consolidated analytics metadata.",
+            max_tokens=2600,
+            temperature=0.2,
+        )
+        llm_sections = extract_json_object(llm_raw)
+    except Exception as llm_exc:
+        logger.warning("Project BRD LLM generation failed: %s", llm_exc)
+
+    document = merge_defaults(defaults, llm_sections)
+    html_content = render_brd_html(document)
+    filename = build_download_filename(project_title)
+
+    return {"html_content": html_content, "filename": filename}
+
+
+def _refresh_project_brd_cache(cache_key: str, client: QlikClient, ws_client: QlikWebSocketClient) -> None:
+    if _is_project_brd_generation_running(cache_key):
+        return
+
+    _set_project_brd_generation_running(cache_key, True)
+    try:
+        artifact = _generate_project_brd_content(client, ws_client)
+        cache_path = _project_brd_cache_path(cache_key)
+        with open(cache_path, "w", encoding="utf-8") as cache_file:
+            cache_file.write(artifact["html_content"])
+        logger.info("Project BRD cache refreshed for %s", cache_key)
+    except Exception:
+        logger.exception("Project BRD cache refresh failed for %s", cache_key)
+    finally:
+        _set_project_brd_generation_running(cache_key, False)
+
+
+@app.post("/project/brd/refresh")
+async def refresh_project_brd_cache(
+    background_tasks: BackgroundTasks,
+    x_tenant_url: Optional[str] = Header(None),
+    client: QlikClient = Depends(get_qlik_client),
+    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client),
+):
+    return {
+        "status": "disabled",
+        "cached": False,
+        "message": "Project BRD cache warming is disabled. The BRD is generated fresh on download.",
+    }
+
+
+@app.get("/project/brd/download")
+@app.post("/project/brd/download")
+async def download_project_brd(
+    background_tasks: BackgroundTasks,
+    x_tenant_url: Optional[str] = Header(None),
+    client: QlikClient = Depends(get_qlik_client),
+    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client),
+):
+    try:
+        artifact = _generate_project_brd_content(client, ws_client)
+        return StreamingResponse(
+            io.BytesIO(artifact["html_content"].encode("utf-8")),
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{artifact["filename"]}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Project BRD download failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/applications/{app_id}/brd/download")
+async def download_business_specific_doc(
+    app_id: str,
+    client: QlikClient = Depends(get_qlik_client),
+    ws_client: QlikWebSocketClient = Depends(get_qlik_websocket_client),
+):
+    try:
+        app_details = client.get_application_details(app_id)
+    except Exception:
+        app_details = {}
+
+    app_snapshot = ws_client.get_app_tables_simple(app_id)
+    if not app_snapshot.get("success", False):
+        raise HTTPException(status_code=500, detail=app_snapshot.get("error", "Failed to inspect application"))
+
+    app_title = (
+        app_snapshot.get("app_title")
+        or app_details.get("attributes", {}).get("name")
+        or app_details.get("name")
+        or "Qlik Application"
+    )
+    tables = app_snapshot.get("tables", []) or []
+    fields = app_snapshot.get("all_fields", []) or []
+    sheets = app_snapshot.get("sheets", []) or []
+    script = app_snapshot.get("script", "") or ""
+    summary = app_snapshot.get("summary", {}) or {}
+
+    relationship_input = []
+    for table in tables:
+        field_defs = []
+        for field in table.get("fields", []) or []:
+            field_name = field.get("name")
+            if not field_name:
+                continue
+            field_defs.append({"name": field_name, "alias": field_name})
+        if field_defs:
+            relationship_input.append({"name": table.get("name", "Unknown"), "fields": field_defs})
+
+    relationships = resolve_relationships_unified(relationship_input) if relationship_input else []
+
+    table_samples: List[Dict[str, Any]] = []
+    ranked_tables = sorted(
+        tables,
+        key=lambda item: item.get("no_of_rows") or item.get("row_count") or 0,
+        reverse=True,
+    )
+    for table in ranked_tables[:4]:
+        table_name = table.get("name")
+        if not table_name:
+            continue
+        try:
+            sample_result = ws_client.get_table_data(app_id, table_name, limit=5)
+            if sample_result.get("success"):
+                table_samples.append(
+                    {
+                        "table": table_name,
+                        "columns": sample_result.get("columns", [])[:8],
+                        "rows": (sample_result.get("rows", []) or [])[:3],
+                    }
+                )
+        except Exception as sample_exc:
+            logger.warning("BRD sample fetch failed for %s: %s", table_name, sample_exc)
+
+    defaults = build_default_document(
+        app_title=app_title,
+        app_id=app_id,
+        summary=summary,
+        tables=tables,
+        fields=fields,
+        sheets=sheets,
+        script=script,
+        relationships=relationships,
+        table_samples=table_samples,
+    )
+
+    llm_sections: Dict[str, Any] = {}
+    try:
+        context_json = build_prompt_context(
+            app_title=app_title,
+            app_id=app_id,
+            summary=summary,
+            tables=tables,
+            fields=fields,
+            sheets=sheets,
+            script=script,
+            relationships=relationships,
+            table_samples=table_samples,
+        )
+        llm_raw = call_hf_model_with_options(
+            build_brd_prompt(context_json),
+            system_prompt="You are a senior enterprise business analyst producing structured BRD content from analytics metadata.",
+            max_tokens=2200,
+            temperature=0.2,
+        )
+        llm_sections = extract_json_object(llm_raw)
+    except Exception as llm_exc:
+        logger.warning("BRD LLM generation failed for %s: %s", app_title, llm_exc)
+
+    document = merge_defaults(defaults, llm_sections)
+    html_content = render_brd_html(document)
+    filename = build_download_filename(app_title)
+
+    return StreamingResponse(
+        io.BytesIO(html_content.encode("utf-8")),
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 @app.get("/applications/{app_id}/fields")
 async def get_app_fields(
     app_id: str,
@@ -1074,8 +1491,8 @@ async def get_field_values(
 
 @app.post("/validate-login")
 async def validate_login_alias(payload: dict = Body(...)):
-    # Alias kept for frontend compatibility
-    return await validate_tenant(payload)
+    # Keep the endpoint aligned with the frontend Connect page payload.
+    return validate_login_handler(LoginPayload(**payload))
 
 @app.get("/applications/{app_id}/table/{table_name}/data")
 async def get_table_data(
@@ -1135,7 +1552,7 @@ async def find_apps_with_data(client: QlikClient = Depends(get_qlik_client)):
                         "last_reload_time": last_reload,
                         "created_date": attributes.get('createdDate'),
                         "description": attributes.get('description', ''),
-                        "app_url": f"https://c8vlzp3sx6akvnh.in.qlikcloud.com/hub/{attributes.get('id')}"
+                        "app_url": f"https://vtcej92i1jgxph5.in.qlikcloud.com/hub/{attributes.get('id')}"
                     })
         
         # Sort by last reload time (most recent first)
@@ -2002,7 +2419,12 @@ HF_MODEL_FALLBACK = "mistralai/Mistral-7B-Instruct-v0.3"
 #         return raw["choices"][0]["message"]["content"]
 #     except Exception:
 #         return str(raw)
-def call_hf_model(prompt: str):
+def call_hf_model_with_options(
+    prompt: str,
+    system_prompt: str = "You are a senior business data analyst who provides concise executive insights.",
+    max_tokens: int = 250,
+    temperature: float = 0.3,
+):
 
     hf_token = os.getenv("HF_TOKEN")
 
@@ -2015,20 +2437,19 @@ def call_hf_model(prompt: str):
     }
 
     payload = {
-    #    "model": "meta-llama/Llama-3.1-8B-Instruct",
         "model": HF_MODEL,
         "messages": [
             {
                 "role": "system",
-                "content": "You are a senior business data analyst who provides concise executive insights."
+                "content": system_prompt
             },
             {
                 "role": "user",
                 "content": prompt
             }
         ],
-        "max_tokens": 250,
-        "temperature": 0.3
+        "max_tokens": max_tokens,
+        "temperature": temperature
     }
 
     for model in [HF_MODEL, HF_MODEL_FALLBACK]:
@@ -2055,6 +2476,10 @@ def call_hf_model(prompt: str):
         status_code=503,
         detail="LLM summary service temporarily unavailable. Please try again in a few minutes."
     )
+
+
+def call_hf_model(prompt: str):
+    return call_hf_model_with_options(prompt)
 # ================= EXECUTIVE SUMMARY =================
 
 def compute_metrics(df):
@@ -2368,6 +2793,109 @@ async def powerbi_login_test():
     return result
 
 
+def _relationship_key(rel: Dict[str, Any]) -> tuple:
+    return (
+        str(rel.get("fromTable", rel.get("from_table", ""))).lower(),
+        str(rel.get("fromColumn", rel.get("from_column", ""))).lower(),
+        str(rel.get("toTable", rel.get("to_table", ""))).lower(),
+        str(rel.get("toColumn", rel.get("to_column", ""))).lower(),
+    )
+
+
+def _sanitize_col(name: str) -> str:
+    return _sanitize_col_name(name)
+
+
+def _apply_relationships_with_retry(
+    workspace_id: Optional[str],
+    dataset_id: str,
+    inferred_relationships: List[Dict[str, Any]],
+    access_token: str,
+) -> Dict[str, Any]:
+    if not inferred_relationships:
+        return {
+            "success": True,
+            "status": "skipped",
+            "reason": "No relationships inferred",
+            "inferred_count": 0,
+        }
+
+    if not workspace_id:
+        return {
+            "success": False,
+            "status": "skipped",
+            "reason": "Workspace ID not available (likely personal workspace)",
+            "inferred_count": len(inferred_relationships),
+        }
+
+    apply_result = apply_relationships(
+        workspace_id=workspace_id,
+        dataset_id=dataset_id,
+        relationships=inferred_relationships,
+        access_token=access_token,
+    )
+
+    verify_before = verify_relationships(
+        workspace_id=workspace_id,
+        dataset_id=dataset_id,
+        expected_relationships=inferred_relationships,
+        access_token=access_token,
+    )
+
+    retry_result: Dict[str, Any] = {"status": "not_needed"}
+    verify_after = verify_before
+
+    if verify_before.get("success") is False:
+        raw = verify_before.get("raw", []) if isinstance(verify_before, dict) else []
+        raw_keys = {
+            (
+                str(item.get("fromTable", "")).lower(),
+                str(item.get("fromColumn", "")).lower(),
+                str(item.get("toTable", "")).lower(),
+                str(item.get("toColumn", "")).lower(),
+            )
+            for item in raw
+        }
+
+        missing = [r for r in inferred_relationships if _relationship_key(r) not in raw_keys]
+
+        if missing:
+            swapped = []
+            for rel in missing:
+                swapped.append({
+                    "fromTable": rel.get("toTable"),
+                    "fromColumn": rel.get("toColumn"),
+                    "toTable": rel.get("fromTable"),
+                    "toColumn": rel.get("fromColumn"),
+                    "cardinality": rel.get("cardinality", "ManyToOne"),
+                    "crossFilteringBehavior": rel.get("crossFilteringBehavior", "Single"),
+                })
+
+            retry_result = apply_relationships(
+                workspace_id=workspace_id,
+                dataset_id=dataset_id,
+                relationships=swapped,
+                access_token=access_token,
+                overwrite=False,
+            )
+
+            verify_after = verify_relationships(
+                workspace_id=workspace_id,
+                dataset_id=dataset_id,
+                expected_relationships=inferred_relationships,
+                access_token=access_token,
+            )
+
+    return {
+        "success": bool(verify_after.get("success", False)),
+        "inferred_count": len(inferred_relationships),
+        "applied": apply_result,
+        "verified_before_retry": verify_before,
+        "retry": retry_result,
+        "verified_after_retry": verify_after,
+    }
+
+
 @app.post("/powerbi/process")
 async def process_for_powerbi(
     csv_file: UploadFile = File(None),
@@ -2438,6 +2966,13 @@ async def process_for_powerbi(
         if not rows or not columns:
             raise HTTPException(status_code=400, detail="CSV has no rows/columns")
 
+        orig_headers, col_name_map, sanitized_rows = normalize_table_rows(
+            table_name=meta_table or "QlikTable",
+            rows=rows,
+            provided_columns=columns,
+        )
+        sanitized_columns = [col_name_map.get(c, _sanitize_col(c)) for c in orig_headers]
+
         # Dataset/table naming - PRIORITY: custom table name, then app name
         dataset_name = meta_table or meta_app_name or "Qlik_Migrated_Dataset"
         table_name = meta_table or "QlikTable"
@@ -2457,11 +2992,25 @@ async def process_for_powerbi(
                 raise HTTPException(status_code=401, detail="Not logged in. Please login using /powerbi/login/initiate endpoint")
             
             # Create service with user token
-            pbi = PowerBIService(access_token=auth.get_access_token())
-            schema = infer_schema_from_rows(rows)
+            access_token = auth.get_access_token()
+            pbi = PowerBIService(access_token=access_token)
+            schema = infer_schema_from_rows(sanitized_rows)
             dataset_id, created = pbi.get_or_create_push_dataset(dataset_name, table_name, schema)
-            push_res = pbi.push_rows(dataset_id, table_name, rows)
+            push_res = pbi.push_rows(dataset_id, table_name, sanitized_rows)
             print(f"DEBUG: Push result: {push_res}")
+
+            # Infer and apply relationships for CSV flow (single table may infer none).
+            tables_m = [{"name": table_name, "fields": sanitized_columns, "source_type": "csv"}]
+            inferred_relationships = resolve_relationships_unified(
+                tables_m=tables_m,
+                col_name_map_by_table={table_name: col_name_map},
+            )
+            relationships_apply_result = _apply_relationships_with_retry(
+                workspace_id=pbi.workspace_id,
+                dataset_id=dataset_id,
+                inferred_relationships=inferred_relationships,
+                access_token=access_token,
+            )
             
             # Data is now saved to Power BI Cloud permanently
             print(f"✅ Dataset saved to Power BI Cloud!")
@@ -2508,6 +3057,7 @@ async def process_for_powerbi(
                 }
             },
             "push": push_res,
+            "relationships": relationships_apply_result,
             "refresh": refresh_res,
             "dax": {
                 "parsed_measures": dax_measures,
@@ -2515,6 +3065,7 @@ async def process_for_powerbi(
             },
             "local_parse": {
                 "columns": columns,
+                "sanitized_columns": sanitized_columns,
                 "row_count": len(rows)
             }
         }
@@ -2544,11 +3095,14 @@ async def process_batch_for_powerbi(payload: dict = Body(...)):
         if not tables:
             raise HTTPException(status_code=400, detail="No tables provided")
         
-        pbi = PowerBIService(access_token=auth.get_access_token())
+        access_token = auth.get_access_token()
+        pbi = PowerBIService(access_token=access_token)
         
         # Step 1: Build schema for all tables
         dataset_tables_schema = []
+        tables_m: List[Dict[str, Any]] = []
         all_rows_by_table = {}
+        col_name_map_by_table: Dict[str, Dict[str, str]] = {}
         total_rows = 0
         
         for idx, table in enumerate(tables):
@@ -2560,18 +3114,34 @@ async def process_batch_for_powerbi(payload: dict = Body(...)):
                 continue
             
             print(f"📦 Preparing table {idx + 1}/{len(tables)}: {table_name} ({len(table_rows)} rows)")
+
+            orig_headers, col_name_map, sanitized_table_rows = normalize_table_rows(
+                table_name=table_name,
+                rows=table_rows,
+                provided_columns=table.get("columns", []),
+            )
+            col_name_map_by_table[table_name] = col_name_map
             
             # Infer schema from this table's rows
-            table_schema = infer_schema_from_rows(table_rows)
+            table_schema = infer_schema_from_rows(sanitized_table_rows)
             
             # Add to dataset schema
             dataset_tables_schema.append({
                 "name": table_name,
                 "columns": table_schema
             })
+
+            field_names = [c.get("name") for c in table_schema if isinstance(c, dict) and c.get("name")]
+            if not field_names and sanitized_table_rows:
+                field_names = list((sanitized_table_rows[0] or {}).keys())
+            tables_m.append({
+                "name": table_name,
+                "fields": field_names,
+                "source_type": "csv",
+            })
             
-            all_rows_by_table[table_name] = table_rows
-            total_rows += len(table_rows)
+            all_rows_by_table[table_name] = sanitized_table_rows
+            total_rows += len(sanitized_table_rows)
         
         if not dataset_tables_schema:
             raise HTTPException(status_code=400, detail="No tables with data to publish")
@@ -2619,27 +3189,38 @@ async def process_batch_for_powerbi(payload: dict = Body(...)):
         
         # Step 3: Push rows for each table into the single dataset
         pushed_tables = []
-        for table_name, table_rows in all_rows_by_table.items():
+        for table_name, sanitized_table_rows in all_rows_by_table.items():
             try:
-                print(f"📤 Pushing {len(table_rows)} rows to table '{table_name}'...")
-                push_result = pbi.push_rows(dataset_id, table_name, table_rows)
+                print(f"📤 Pushing {len(sanitized_table_rows)} rows to table '{table_name}'...")
+                push_result = pbi.push_rows(dataset_id, table_name, sanitized_table_rows)
                 
                 pushed_tables.append({
                     "table_name": table_name,
-                    "rows_count": len(table_rows),
+                    "rows_count": len(sanitized_table_rows),
                     "status": "success"
                 })
                 
-                print(f"   ✅ Successfully pushed {len(table_rows)} rows to {table_name}")
+                print(f"   ✅ Successfully pushed {len(sanitized_table_rows)} rows to {table_name}")
                 
             except Exception as e:
                 print(f"   ❌ Failed to push rows to table {table_name}: {e}")
                 pushed_tables.append({
                     "table_name": table_name,
-                    "rows_count": len(table_rows),
+                    "rows_count": len(sanitized_table_rows),
                     "error": str(e),
                     "status": "failed"
                 })
+
+        inferred_relationships = resolve_relationships_unified(
+            tables_m=tables_m,
+            col_name_map_by_table=col_name_map_by_table,
+        )
+        relationships_apply_result = _apply_relationships_with_retry(
+            workspace_id=pbi.workspace_id,
+            dataset_id=dataset_id,
+            inferred_relationships=inferred_relationships,
+            access_token=access_token,
+        )
         
         workspace_url = f"https://app.powerbi.com/groups/{pbi.workspace_id}"
         
@@ -2652,7 +3233,8 @@ async def process_batch_for_powerbi(payload: dict = Body(...)):
             "rows_pushed": total_rows,
             "tables_count": len(tables),
             "tables_published": len([t for t in pushed_tables if t.get("status") == "success"]),
-            "published_tables": pushed_tables
+            "published_tables": pushed_tables,
+            "relationships": relationships_apply_result,
         }
     
     except HTTPException:
@@ -2737,6 +3319,13 @@ async def powerbi_advanced(
         
         if not rows or not columns:
             raise HTTPException(status_code=400, detail="CSV has no valid rows/columns")
+
+        orig_headers, col_name_map, sanitized_rows = normalize_table_rows(
+            table_name=meta_table or "FactTable",
+            rows=rows,
+            provided_columns=columns,
+        )
+        sanitized_columns = [col_name_map.get(c, _sanitize_col(c)) for c in orig_headers]
         
         # Dataset naming
         dataset_name = meta_app_name or meta_table or "Qlik_Advanced_Dataset"
@@ -2755,16 +3344,29 @@ async def powerbi_advanced(
                     detail="Not logged in. Please use /powerbi/login/acquire-token"
                 )
             
-            pbi = PowerBIService(access_token=auth.get_access_token())
-            schema = infer_schema_from_rows(rows)
+            access_token = auth.get_access_token()
+            pbi = PowerBIService(access_token=access_token)
+            schema = infer_schema_from_rows(sanitized_rows)
             
             # Create/get dataset
             dataset_id, created = pbi.get_or_create_push_dataset(dataset_name, table_name, schema)
             print(f"✅ Dataset ID: {dataset_id} (Created: {created})")
             
             # Push data
-            push_res = pbi.push_rows(dataset_id, table_name, rows)
+            push_res = pbi.push_rows(dataset_id, table_name, sanitized_rows)
             print(f"✅ Data pushed successfully")
+
+            tables_m = [{"name": table_name, "fields": sanitized_columns, "source_type": "csv"}]
+            inferred_relationships = resolve_relationships_unified(
+                tables_m=tables_m,
+                col_name_map_by_table={table_name: col_name_map},
+            )
+            relationships_apply_result = _apply_relationships_with_retry(
+                workspace_id=pbi.workspace_id,
+                dataset_id=dataset_id,
+                inferred_relationships=inferred_relationships,
+                access_token=access_token,
+            )
             
             # Apply measures
             measures_applied = {}
@@ -2804,12 +3406,18 @@ async def powerbi_advanced(
                     "columns": columns,
                     "push_status": push_res
                 },
+                "relationships": relationships_apply_result,
                 "dax": {
                     "measures_parsed": len(measures_list),
                     "measures_list": measures_list,
                     "measures_applied": measures_applied
                 },
-                "refresh": refresh_res
+                "refresh": refresh_res,
+                "local_parse": {
+                    "columns": columns,
+                    "sanitized_columns": sanitized_columns,
+                    "row_count": len(rows)
+                }
             }
         
         except HTTPException:
@@ -3449,7 +4057,7 @@ async def convert_mquery_endpoint(request: ConvertMQueryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Convert mquery error: {e}")
+        logger.error(f"Convert m query error: {e}")
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
 

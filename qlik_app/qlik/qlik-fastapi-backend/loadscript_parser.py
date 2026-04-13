@@ -1,20 +1,22 @@
+
+
+
 """
-Qlik LoadScript Parser Module  (PATCHED v2)
+Qlik LoadScript Parser  (PATCHED v4 - AUTO SCHEMA)
 
-Parses the loadscript and extracts meaningful components with detailed logging.
+Parses the loadscript and extracts meaningful components.
 
-Patches applied over v1:
-  ✅ Fix 1: lib:// comment stripping bug — // inside lib:// was stripped as a comment
-  ✅ Fix 2: String-aware semicolon split — naive split broke on delimiter is ','
-             and Date(x, 'YYYY-MM-DD') format strings
-  ✅ Fix 3: INLINE block detection and parsing
-  ✅ Fix 4: QVD load source type detection (was falling through as generic file)
-  ✅ Fix 5: RESIDENT load detection
-  ✅ Fix 6: Field type inference (date, number, boolean, string) from expressions
-  ✅ Fix 7: Duplicate load_statement suppression (3 overlapping patterns caused 3x dupes)
-  ✅ Fix 8: Table source_type and source_path now populated per table
-  ✅ Fix 9: raw_script always present in parse() return dict (required by simple_mquery_generator)
-  ✅ Fix 10: DISTINCT/WHERE/GROUP BY now scoped per-table, not globally duplicated
+v4 changes over v3:
+  ✅ Fix 14: _extract_tables() now stores ALL field names from LOAD * tables
+             by reading the raw CSV headers from the data model (passed in via
+             qlik_fields_map). Parser accepts optional qlik_fields_map so that
+             any caller who has GetTablesAndKeys data can inject real column names.
+  ✅ Fix 15: parse() now accepts and stores qlik_fields_map, and injects it
+             into every table dict under options['qlik_columns'] so downstream
+             code (mquery_converter, powerbi_publisher) always has access to it
+             without needing a separate pass.
+  ✅ Fix 16: parse() returns qlik_fields_map in the result dict so callers
+             don't have to carry it separately.
 """
 
 import logging
@@ -150,7 +152,8 @@ def _infer_field_type(expression: str) -> str:
         return 'mixed'
     if re.search(r'\bTRUE\b|\bFALSE\b', e):
         return 'boolean'
-    if re.search(r'[\+\-\*\/]', e) and not re.search(r'[A-Z].*[A-Z]', e):
+    # if re.search(r'[\+\-\*\/]', e) and not re.search(r'[A-Z].*[A-Z]', e):
+    if re.search(r'[\+\-\*\/]', e):
         return 'number'
 
     # ── Name-based inference (bare field names after aliasing) ───────────────
@@ -162,7 +165,8 @@ def _infer_field_type(expression: str) -> str:
     # Date/time suffixes
     if re.search(r'(DATE|TIME|TIMESTAMP|CREATED|UPDATED|MODIFIED|DOB|BIRTH)$', name):
         return 'date'
-    if re.search(r'^(DATE|TIME|TIMESTAMP)', name):
+    # BUT: exclude fields ending with _id (they are keys, not actual dates)
+    if re.search(r'^(DATE|TIME|TIMESTAMP)', name) and not name.endswith('_ID'):
         return 'date'
 
     # Integer — year, count, age, rank, sequence
@@ -200,6 +204,7 @@ def _parse_field_list(field_text: str) -> List[Dict[str, Any]]:
     Parse a comma-separated field expression list (the part between LOAD and FROM/INLINE/RESIDENT).
     Returns list of field dicts with name, expression, alias, type.
     """
+    field_text = re.sub(r'^\s*DISTINCT\b\s*', '', field_text.strip(), flags=re.IGNORECASE)
     if not field_text.strip():
         return []
     if field_text.strip() == '*':
@@ -295,9 +300,15 @@ def _parse_inline_block(inline_text: str) -> Tuple[List[Dict], Dict]:
 def _extract_table_label(statement: str) -> str:
     """Return the TableName: label that precedes LOAD or SELECT, or ''."""
     m = re.match(
-        r'^\s*(?:\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_\. ]*))\s*:',
+        r'^\s*(?:\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_\. ]*))\\s*:',
         statement
     )
+    if not m:
+        # Try without the escaped backslash (standard regex)
+        m = re.match(
+            r'^\s*(?:\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_\. ]*))\s*:',
+            statement
+        )
     if m:
         candidate = (m.group(1) or m.group(2) or '').strip()
         reserved = {
@@ -318,7 +329,9 @@ def _parse_single_statement(stmt: str) -> Optional[Dict[str, Any]]:
     has_select = bool(re.search(r'\bSELECT\b', stmt, re.IGNORECASE))
     if not (has_load or has_select):
         return None
-
+    # ✅ Fix: Skip MAPPING LOAD — temporary Qlik tables, not needed in Power BI
+    if re.search(r'\bMAPPING\s+LOAD\b', stmt, re.IGNORECASE):
+        return None
     table_name = _extract_table_label(stmt)
 
     # --- modifier ---
@@ -336,6 +349,43 @@ def _parse_single_statement(stmt: str) -> Optional[Dict[str, Any]]:
     source_type = 'unknown'
     source_path = ''
     options: Dict[str, Any] = {}
+    
+    # FIX: Store transformation modifiers IN options dict so converter can detect them
+    # (Previously stuck in modifier field — converter never saw them)
+    if 'Concatenate' in modifier:
+        options['is_concatenate'] = True
+        # Extract target table from modifier: extract from Concatenate(target_name)
+        concat_match = re.search(r'Concatenate\(([^)]*)\)', modifier)
+        if concat_match and concat_match.group(1).strip():
+            options['concat_target'] = concat_match.group(1).strip()
+    
+    if 'Join' in modifier:
+        options['is_join'] = True
+        join_type = 'LEFT'  # default
+        if 'Left' in modifier:
+            join_type = 'LEFT'
+        elif 'Right' in modifier:
+            join_type = 'RIGHT'
+        elif 'Inner' in modifier:
+            join_type = 'INNER'
+        elif 'Outer' in modifier:
+            join_type = 'OUTER'
+        options['join_type'] = join_type
+        join_match = re.search(r'(?:Left|Right|Inner|Outer)?\s*Join\(([^)]*)\)', modifier)
+        if join_match and join_match.group(1).strip():
+            options['join_table'] = join_match.group(1).strip()
+    
+    if 'Keep' in modifier:
+        options['is_keep'] = True
+        keep_type = 'LEFT'
+        if 'Right' in modifier:
+            keep_type = 'RIGHT'
+        elif 'Inner' in modifier:
+            keep_type = 'INNER'
+        options['keep_type'] = keep_type
+        keep_match = re.search(r'(?:Left|Right|Inner)?\s*Keep\(([^)]*)\)', modifier)
+        if keep_match and keep_match.group(1).strip():
+            options['keep_table'] = keep_match.group(1).strip()
 
     # ── INLINE ──────────────────────────────────────────────────────────────
     inline_m = re.search(r'\bINLINE\b\s*[\[(](.*?)[\])]', stmt, re.IGNORECASE | re.DOTALL)
@@ -347,6 +397,9 @@ def _parse_single_statement(stmt: str) -> Optional[Dict[str, Any]]:
     elif res_m := re.search(r'\bRESIDENT\b\s+([A-Za-z_][A-Za-z0-9_]*)', stmt, re.IGNORECASE):
         source_type = 'resident'
         source_path = res_m.group(1).strip()
+        # ✅ Fix 13: Store resident source name so extract_tables can inject
+        # the raw CSV path if the source table was dropped (intermediate table).
+        options['resident_source'] = source_path
         # field list is between LOAD and RESIDENT
         load_m = re.search(r'\bLOAD\b', stmt, re.IGNORECASE)
         res_pos = res_m.start()
@@ -412,12 +465,12 @@ def _parse_single_statement(stmt: str) -> Optional[Dict[str, Any]]:
         table_name = base or 'UnnamedTable'
 
     return {
-        'name':        table_name,
-        'source_type': source_type,
-        'source_path': source_path,
-        'fields':      fields,
-        'options':     options,
-        'modifier':    modifier,
+        'name':          table_name,
+        'source_type':   source_type,
+        'source_path':   source_path,
+        'fields':        fields,
+        'options':       options,
+        'modifier':      modifier,
         'raw_statement': stmt,
     }
 
@@ -434,11 +487,11 @@ def _extract_sql_table(stmt: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public class — same interface as v1
+# Public class — same interface as v1/v2
 # ---------------------------------------------------------------------------
 
 class LoadScriptParser:
-    """Parse Qlik loadscript and extract components (patched v2)."""
+    """Parse Qlik loadscript and extract components (patched v3)."""
 
     def __init__(self, loadscript: str):
         logger.info("=" * 80)
@@ -452,27 +505,47 @@ class LoadScriptParser:
         logger.info(f"⏰ Parse Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Component storage
-        self.tables: List[Dict]          = []
-        self.fields: List[Dict]          = []
+        self.tables: List[Dict]           = []
+        self.fields: List[Dict]           = []
         self.data_connections: List[Dict] = []
         self.transformations: List[Dict]  = []
         self.joins: List[Dict]            = []
         self.variables: List[Dict]        = []
-        self.functions: List[Dict]        = []
         self.comments: List[Dict]         = []
         self.load_statements: List[Dict]  = []
-
+        # ✅ Fix 14/15: store qlik_fields_map so it flows through automatically
+        self.qlik_fields_map: Dict[str, List[str]] = {}
         logger.info("✅ Parser initialized and ready to parse")
 
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
 
-    def parse(self) -> Dict[str, Any]:
+    def parse(
+        self,
+        qlik_fields_map: Optional[Dict[str, List[str]]] = None,
+    ) -> Dict[str, Any]:
         """
         Main parsing function.
-        Returns dict with raw_script, tables, fields, and all component lists.
+
+        ✅ Fix 14/15/16: Accepts optional qlik_fields_map (table→[fields]).
+        When provided (e.g. from GetTablesAndKeys WebSocket response):
+          - Injected into every parsed table under options['qlik_columns']
+          - LOAD * tables get their real column list embedded in the parse result
+          - Returned in the result dict so callers don't carry it separately
+
+        This means mquery_converter and powerbi_publisher always see real
+        column names for every table, regardless of whether the load script
+        uses LOAD * or explicit field lists.
         """
+        if qlik_fields_map:
+            self.qlik_fields_map = qlik_fields_map
+            logger.info(
+                "✅ qlik_fields_map supplied: %d table(s) → %d total fields",
+                len(qlik_fields_map),
+                sum(len(v) for v in qlik_fields_map.values()),
+            )
+
         logger.info("📍 Starting comprehensive script analysis...")
 
         try:
@@ -551,6 +624,8 @@ class LoadScriptParser:
                 "status": "success",
                 "parse_timestamp": datetime.now().isoformat(),
                 "script_length": self.script_length,
+                # ✅ Fix 16: return qlik_fields_map so downstream never loses it
+                "qlik_fields_map": self.qlik_fields_map,
                 "summary": {
                     "tables_count":          len(self.tables),
                     "fields_count":          len(self.fields),
@@ -581,6 +656,7 @@ class LoadScriptParser:
                 "status": "error",
                 "message": str(e),
                 "parse_timestamp": datetime.now().isoformat(),
+                "qlik_fields_map": self.qlik_fields_map,
             }
 
     # ------------------------------------------------------------------
@@ -631,8 +707,17 @@ class LoadScriptParser:
     def _extract_tables(self):
         """
         Extract table definitions using the string-aware statement parser.
-        ✅ FIX 3: Detects INLINE, RESIDENT, QVD, CSV, Excel, SQL
-        ✅ FIX 8: source_type and source_path populated per table
+
+        ✅ FIX 3:  Detects INLINE, RESIDENT, QVD, CSV, Excel, SQL
+        ✅ FIX 8:  source_type and source_path populated per table
+        ✅ FIX 11: MAPPING LOAD tables filtered out
+        ✅ FIX 12: Dropped/staging tables filtered out (DROP TABLE)
+        ✅ FIX 13: dropped_table_paths collected so that resident tables whose
+                   source was dropped receive the original CSV path in options
+                   (raw_source_path + is_dropped_resident = True).
+                   mquery_converter._m_resident uses these flags to inline the
+                   CSV load directly instead of generating the broken
+                   SalesRaw = SalesRaw self-reference.
         """
         logger.debug("Extracting table definitions...")
 
@@ -640,8 +725,84 @@ class LoadScriptParser:
         stmts = _split_statements(cleaned)
 
         seen_names: set = set()
+        load_counter = 0  # FIX: Track execution order
+        concatenate_chain = {}  # FIX: Track: target_table → [list of csv sources]
+        pending_post_joins: Dict[str, List[Dict[str, Any]]] = {}
+        pending_post_keeps: Dict[str, List[Dict[str, Any]]] = {}
+        retained_dropped_tables: set = set()
 
+        # ── Pass 1: collect all DROP TABLE target names ───────────────────────
+        dropped_tables: set = set()
         for stmt in stmts:
+            drop_m = re.search(
+                r'\bDROP\s+TABLE\b\s+([A-Za-z_][A-Za-z0-9_]*)',
+                stmt, re.IGNORECASE
+            )
+            if drop_m:
+                dropped_tables.add(drop_m.group(1).strip())
+
+        # Dropped tables that are later consumed by JOIN/KEEP statements must
+        # remain available as helper queries so the target table can inline them.
+        for stmt in stmts:
+            td_temp = _parse_single_statement(stmt)
+            if not td_temp:
+                continue
+            opts = td_temp.get('options', {})
+            if not (opts.get('is_join') or opts.get('is_keep')):
+                continue
+            if td_temp.get('source_type') == 'resident' and td_temp.get('source_path'):
+                retained_dropped_tables.add(td_temp['source_path'])
+
+        # ── Pass 2: collect source paths of tables that will be dropped ───────
+        # We need to know WHERE Sales_Raw was loaded from (e.g. fact_sales_1M.csv)
+        # so that the resident table (Sales) can inline the same CSV source.
+        dropped_table_paths: Dict[str, str] = {}   # table_name → source_path
+        
+        # FIX: Also pre-scan for CONCATENATE to build concatenate_chain
+        for stmt in stmts:
+            if re.search(r'\bMAPPING\s+LOAD\b', stmt, re.IGNORECASE):
+                continue
+            if re.search(r'\bDROP\s+TABLE\b', stmt, re.IGNORECASE):
+                continue
+            
+            # FIX: Detect CONCATENATE statements early (they don't create new tables)
+            concat_match = re.search(r'\bCONCATENATE\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)', stmt, re.IGNORECASE)
+            if concat_match:
+                concat_target = concat_match.group(1).strip()
+                # Parse the CSV source from this concatenate statement
+                _, source_path = _extract_from_path(stmt)
+                if concat_target not in concatenate_chain:
+                    concatenate_chain[concat_target] = []
+                if source_path:
+                    concatenate_chain[concat_target].append({
+                        'source_path': source_path,
+                        'statement': stmt[:200]
+                    })
+                logger.info(f"   ℹ️  CONCATENATE: {source_path} → {concat_target}")
+                continue
+            
+            td_temp = _parse_single_statement(stmt)
+            if td_temp and td_temp.get('name') in dropped_tables:
+                dropped_table_paths[td_temp['name']] = td_temp.get('source_path', '')
+            if td_temp and td_temp.get('name') in dropped_tables:
+                dropped_table_paths[td_temp['name']] = td_temp.get('source_path', '')
+
+        logger.debug(f"Dropped tables: {dropped_tables}")
+        logger.debug(f"Dropped table paths: {dropped_table_paths}")
+
+        # ── Pass 3: build final table list ───────────────────────────────────
+        for stmt in stmts:
+            # ✅ FIX 11: Skip MAPPING LOAD tables
+            if re.search(r'\bMAPPING\s+LOAD\b', stmt, re.IGNORECASE):
+                continue
+            # ✅ FIX 12: Skip DROP TABLE statements themselves
+            if re.search(r'\bDROP\s+TABLE\b', stmt, re.IGNORECASE):
+                continue
+            # FIX: Skip CONCATENATE statements (they don't create new tables, just extend existing)
+            if re.search(r'\bCONCATENATE\s*\(', stmt, re.IGNORECASE):
+                logger.debug("[PARSER] Skipping CONCATENATE statement (handled in Pass 2)")
+                continue
+
             td = _parse_single_statement(stmt)
             if td is None:
                 continue
@@ -650,11 +811,91 @@ class LoadScriptParser:
             if not name:
                 continue
 
+            # ✅ FIX 13: For resident tables whose source was dropped, inject
+            # the original file path so mquery_converter can inline the CSV.
+            if td['source_type'] == 'resident':
+                resident_src = td['options'].get('resident_source', td['source_path'])
+                if resident_src in dropped_tables:
+                    td['options']['is_dropped_resident'] = True
+                    td['options']['raw_source_path'] = dropped_table_paths.get(resident_src, '')
+                    logger.info(
+                        f"   ℹ️  Table '{name}' is RESIDENT of dropped table '{resident_src}'. "
+                        f"raw_source_path='{td['options']['raw_source_path']}'"
+                    )
+
+            if td.get('options', {}).get('is_join') and td['options'].get('join_table'):
+                target_name = td['options']['join_table']
+                pending_post_joins.setdefault(target_name, []).append(td)
+                logger.info(
+                    "   ℹ️  Deferred JOIN load '%s' for target '%s'",
+                    name, target_name
+                )
+                continue
+
+            if td.get('options', {}).get('is_keep') and td['options'].get('keep_table'):
+                target_name = td['options']['keep_table']
+                pending_post_keeps.setdefault(target_name, []).append(td)
+                logger.info(
+                    "   ℹ️  Deferred KEEP load '%s' for target '%s'",
+                    name, target_name
+                )
+                continue
+
+            # ✅ FIX 12: Skip dropped staging tables unless they are still needed
+            # as helper queries by a later JOIN/KEEP operation.
+            if name in dropped_tables and name not in retained_dropped_tables:
+                continue
+            if name in dropped_tables:
+                td['options']['is_helper_table'] = True
+
             # Deduplicate by name
             if name in seen_names:
                 continue
             seen_names.add(name)
+            
+            # FIX: Check if this table is a target for CONCATENATE operations
+            # If so, add the concatenation sources to its options
+            if name in concatenate_chain:
+                td['options']['concatenate_sources'] = concatenate_chain[name]
+                td['options']['is_concatenation_target'] = True
+                logger.info(f"   ℹ️  Table '{name}' has {len(concatenate_chain[name])} concatenation source(s)")
 
+            load_counter += 1  # FIX: Increment for every table loaded
+
+            # ✅ Fix 14/15: inject real column names from qlik_fields_map
+            # This makes LOAD * tables carry their actual column list through
+            # the entire pipeline — converter, publisher, BIM builder all see it.
+            qlik_cols = self.qlik_fields_map.get(name, [])
+            if qlik_cols:
+                td['options']['qlik_columns'] = qlik_cols
+                logger.info(
+                    "   ✅ Injected %d qlik_columns into table '%s': %s",
+                    len(qlik_cols), name, qlik_cols
+                )
+                # For LOAD * tables, also synthesise explicit field dicts
+                # so resolve_output_columns() can iterate them normally.
+                is_wildcard = (
+                    not td['fields'] or
+                    (len(td['fields']) == 1 and td['fields'][0].get('name') == '*')
+                )
+                if is_wildcard:
+                    td['fields'] = [
+                        {
+                            'name':       col,
+                            'expression': col,
+                            'alias':      None,
+                            'type':       'string',
+                            'extracted_from': 'qlik_fields_map',
+                        }
+                        for col in qlik_cols
+                    ]
+                    logger.info(
+                        "   ✅ Replaced wildcard fields with %d explicit fields for '%s'",
+                        len(qlik_cols), name
+                    )
+            else:
+                td['options']['qlik_columns'] = []
+            
             self.tables.append({
                 "name":        name,
                 "type":        "load_statement",
@@ -663,8 +904,16 @@ class LoadScriptParser:
                 "modifier":    td.get('modifier', ''),
                 "options":     td.get('options', {}),
                 "field_count": len(td['fields']),
-                "fields":      td['fields'],   # per-table fields available here too
+                "fields":      td['fields'],
+                "load_order":  load_counter,  # FIX: Track execution order
             })
+
+        for table in self.tables:
+            name = table.get('name')
+            if name in pending_post_joins:
+                table.setdefault('options', {})['post_join_loads'] = pending_post_joins[name]
+            if name in pending_post_keeps:
+                table.setdefault('options', {})['post_keep_loads'] = pending_post_keeps[name]
 
     # ------------------------------------------------------------------
     # Step 5.4 — Fields (with type inference)
@@ -710,18 +959,11 @@ class LoadScriptParser:
                 continue
             seen.add(src)
 
-            raw_path = src
-            # Reconstruct full lib:// path for display
-            orig_m = re.search(
-                r"""\bFROM\b\s+(?:\[([^\]]+)\]|'([^']+)'|"([^"]+)"|(\S+))""",
-                table.get('fields', [{}])[0].get('extracted_from', '') if table.get('fields') else '',
-                re.IGNORECASE
-            )
             self.data_connections.append({
-                "type":       "library" if "lib://" in table.get('options', {}).get('raw_from', src) else stype,
-                "source":     src,
-                "path":       src,
-                "table_name": table['name'],
+                "type":        "library" if "lib://" in table.get('options', {}).get('raw_from', src) else stype,
+                "source":      src,
+                "path":        src,
+                "table_name":  table['name'],
                 "source_type": stype,
             })
 
@@ -882,65 +1124,63 @@ class LoadScriptParser:
 
 if __name__ == "__main__":
     sample_script = """
-    // Sample Load Script — patched parser test
+    SET ThousandSep=',';
 
-    SET vStartDate = '2024-01-01';
-    LET vMaxRows = 1000;
-
-    /* ============================================================
-       Customer Table — CSV source
-    ============================================================ */
-    [Customers]:
-    LOAD
-        CustomerID,
-        CustomerName,
-        Country,
-        Date(JoinDate, 'YYYY-MM-DD') AS JoinDate,
-        Num(Revenue) AS Revenue
-    FROM [lib://DataFiles/customers.csv]
+    RegionMap:
+    MAPPING LOAD city, region
+    FROM [lib://DataFiles/dim_regions.csv]
     (txt, utf8, embedded labels, delimiter is ',');
 
-    // Orders from QVD
-    [Orders]:
+    Customers:
     LOAD
-        OrderID,
-        CustomerID,
-        OrderDate,
-        Amount
-    FROM [lib://DataFiles/orders.qvd] (qvd)
-    WHERE Amount > 0;
+        customer_id,
+        customer_name,
+        city,
+        segment
+    FROM [lib://DataFiles/dim_customers_20K.csv]
+    (txt, utf8, embedded labels, delimiter is ',');
 
-    // Excel source with sheet
-    [Employees]:
-    LOAD
-        EmpID,
-        Name,
-        Department
-    FROM [lib://DataFiles/employees.xlsx]
-    (ooxml, embedded labels, table is Sheet1);
-
-    // Inline lookup table
-    Calendar:
-    LOAD * INLINE [
-        Month, Quarter, Year
-        January, Q1, 2024
-        February, Q1, 2024
-        March, Q1, 2024
-    ];
-
-    // RESIDENT table (derived from Orders)
-    SalesSummary:
-    LOAD
-        CustomerID,
-        Sum(Amount) AS TotalAmount
-    RESIDENT Orders
-    WHERE Amount > 0
-    GROUP BY CustomerID;
-
-    // SQL via ODBC
     Products:
-    SELECT ProductID, ProductName, Category, Price
-    FROM dbo.Products;
+    LOAD
+        product_id,
+        product_name,
+        category,
+        price
+    FROM [lib://DataFiles/dim_products_5K.csv]
+    (txt, utf8, embedded labels, delimiter is ',');
+
+    Dates:
+    LOAD
+        date_id,
+        year,
+        month,
+        day
+    FROM [lib://DataFiles/dim_dates.csv]
+    (txt, utf8, embedded labels, delimiter is ',');
+
+    Sales_Raw:
+    LOAD
+        order_id,
+        customer_id,
+        product_id,
+        date_id,
+        quantity,
+        amount
+    FROM [lib://DataFiles/fact_sales_1M.csv]
+    (txt, utf8, embedded labels, delimiter is ',');
+
+    Sales:
+    LOAD
+        order_id,
+        customer_id,
+        product_id,
+        date_id,
+        quantity,
+        amount,
+        quantity * amount as total_value
+    RESIDENT Sales_Raw;
+
+    DROP TABLE Sales_Raw;
     """
 
     parser = LoadScriptParser(sample_script)
@@ -952,14 +1192,13 @@ if __name__ == "__main__":
     print(f"Status:        {result['status']}")
     print(f"Tables:        {result['summary']['tables_count']}")
     print(f"Fields:        {result['summary']['fields_count']}")
-    print(f"Connections:   {result['summary']['connections_count']}")
-    print(f"Transforms:    {result['summary']['transformations_count']}")
-    print(f"Variables:     {result['summary']['variables_count']}")
-    print(f"raw_script OK: {'raw_script' in result}")
 
     print("\n--- Tables ---")
     for t in result['details']['tables']:
         print(f"  {t['name']:20} [{t['source_type']:8}]  {t['source_path']}")
+        opts = t.get('options', {})
+        if opts.get('is_dropped_resident'):
+            print(f"    ↳ is_dropped_resident=True  raw_source_path='{opts.get('raw_source_path')}'")
         for f in t['fields'][:3]:
             print(f"    • {f['name']:20} ({f['type']})")
         if len(t['fields']) > 3:

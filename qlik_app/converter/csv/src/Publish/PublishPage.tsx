@@ -76,10 +76,22 @@ export default function PublishPage() {
 
   // Get export options from navigation state
   const exportOptions = state?.exportOptions || { combined: true, separate: false };
-  const isSeparateMode = exportOptions.separate;
 
   // Selected tables to publish: prefer `state.selectedTables` (in-memory), fallback to lightweight metadata
   const selectedTablesToPublish = state?.selectedTables || (() => {
+    if (Array.isArray(state?.batchTables) && state.batchTables.length > 0) {
+      return state.batchTables.map((table: any) => ({
+        name: table.name || "",
+        data: {
+          name: table.name || "",
+          rows: table.rows || [],
+          columns:
+            table.columns ||
+            (table.rows && table.rows.length > 0 ? Object.keys(table.rows[0]) : []),
+        },
+        actualRowCount: table.rows?.length || 0,
+      }));
+    }
     try {
       const metaJson = sessionStorage.getItem("migration_selected_tables_meta") || sessionStorage.getItem("migration_selected_tables");
       if (!metaJson) return [];
@@ -96,7 +108,9 @@ export default function PublishPage() {
   })();
 
   // Extract single vs multi-select variables from state for info display
-  const isMultiSelect = state?.selectedTables && state?.selectedTables.length > 0;
+  const isMultiSelect =
+    (state?.selectedTables && state.selectedTables.length > 0) ||
+    (state?.batchTables && state.batchTables.length > 0);
   let selectedTable = state?.selectedTable || sessionStorage.getItem("selectedTable");
   let rows = state?.rows || [];
 
@@ -131,6 +145,15 @@ export default function PublishPage() {
   const [csvData, setCSVData] = useState<string>("");
   const [daxData, setDAXData] = useState<string>("");
   const [customTableName, setCustomTableName] = useState(tableName);
+
+  const actionRequiredMessage =
+    result?.publishResult?.message ||
+    result?.publishResult?.detail ||
+    result?.publishResult?.error ||
+    result?.batchResult?.message ||
+    result?.dataset?.message ||
+    "";
+  const showActionRequiredBanner = actionRequiredMessage.includes("Action required");
 
   // Capture page load time from WizardContext
   useEffect(() => {
@@ -201,10 +224,10 @@ export default function PublishPage() {
       // Start the actual publishing API call AFTER step 4 begins
       const publishTimer = setTimeout(async () => {
         try {
-          const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
-            ? 'http://127.0.0.1:8000'
-            : 'https://qliksense-stuv.onrender.com';
-
+          //const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+          //  ? 'http://127.0.0.1:8000'
+          //  : 'https://qlikai-app-ltmrv.ondigitalocean.app';
+          const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
           const mqueryData = state.mqueryData || {};
           const publishStartTime = new Date();
           
@@ -238,6 +261,7 @@ export default function PublishPage() {
           
           setPublishedTableName(datasetName);
           setDatasetURL(workspaceUrl);
+          const deployedTableCount = result.tables_deployed || state.tableCount || 1;
           setResult({
             dataset: {
               workspace_id: workspaceUrl.split('/groups/')[1] || "",
@@ -246,8 +270,8 @@ export default function PublishPage() {
             },
             mquery: true,
             publishResult: result,
-            // Store metrics from initial state for display
-            tableCount: state.tableCount || result.tables_deployed || 1,
+            // Prefer the backend-reported deployed table count for M Query publishes.
+            tableCount: deployedTableCount,
             rowCount: state.rowCount || state.totalRows || 0,
           });
           setStatusBoxes({ columns: true, powerbi: true, finished: true });
@@ -261,7 +285,7 @@ export default function PublishPage() {
           sessionStorage.setItem("migration_publishing_method", "M_QUERY");
           sessionStorage.setItem("migration_dataset_name", datasetName);
           sessionStorage.setItem("migration_dataset_id", result.dataset_id || "");
-          sessionStorage.setItem("migration_tables_deployed", String(result.tables_deployed || state.tableCount || 1));
+          sessionStorage.setItem("migration_tables_deployed", String(deployedTableCount));
           sessionStorage.setItem("migration_row_count", String(state.rowCount || state.totalRows || 0));
         } catch (error: any) {
           console.error("M Query publishing failed:", error);
@@ -299,7 +323,9 @@ export default function PublishPage() {
           name: datasetName,
         },
         mquery: true, // Flag that this is M Query
-        publishResult: publishResult
+        publishResult: publishResult,
+        tableCount: publishResult.tables_deployed || state.tableCount || 1,
+        rowCount: state.rowCount || state.totalRows || 0,
       });
       setStatusBoxes({ columns: true, powerbi: true, finished: true });
       setCurrentStep(5);
@@ -372,8 +398,9 @@ export default function PublishPage() {
     form.append("has_csv", hasCSV ? "true" : "false");
     form.append("has_dax", hasDAX ? "true" : "false");
 
-    const res = await fetch("http://localhost:8000/powerbi/process", {
-    // const res = await fetch("https://qliksense-stuv.onrender.com/powerbi/process", {
+    // const res = await fetch("http://localhost:8000/powerbi/process", {
+    const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+    const res = await fetch(`${apiBase}/api/powerbi/process`, {
     
       method: "POST",
       body: form,
@@ -397,9 +424,12 @@ export default function PublishPage() {
       url: realDatasetURL,
       workspaceId: data?.dataset?.workspace_id,
       datasetId: data?.dataset?.id,
+      message: data?.message || "",
+      publishResult: data,
       publishTime: new Date(),
     };
   };
+
 
   const handlePublish = async () => {
     try {
@@ -412,8 +442,9 @@ export default function PublishPage() {
       setStatusBoxes({ columns: true, powerbi: false, finished: false });
       console.log("🔐 Step 2: Initiating Power BI authentication...");
       
-      const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
-      // const authRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/acquire-token", {
+      // const authRes = await fetch("http://localhost:8000/powerbi/login/acquire-token", {
+      const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      const authRes = await fetch(`${apiBase}/powerbi/login/acquire-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -437,8 +468,9 @@ export default function PublishPage() {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         try {
-          const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
-          // const statusRes = await fetch("https://qliksense-stuv.onrender.com/powerbi/login/status", {
+          // const statusRes = await fetch("http://localhost:8000/powerbi/login/status", {
+          const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+          const statusRes = await fetch(`${apiBase}/powerbi/login/status`, {
             method: "POST",
           });
           const statusData = await statusRes.json();
@@ -491,69 +523,89 @@ export default function PublishPage() {
         }
 
         setResult({ published_tables: publishedResults });*/
-        if (isSeparateMode && isMultiTableMode && selectedTablesToPublish.length > 0) {
-        // Publish all tables as a single dataset with relationships
+        const hasBatchTables = Array.isArray(state?.batchTables) && state.batchTables.length > 0;
+        if (hasBatchTables || (isMultiTableMode && selectedTablesToPublish.length > 0)) {
         const batchTables: any[] = [];
 
-        for (let i = 0; i < tableCount; i++) {
-          const csvText = state?.csvPayloads?.[`migration_csv_${i}`] || sessionStorage.getItem(`migration_csv_${i}`) || "";
-          const tName = selectedTablesToPublish[i]?.name || `Table_${i + 1}`;
-          if (!csvText) continue;
+        if (hasBatchTables) {
+          batchTables.push(
+            ...state.batchTables.map((table: any) => ({
+              name: table.name,
+              rows: table.rows || [],
+              columns:
+                table.columns ||
+                (table.rows && table.rows.length > 0 ? Object.keys(table.rows[0]) : []),
+            }))
+          );
+          console.log(`📦 Using batchTables from navigation state: ${batchTables.length} tables`);
+        } else {
+          for (let i = 0; i < tableCount; i++) {
+            const csvText = state?.csvPayloads?.[`migration_csv_${i}`] || sessionStorage.getItem(`migration_csv_${i}`) || "";
+            const tName = selectedTablesToPublish[i]?.name || `Table_${i + 1}`;
+            const selectedTableRows = selectedTablesToPublish[i]?.data?.rows || [];
+            const selectedTableColumns = selectedTablesToPublish[i]?.data?.columns || [];
 
-          // Parse CSV into rows
-          const lines = csvText.trim().split('\n').filter((l: string) => l.trim());
-          if (lines.length < 2) continue;
-          /*
-          const headers = lines[0].split(',').map((h: string) => h.trim().replace(/^"|"$/g, ''));
-          const rows = lines.slice(1).map((line: string) => {
-            const vals = line.split(',');
-            const row: any = {};
-            headers.forEach((h: string, idx: number) => {
-              row[h] = vals[idx]?.trim().replace(/^"|"$/g, '') ?? null;
-            });
-            return row;
-          });
-          */
-          const parseCSVLine = (line: string): string[] => {
-          const result: string[] = [];
-          let current = '';
-          let inQuotes = false;
-          for (let i = 0; i < line.length; i++) {
-            const ch = line[i];
-            if (ch === '"') {
-              if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-              else inQuotes = !inQuotes;
-            } else if (ch === ',' && !inQuotes) {
-              result.push(current.trim());
-              current = '';
-            } else {
-              current += ch;
+            let rows: any[] = [];
+            let headers: string[] = [];
+
+            if (selectedTableRows.length > 0) {
+              headers = Object.keys(selectedTableRows[0] || {});
+              rows = selectedTableRows;
+            } else if (csvText) {
+              const lines = csvText.trim().split('\n').filter((line: string) => line.trim());
+              if (lines.length > 0) {
+                const parseCSVLine = (line: string): string[] => {
+                  const result: string[] = [];
+                  let current = "";
+                  let inQuotes = false;
+                  for (let index = 0; index < line.length; index++) {
+                    const ch = line[index];
+                    if (ch === '"') {
+                      if (inQuotes && line[index + 1] === '"') {
+                        current += '"';
+                        index++;
+                      } else {
+                        inQuotes = !inQuotes;
+                      }
+                    } else if (ch === ',' && !inQuotes) {
+                      result.push(current.trim());
+                      current = "";
+                    } else {
+                      current += ch;
+                    }
+                  }
+                  result.push(current.trim());
+                  return result;
+                };
+
+                headers = parseCSVLine(lines[0]);
+                rows = lines.slice(1).map((line: string) => {
+                  const vals = parseCSVLine(line);
+                  const row: any = {};
+                  headers.forEach((header: string, idx: number) => {
+                    row[header] = vals[idx] ?? null;
+                  });
+                  return row;
+                });
+              }
+            } else if (selectedTableColumns.length > 0) {
+              headers = selectedTableColumns;
             }
-          }
-          result.push(current.trim());
-          return result;
-        };
-        const headers = parseCSVLine(lines[0]);
-        const rows = lines.slice(1).map((line: string) => {
-          const vals = parseCSVLine(line);
-          const row: any = {};
-          headers.forEach((h: string, idx: number) => {
-            row[h] = vals[idx] ?? null;
-          });
-          return row;
-        });
 
-          batchTables.push({ name: tName, rows });
-          console.log(`📦 Prepared table ${i + 1}/${tableCount}: ${tName} (${rows.length} rows)`);
+            if (!headers.length) {
+              console.warn(`⚠️ Skipping table with no headers: ${tName}`);
+              continue;
+            }
+
+            batchTables.push({ name: tName, rows, columns: headers });
+            console.log(`📦 Prepared table ${i + 1}/${tableCount}: ${tName} (${rows.length} rows)`);
+          }
         }
 
         if (batchTables.length === 0) throw new Error("No table data available to publish");
-        console.log(`📤 Publishing ${batchTables.length} tables as single dataset with relationships...`);
+        console.log(`📤 Publishing ${batchTables.length} tables as semantic model with relationships...`);
 
-        const batchApiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
-          ? 'http://localhost:8000'
-          : 'https://qliksense-stuv.onrender.com';
-
+        const batchApiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
         const batchRes = await fetch(`${batchApiBase}/api/migration/publish-tables`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -565,10 +617,17 @@ export default function PublishPage() {
         const batchData = await batchRes.json();
         if (!batchRes.ok) throw new Error(batchData?.detail || "Batch publish failed");
 
-        console.log("✅ Batch publish successful:", batchData);
+        console.log("✅ Multi-table semantic publish successful:", batchData);
+        try {
+          sessionStorage.setItem("last_publish_response", JSON.stringify(batchData, null, 2));
+        } catch {}
         setPublishedTableName(batchData.dataset_name || appName);
         setDatasetURL(batchData.workspace_url || "");
-        setResult({ published_tables: batchTables.map((t: any) => ({ tableName: t.name, rowCount: t.rows.length, url: batchData.workspace_url })) });
+        setResult({
+          published_tables: batchTables.map((t: any) => ({ tableName: t.name, rowCount: t.rows.length, url: batchData.workspace_url })),
+          batchResult: batchData,
+          relationshipsApplied: batchData.relationships_applied || [],
+        });
       } else {
         // Combined mode or single table - use updated logic (prefer navigation state payloads)
         setCurrentStep(0);
@@ -789,8 +848,9 @@ export default function PublishPage() {
       console.log("📤 Sending to backend:", JSON.stringify(payload, null, 2));
 
       // Download PDF
-      const response = await fetch('http://localhost:8000/report/download-pdf', {
-      // const response = await fetch('https://qliksense-stuv.onrender.com/report/download-pdf', {
+      // const response = await fetch('http://localhost:8000/report/download-pdf', {
+      const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      const response = await fetch(`${apiBase}/report/download-pdf`, {  
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -942,8 +1002,8 @@ export default function PublishPage() {
         }
       }
 
-      const res = await fetch("http://localhost:8000/api/migration/publish-semantic-model", {
-      // const res = await fetch("https://qliksense-stuv.onrender.com/api/migration/publish-semantic-model", {
+      const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      const res = await fetch(`${apiBase}/api/migration/publish-semantic-model`, {
         method: "POST",
         body: form,
       });
@@ -993,7 +1053,7 @@ export default function PublishPage() {
       });
 
       const res = await fetch(`http://localhost:8000/api/migration/publish-table?${params.toString()}`, {
-      // const res = await fetch(`https://qliksense-stuv.onrender.com/api/migration/publish-table?${params.toString()}`, {
+      // const res = await fetch(`https://qlikai-app-ltmrv.ondigitalocean.app/api/migration/publish-table?${params.toString()}`, {
         method: "POST",
       });
 
@@ -1251,6 +1311,27 @@ export default function PublishPage() {
             Dataset "<strong>{publishedTableName}</strong>" published to Power BI Cloud
           </div>
 
+          {showActionRequiredBanner && (
+            <div
+              style={{
+                backgroundColor: "#fff3cd",
+                border: "2px solid #f59e0b",
+                borderRadius: "8px",
+                padding: "16px",
+                marginBottom: "16px",
+                color: "#7c5200",
+              }}
+            >
+              <strong>Action Required</strong>
+              <p style={{ margin: "8px 0 0" }}>
+                Go to Power BI Service - Dataset Settings - Data source credentials - Edit - OAuth2 - Sign in.
+              </p>
+              <p style={{ margin: "8px 0 0" }}>
+                Without this step, SharePoint-backed tables will remain empty until you sign in and trigger a refresh.
+              </p>
+            </div>
+          )}
+
           {/* URL BOX */}
           <div className="url-box">
             <div className="url-label">🔗 Dataset URL </div>
@@ -1349,7 +1430,9 @@ export default function PublishPage() {
             <div className="info-box">
               <div className="info-box-label">Tables Exported</div>
               <div className="info-box-value" style={{ fontSize: "18px", fontWeight: "bold", color: "#0078d4" }}>
-                {result?.mquery ? (result.tableCount || 1) : (tableCount > 0 ? tableCount : (isMultiTableMode ? tableCount : 1))}
+                {result?.mquery
+                  ? (result.tableCount || result.publishResult?.tables_deployed || Number(sessionStorage.getItem("migration_tables_deployed") || "0") || 1)
+                  : (tableCount > 0 ? tableCount : (isMultiTableMode ? tableCount : 1))}
               </div>
             </div>
             <div className="info-box">

@@ -1,3 +1,8 @@
+
+
+
+
+
 """
 Power BI XMLA Connector — PPU / Premium Semantic Model Creator
 
@@ -552,27 +557,51 @@ server.AccessToken = "{self.access_token}";
                 })
 
             if table_name and bim_cols:
-                # Build an M expression that creates an empty typed table
-                def _q(name):
-                    # Quote column names with special chars for M type table syntax
-                    if not name.replace("_", "").isalnum() or name[0:1].isdigit():
-                        return f'#"{name}"'
-                    return name
+                # ── M expression priority ────────────────────────────────────
+                # 1. Use the M Query from MQueryConverter if provided
+                #    (SharePoint CSV, INLINE data, RESIDENT chain, QVD, etc.)
+                # 2. Fall back to an empty typed #table() as schema-only stub
+                #    (used when only field names/types are available, no source)
+                # ────────────────────────────────────────────────────────────
+                provided_m = (table.get("m_expression") or "").strip()
 
-                type_defs = ", ".join(
-                    f"{_q(c['name'])} = {self._bim_type_to_m(c['dataType'])}"
-                    for c in bim_cols
-                )
-                # Note: {{}} in f-string produces literal {} in the output
-                m_expr = (
-                    "let\n"
-                    "    Source = #table(\n"
-                    f"        type table [{type_defs}],\n"
-                    "        {{}}\n"
-                    "    )\n"
-                    "in\n"
-                    "    Source"
-                )
+                if provided_m:
+                    # Use the full M expression from MQueryConverter — this
+                    # carries the real data source (SharePoint path, INLINE
+                    # rows, RESIDENT reference, QVD CSV path, etc.)
+                    m_expr = provided_m
+                    logger.info(
+                        "[XMLA/_build_bim] Table '%s': using MQueryConverter M expression (%d chars)",
+                        table_name, len(m_expr),
+                    )
+                else:
+                    # No M expression provided — build a schema-only stub.
+                    # This creates an empty typed table so Power BI knows the
+                    # columns and relationships even without row data.
+                    def _q(name):
+                        if not name.replace("_", "").isalnum() or name[0:1].isdigit():
+                            return f'#"{name}"'
+                        return name
+
+                    type_defs = ", ".join(
+                        f"{_q(c['name'])} = {self._bim_type_to_m(c['dataType'])}"
+                        for c in bim_cols
+                    )
+                    # {{}} in f-string produces literal {} — empty row set
+                    m_expr = (
+                        "let\n"
+                        "    Source = #table(\n"
+                        f"        type table [{type_defs}],\n"
+                        "        {{}}\n"
+                        "    )\n"
+                        "in\n"
+                        "    Source"
+                    )
+                    logger.info(
+                        "[XMLA/_build_bim] Table '%s': no M expression provided, "
+                        "using empty schema stub",
+                        table_name,
+                    )
 
                 bim_tables.append({
                     "name":    table_name,
@@ -807,3 +836,5 @@ server.AccessToken = "{self.access_token}";
             "boolean":  "type logical",
         }
         return mapping.get(bim_type, "type text")
+
+

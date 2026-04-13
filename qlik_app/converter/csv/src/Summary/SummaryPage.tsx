@@ -1,7 +1,7 @@
 import "./SummaryPage.css";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, fetchLoadScript, parseLoadScript } from "../api/qlikApi";
+import { fetchTables, fetchTableData, fetchTableDataSimple, exportTableAsCSV, fetchLoadScript, parseLoadScript, fetchApplicationBrdDocument, downloadHtmlFile } from "../api/qlikApi";
 import Csvicon from "../assets/Csvicon.png";
 import { useWizard } from "../context/WizardContext";
 import LoadingOverlay from "../components/LoadingOverlay/LoadingOverlay";
@@ -14,7 +14,7 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TableSortLabel from "@mui/material/TableSortLabel";
 
-type TableInfo = string | { name: string; [key: string]: any };
+type TableInfo = string | { name: string;[key: string]: any };
 type Row = Record<string, any>;
 
 
@@ -25,6 +25,7 @@ export default function SummaryPage() {
   const pageStartTimeRef = useRef<number | null>(null);
 
   const [appId, setAppId] = useState<string>("");
+  const appName = (location.state as any)?.appName || sessionStorage.getItem("appName") || appId || "this application";
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [filteredTables, setFilteredTables] = useState<TableInfo[]>([]);
   const [selectedTable, setSelectedTable] = useState<string>("");
@@ -35,6 +36,11 @@ export default function SummaryPage() {
   const [summary, setSummary] = useState<any>(null);
   const [pageLoadTime, setPageLoadTime] = useState<string | null>(null);
   const [totalRows, setTotalRows] = useState<number>(0);
+  const [applicationBrdHtml, setApplicationBrdHtml] = useState<string>("");
+  const [applicationBrdFileName, setApplicationBrdFileName] = useState<string>("");
+  const [applicationBrdLoading, setApplicationBrdLoading] = useState(false);
+  const [applicationBrdError, setApplicationBrdError] = useState<string>("");
+  const [applicationBrdLoadedAppId, setApplicationBrdLoadedAppId] = useState<string>("");
 
   const SERVER_FETCH_MAX = 200000;
 
@@ -43,10 +49,10 @@ export default function SummaryPage() {
   const [relations, setRelations] = useState<Record<string, string[]>>({});
 
   // ── TABS ──────────────────────────────────────────────────────────────────
-  // "sourceTypes" | "summary" | "mquery" | "er"
+  // "sourceTypes" | "summary" | "appSpec" | "mquery" | "er"
   // "er" replaces the old Schema modal button.
   // ──────────────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<"sourceTypes" | "summary" | "mquery" | "er">("sourceTypes");
+  const [activeTab, setActiveTab] = useState<"sourceTypes" | "summary" | "appSpec" | "mquery" | "er">("sourceTypes");
   const [sourceTypesTab, setSourceTypesTab] = useState<"database" | "scripts" | "csv" | null>(null);
 
   // LoadScript and MQuery Display States
@@ -165,6 +171,7 @@ export default function SummaryPage() {
     return out;
   };
 
+
   // Helper: check whether two tables share at least one field
   const shareFields = (aName: string, bName: string) => {
     if (!aName || !bName) return false;
@@ -183,6 +190,25 @@ export default function SummaryPage() {
     return false;
   };
 
+  // Helper: collect all related tables (transitive closure)
+  const collectAllRelated = (startName: string): string[] => {
+    const visited = new Set<string>([startName]);
+    const queue: string[] = [startName];
+    const result: string[] = [];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const neighbours: string[] = relations[current] || [];
+      for (const neighbour of neighbours) {
+        if (!visited.has(neighbour)) {
+          visited.add(neighbour);
+          result.push(neighbour);
+          queue.push(neighbour);
+        }
+      }
+    }
+    return result;
+  };
+
   // Track page load start time
   useEffect(() => {
     pageStartTimeRef.current = Date.now();
@@ -192,6 +218,13 @@ export default function SummaryPage() {
   useEffect(() => {
     sessionStorage.setItem("summaryActiveTab", activeTab);
   }, [activeTab]);
+
+  useEffect(() => {
+    setApplicationBrdHtml("");
+    setApplicationBrdFileName("");
+    setApplicationBrdError("");
+    setApplicationBrdLoadedAppId("");
+  }, [appId]);
 
   // When user navigates to the M Query tab, pre-fill the SharePoint URL
   useEffect(() => {
@@ -210,7 +243,7 @@ export default function SummaryPage() {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) setUrlHistory(parsed);
-      } catch (e) {}
+      } catch (e) { }
     }
   }, []);
 
@@ -322,7 +355,7 @@ export default function SummaryPage() {
 
         const getTimestamp = (t: any) => {
           if (!t || typeof t === 'string') return 0;
-          const candidates = ['added_timestamp','created','createdAt','created_at','createdDate','modifiedDate','lastModifiedDate','lastReloadTime','lastReload'];
+          const candidates = ['added_timestamp', 'created', 'createdAt', 'created_at', 'createdDate', 'modifiedDate', 'lastModifiedDate', 'lastReloadTime', 'lastReload'];
           for (const k of candidates) {
             const v = t[k];
             if (v) {
@@ -396,7 +429,7 @@ export default function SummaryPage() {
           if (firstTableName) loadData(firstTableName);
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => { setLoading(false); });
   }, [appId, stopTimer, startTimer]);
 
@@ -434,7 +467,7 @@ export default function SummaryPage() {
       try {
         sessionStorage.setItem("selectedTable", tableName);
         sessionStorage.setItem("selectedRows", JSON.stringify(data || []));
-      } catch (e) {}
+      } catch (e) { }
 
       const { generateSummaryFromData } = await import("../api/qlikApi");
       const summary = generateSummaryFromData(data, tableName);
@@ -515,12 +548,13 @@ export default function SummaryPage() {
         if (parseResult.status === "success") { scriptToConvert = parseResult; setParsedScript(parseResult); }
         else throw new Error("Failed to parse LoadScript");
       }
-      const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
-        ? 'http://127.0.0.1:8000' : 'https://qliksense-stuv.onrender.com';
+      //const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
+      //  ? 'http://127.0.0.1:8000' : 'https://qlikai-app-ltmrv.ondigitalocean.app';
+      const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
       const convertResponse = await fetch(`${apiBase}/api/migration/convert-to-mquery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parsed_script_json: JSON.stringify(scriptToConvert), table_name: "", base_path: dataSourcePath.trim() || "" }),
+        body: JSON.stringify({ parsed_script_json: JSON.stringify(scriptToConvert), table_name: "", base_path: dataSourcePath.trim() || "", app_id: appId }),
       });
       if (!convertResponse.ok) throw new Error(`Failed to convert to M Query: ${convertResponse.status}`);
       const convertResult = await convertResponse.json();
@@ -534,9 +568,9 @@ export default function SummaryPage() {
   const fetchAiSummary = async (tableRows: any[], tableName: string) => {
     if (!tableRows || tableRows.length === 0) return;
     setAiSummaryLoading(true); setAiSummaryError(""); setAiSummaryBullets([]);
+    
     try {
-      const apiBase = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1'
-        ? 'http://127.0.0.1:8000' : 'https://qliksense-stuv.onrender.com';
+      const apiBase = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
       const res = await fetch(`${apiBase}/chat/summary-hf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -554,7 +588,7 @@ export default function SummaryPage() {
   };
 
   const handlePublishMQuery = async () => {
-    if (!mquery && !loadscript) { setPublishStatus("error"); setPublishMessage("No M Query available. Click 'Convert to MQuery' first."); return; }
+    if (!mquery && !loadscript) { setPublishStatus("error"); setPublishMessage("No M Query available. Click 'Convert to M Query' first."); return; }
     try {
       setPublishingMQuery(true);
       let masterRowCount = totalRows || (rows?.length || 0);
@@ -567,7 +601,7 @@ export default function SummaryPage() {
         try {
           const relMeta = await fetchTableDataSimple(appId, relTable).catch(() => null);
           totalRowsAllTables += relMeta?.row_count || relMeta?.rowCount || relMeta?.no_of_rows || 0;
-        } catch (e) {}
+        } catch (e) { }
       }
       if (isCsvLoadscript && isValidUrl && dataSourcePath.trim()) {
         const updatedHistory = [dataSourcePath, ...urlHistory.filter(url => url !== dataSourcePath)].slice(0, 10);
@@ -579,15 +613,36 @@ export default function SummaryPage() {
       navigate("/publish", {
         state: {
           appId, selectedTable, publishMethod: "M_QUERY", showWorkflow: true,
-          tableCount: relatedTablesCount, totalRows: totalRowsAllTables, rowCount: totalRowsAllTables,
+          tableCount: tables.length > 0 ? tables.length : relatedTablesCount, totalRows: totalRowsAllTables, rowCount: totalRowsAllTables,
           columns: rows && rows.length > 0 ? Object.keys(rows[0]) : [],
-          mqueryData: { dataset_name: selectedTable || "Qlik_Dataset", combined_mquery: mquery || "", raw_script: mquery ? "" : loadscript, data_source_path: dataSourcePath?.trim() || "" },
+          mqueryData: { dataset_name: selectedTable || "Qlik_Dataset", combined_mquery: mquery || "", raw_script: loadscript || "", data_source_path: dataSourcePath?.trim() || "", app_id: appId },
         },
       });
     } catch (error: any) {
       setPublishStatus("error");
       setPublishMessage(`Failed to prepare publishing: ${error.message || "Unknown error"}`);
       setPublishingMQuery(false);
+    }
+  };
+
+  const handleDownloadApplicationBrd = async () => {
+    try {
+      if (applicationBrdHtml && applicationBrdLoadedAppId === appId) {
+        downloadHtmlFile(applicationBrdHtml, applicationBrdFileName || `${appName}_BRD.html`);
+        return;
+      }
+
+      setApplicationBrdLoading(true);
+      setApplicationBrdError("");
+      const document = await fetchApplicationBrdDocument(appId);
+      setApplicationBrdHtml(document.htmlContent);
+      setApplicationBrdFileName(document.fileName);
+      setApplicationBrdLoadedAppId(appId);
+      downloadHtmlFile(document.htmlContent, document.fileName);
+    } catch (error: any) {
+      setApplicationBrdError(error?.message || "Failed to download the application specification document.");
+    } finally {
+      setApplicationBrdLoading(false);
     }
   };
 
@@ -667,8 +722,7 @@ export default function SummaryPage() {
     return arr;
   }, [filteredTables, masterMap, mainTable, relations]);
 
-  const isSelectionMaster = !!(selectedTable && isMasterTable(selectedTable));
-  const isExportAllowed = Boolean(selectedTable && (isSelectionMaster || !isRelatedTable(selectedTable)));
+  const isExportAllowed = Boolean(selectedTable);
 
   const prepareAndNavigateToExport = async (tableToExport?: string) => {
     setExporting(true);
@@ -707,11 +761,25 @@ export default function SummaryPage() {
         } catch (e) { masterRowCount = (masterRows || []).length; }
       }
 
-      const prefix = sel && sel.includes("_") ? sel.split("_")[0] : null;
-      const candidateNames = (tables || []).map((t) => (typeof t === "string" ? t : t?.name)).filter(Boolean) as string[];
-      let related: string[] = [];
-      if (mainTable && sel === mainTable && relations && relations[mainTable]) related = relations[mainTable].slice();
-      else if (prefix) related = candidateNames.filter(n => n.startsWith(prefix + "_") && n !== sel).filter(n => shareFields(sel, n));
+      let related: string[] = collectAllRelated(sel);
+      if (related.length === 0) {
+        const prefix = sel && sel.includes("_") ? sel.split("_")[0] : null;
+        const candidateNames = (tables || [])
+          .map((t) => (typeof t === "string" ? t : t?.name))
+          .filter(Boolean) as string[];
+        if (prefix) {
+          related = candidateNames
+            .filter(n => n.startsWith(prefix + "_") && n !== sel)
+            .filter(n => shareFields(sel, n));
+        }
+      }
+
+      // Publish the full visible app model, not just the first detected related subset.
+      // This prevents important bridge/fact tables like Final_Activity from being omitted.
+      const allVisibleTableNames = (sortedFilteredTables.length ? sortedFilteredTables : tables)
+        .map((t) => (typeof t === "string" ? t : t?.name))
+        .filter(Boolean) as string[];
+      related = allVisibleTableNames.filter((name) => name !== sel);
 
       const headers = masterRows.length > 0 ? Object.keys(masterRows[0]) : [];
       const csv = [headers.join(","), ...masterRows.map((r: any) => headers.map((h) => `"${r[h] ?? ""}"`).join(","))].join("\n");
@@ -746,7 +814,16 @@ export default function SummaryPage() {
       const selectedData: any[] = [];
       const csvPayloads: Record<string, string> = { migration_csv_0: csv };
       const daxPayloads: Record<string, string> = { migration_dax: daxContent };
-      selectedData.push({ name: sel, data: { name: sel, rows: masterRows || [], summary }, actualRowCount: masterRowCount });
+      selectedData.push({
+        name: sel,
+        data: {
+          name: sel,
+          rows: masterRows || [],
+          summary,
+          columns: (masterRows && masterRows.length > 0) ? Object.keys(masterRows[0]) : [],
+        },
+        actualRowCount: masterRowCount,
+      });
 
       for (let idx = 0; idx < related.length; idx++) {
         const relName = related[idx];
@@ -757,11 +834,40 @@ export default function SummaryPage() {
           const relRows = await fetchTableData(appId, relName, relLimit);
           const { generateSummaryFromData } = await import("../api/qlikApi");
           const relSummary = generateSummaryFromData(relRows, relName);
-          selectedData.push({ name: relName, data: { name: relName, rows: relRows, summary: relSummary }, actualRowCount: relTotal });
+          selectedData.push({
+            name: relName,
+            data: {
+              name: relName,
+              rows: relRows,
+              summary: relSummary,
+              columns: (relRows && relRows.length > 0)
+                ? Object.keys(relRows[0])
+                : ((relMeta?.columns as string[]) || []),
+            },
+            actualRowCount: relTotal,
+          });
           const relHeaders = relRows.length > 0 ? Object.keys(relRows[0]) : [];
           const relCsv = [relHeaders.join(","), ...relRows.map((r: any) => relHeaders.map((h) => `"${r[h] ?? ""}"`).join(","))].join("\n");
           csvPayloads[`migration_csv_${idx + 1}`] = relCsv;
-        } catch (e) { console.warn("Failed to load related table:", relName, e); }
+        } catch (e) {
+          console.warn("Failed to load related table:", relName, e);
+          // Keep table in the publish set with schema-only payload so relationships are not lost.
+          try {
+            const relMeta = await fetchTableDataSimple(appId, relName).catch(() => null);
+            selectedData.push({
+              name: relName,
+              data: {
+                name: relName,
+                rows: [],
+                summary: null,
+                columns: ((relMeta?.columns as string[]) || []),
+              },
+              actualRowCount: relMeta?.row_count || relMeta?.rowCount || relMeta?.no_of_rows || 0,
+            });
+          } catch (_metaErr) {
+            // If metadata is also unavailable, skip as last resort.
+          }
+        }
       }
 
       setTableLoading(false);
@@ -830,13 +936,11 @@ export default function SummaryPage() {
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tableName}</span>
               </span>
-              {!related && (
-                <button
-                  className="inline-export"
-                  title={master ? "Export master + related tables" : "Export this standalone table"}
-                  onClick={(e) => { e.stopPropagation(); prepareAndNavigateToExport(tableName); }}
-                />
-              )}
+              <button
+                className="inline-export"
+                title="Export this table with all related tables"
+                onClick={(e) => { e.stopPropagation(); prepareAndNavigateToExport(tableName); }}
+              />
               {isNew && <span className="new-badge">NEW</span>}
             </div>
           );
@@ -853,15 +957,14 @@ export default function SummaryPage() {
           <>
             {/* HEADER */}
             <div className="header">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: "20px" }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#1f2937', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="summary-header-row">
+                <div className="summary-header-main">
+                  <h2 className="summary-page-title">
                     {selectedTable}
-                    {isSelectionMaster && <span className="master-indicator" style={{ marginLeft: '0px' }}>master</span>}
                   </h2>
 
-                  {/* ── TAB BAR: Source Types · Summary · ER Diagram ── */}
-                  <div style={{ display: "flex", gap: "14px", borderBottom: "none", marginLeft: '12px', borderRadius: '6px', padding: '4px' }}>
+                  {/* ── TAB BAR: Source Types · Summary · Application Spec · ER Diagram ── */}
+                  <div className="summary-tab-bar">
 
                     {/* Source Types Tab */}
                     <button
@@ -879,6 +982,14 @@ export default function SummaryPage() {
                       onClick={() => setActiveTab("summary")}
                     >
                       📊 Summary
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`tab-button tab-button--appSpec ${activeTab === "appSpec" ? "active" : ""}`}
+                      onClick={() => setActiveTab("appSpec")}
+                    >
+                      📄 App BRD
                     </button>
 
                     {/* ER Diagram Tab — replaces old Schema modal button */}
@@ -904,45 +1015,87 @@ export default function SummaryPage() {
                 <div className="tab-content source-types-tab">
                   <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 16 }}>
 
-                    {/* Database card */}
-                    <div
-                      onClick={() => setSourceTypesTab('database')}
-                      style={{
-                        flex: '1 1 260px', minWidth: 260,
-                        border: sourceTypesTab === 'database' ? '2px solid #0ea5e9' : '1px solid #e5e7eb',
-                        borderRadius: 12, padding: 16, cursor: 'pointer',
-                        background: sourceTypesTab === 'database' ? 'rgba(14,165,233,0.08)' : '#fff',
-                        boxShadow: sourceTypesTab === 'database' ? '0 8px 20px rgba(14,165,233,0.12)' : '0 4px 12px rgba(0,0,0,0.04)',
-                        transition: 'all 0.2s ease', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <span style={{ width: 18, height: 18, borderRadius: '50%', border: sourceTypesTab === 'database' ? '2px solid #0ea5e9' : '2px solid #cbd5e1', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: sourceTypesTab === 'database' ? '#0ea5e9' : 'transparent' }}>
-                            {sourceTypesTab === 'database' && <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />}
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#e0f2fe', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🗄️</div>
-                            <div>
-                              <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937' }}>Database</div>
-                              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Direct ODBC/JDBC connection</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <p style={{ marginTop: 12, fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
-                        Connect directly to the source database via ODBC/JDBC. Schema is inferred automatically. Best for live systems where data lives in SQL Server, Oracle, or Snowflake.
-                      </p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#1f2937' }}>ODBC / JDBC</span>
-                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#1f2937' }}>Live schema</span>
-                        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#1f2937' }}>SQL Server • Oracle</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }} />
-                    </div>
+                    {/* Database card - DISABLED (Coming Soon) */}
+{/* To re-enable: remove the `isDatabaseEnabled` flag or set it to true */}
+{(() => {
+  const isDatabaseEnabled = false; // 🔧 Set to true to enable the Database card
+
+  return (
+    <div
+      className="source-card"
+      onClick={() => isDatabaseEnabled && setSourceTypesTab('database')}
+      style={{
+        flex: '1 1 260px', minWidth: 260,
+        border: !isDatabaseEnabled
+          ? '1px solid #e5e7eb'
+          : sourceTypesTab === 'database' ? '2px solid #0ea5e9' : '1px solid #e5e7eb',
+        borderRadius: 12, padding: 16,
+        cursor: isDatabaseEnabled ? 'pointer' : 'not-allowed',
+        background: !isDatabaseEnabled
+          ? '#f9fafb'
+          : sourceTypesTab === 'database' ? 'rgba(14,165,233,0.08)' : '#fff',
+        boxShadow: !isDatabaseEnabled
+          ? 'none'
+          : sourceTypesTab === 'database' ? '0 8px 20px rgba(14,165,233,0.12)' : '0 4px 12px rgba(0,0,0,0.04)',
+        transition: 'all 0.2s ease', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+        opacity: isDatabaseEnabled ? 1 : 0.55,
+        pointerEvents: isDatabaseEnabled ? 'auto' : 'none',
+      }}
+    >
+      {/* Coming Soon badge */}
+      {!isDatabaseEnabled && (
+        <div style={{
+          position: 'absolute', top: 12, right: 12,
+          background: '#f3f4f6', color: '#9ca3af',
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
+          padding: '3px 8px', borderRadius: 999,
+          border: '1px solid #e5e7eb',
+          textTransform: 'uppercase',
+        }}>
+          Coming Soon
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{
+            width: 18, height: 18, borderRadius: '50%',
+            border: isDatabaseEnabled && sourceTypesTab === 'database' ? '2px solid #0ea5e9' : '2px solid #cbd5e1',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isDatabaseEnabled && sourceTypesTab === 'database' ? '#0ea5e9' : 'transparent',
+          }}>
+            {isDatabaseEnabled && sourceTypesTab === 'database' && (
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
+            )}
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🗄️</div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: isDatabaseEnabled ? '#1f2937' : '#9ca3af' }}>Database</div>
+              <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>Direct ODBC/JDBC connection</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p style={{ marginTop: 12, fontSize: 13, color: '#9ca3af', lineHeight: 1.5 }}>
+        Connect directly to the source database via ODBC/JDBC. Schema is inferred automatically. Best for live systems where data lives in SQL Server, Oracle, or Snowflake.
+      </p>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#d1d5db' }}>ODBC / JDBC</span>
+        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#d1d5db' }}>Live schema</span>
+        <span style={{ padding: '4px 10px', borderRadius: 999, background: '#f3f4f6', fontSize: 11, fontWeight: 600, color: '#d1d5db' }}>SQL Server • Oracle</span>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }} />
+    </div>
+  );
+})()}
 
                     {/* Scripts card */}
                     <div
+                      className="source-card"
                       onClick={() => setSourceTypesTab('scripts')}
                       style={{
                         flex: '1 1 260px', minWidth: 260,
@@ -984,6 +1137,7 @@ export default function SummaryPage() {
 
                     {/* Export CSV card */}
                     <div
+                      className="source-card"
                       onClick={() => setSourceTypesTab('csv')}
                       style={{
                         flex: '1 1 260px', minWidth: 260,
@@ -1023,14 +1177,14 @@ export default function SummaryPage() {
                           onClick={() => prepareAndNavigateToExport()}
                           style={{ padding: '10px 14px', fontWeight: 600 }}
                         >
-                          Export as CSV
+                          Go to Export
                         </button>
                       </div>
                     </div>
                   </div>
 
                   {!sourceTypesTab && (
-                    <div style={{ padding: 14, borderRadius: 10, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569', marginTop: 8 }}>
+                    <div style={{ padding: 14, borderRadius: 10, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569' }}>
                       Select a source type above to continue.
                     </div>
                   )}
@@ -1042,6 +1196,40 @@ export default function SummaryPage() {
                 <div className="tab-content summary-tab">
                   <div className="summary-div pie-chart-div">
                     <SummaryReport summary={summary} rows={rows} aiBullets={aiSummaryBullets} aiLoading={aiSummaryLoading} />
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "appSpec" && (
+                <div className="tab-content app-spec-tab">
+                  <div className="app-spec-shell">
+                    <div className="app-spec-single-tab" aria-label="Active BRD tab">
+                      {appName}
+                    </div>
+                  </div>
+
+                  <div className="app-spec-document-panel">
+                    <div className="app-spec-document-content">
+                      <p>
+                        Disclaimer: This document provides a high-fidelity baseline of the QlikAI Accelerator's architecture, integration design, and migration capabilities, generated through automated analysis of the application source code.It is designed to significantly accelerate stakeholder comprehension and enterprise adoption planning by providing a structured, AI-assisted foundation for Qlik Sense to Power BI modernization. As this document reflects architectural implementation derived from code analysis rather than original business design , it should be treated as a collaborative draft. We encourage Subject Matter Experts (SMEs), BI Engineers, and Enterprise Architects to review, refine, and validate and enrich these specifications to ensure full alignment with your organization's migration goals, governance requirements, and target-state Power BI architecture.
+                      </p>
+                      <div className="app-spec-actions">
+                        <button
+                          type="button"
+                          className="app-spec-download-btn"
+                          onClick={handleDownloadApplicationBrd}
+                          disabled={applicationBrdLoading || !appId}
+                        >
+                          {applicationBrdLoading ? "Generating..." : "Download BRD"}
+                        </button>
+                      </div>
+
+                      {applicationBrdError && (
+                        <div className="app-spec-inline-error" role="alert">
+                          {applicationBrdError}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1126,7 +1314,7 @@ export default function SummaryPage() {
                               className="convert-btn"
                               style={{ opacity: (isCsvLoadscript && !isValidUrl) ? 0.5 : 1, cursor: (isCsvLoadscript && !isValidUrl) ? "not-allowed" : "pointer" }}
                             >
-                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to MQuery"}
+                              {convertingToMquery ? "⏳ Converting..." : "🔄 Convert to M Query"}
                             </button>
                           </>
                         )}
@@ -1147,7 +1335,7 @@ export default function SummaryPage() {
                               </button>
                               <button onClick={handlePublishMQuery} disabled={publishingMQuery} className="publish-pbi-btn">
                                 {publishingMQuery ? (<><span className="publish-spinner" />Publishing…</>) : (
-                                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Publish MQuery to PowerBI</>
+                                  <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>Publish MQuery to PowerBI</>
                                 )}
                               </button>
                             </div>
@@ -1259,18 +1447,7 @@ export default function SummaryPage() {
                     </div>
                   )}
 
-                  {activeTab === "summary" && (
-                    <div className="bottom-actions">
-                      <button
-                        className="continue-export-btn"
-                        disabled={!isExportAllowed || tableLoading}
-                        onClick={() => prepareAndNavigateToExport()}
-                        title={!selectedTable ? "Select a table first" : isRelatedTable(selectedTable) ? "Select master table or standalone table to export" : "Proceed to Export page"}
-                      >
-                        Continue to Export
-                      </button>
-                    </div>
-                  )}
+                  {/* "Continue to Export" is intentionally hidden on Summary tab to match UX requirement */}
                 </>
               )}
             </div>
@@ -1298,10 +1475,10 @@ function ERDiagramView({ tables, relations, mainTable }: ERDiagramViewProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   const factKeywords = ["fact", "history", "transaction", "detail", "sales", "order"];
-  const dimKeywords  = ["master", "dim", "lookup", "ref", "details"];
+  const dimKeywords = ["master", "dim", "lookup", "ref", "details"];
 
   const isFact = (name: string) => factKeywords.some(k => name.toLowerCase().includes(k));
-  const isDim  = (name: string) => dimKeywords.some(k => name.toLowerCase().includes(k));
+  const isDim = (name: string) => dimKeywords.some(k => name.toLowerCase().includes(k));
 
   const buildErSource = (): string => {
     let src = "erDiagram\n";
@@ -1328,17 +1505,17 @@ function ERDiagramView({ tables, relations, mainTable }: ERDiagramViewProps) {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const aIsDim  = isDim(a);
-        const bIsDim  = isDim(b);
+        const aIsDim = isDim(a);
+        const bIsDim = isDim(b);
         const aIsFact = isFact(a) || a === mainTable;
         const bIsFact = isFact(b) || b === mainTable;
 
         let many: string, one: string;
-        if (aIsDim && !bIsDim)       { one = a; many = b; }
-        else if (bIsDim && !aIsDim)  { one = b; many = a; }
-        else if (aIsFact && !bIsFact){ many = a; one = b; }
-        else if (bIsFact && !aIsFact){ many = b; one = a; }
-        else                          { many = a; one = b; }
+        if (aIsDim && !bIsDim) { one = a; many = b; }
+        else if (bIsDim && !aIsDim) { one = b; many = a; }
+        else if (aIsFact && !bIsFact) { many = a; one = b; }
+        else if (bIsFact && !aIsFact) { many = b; one = a; }
+        else { many = a; one = b; }
 
         src += `  ${many} }o--|| ${one} : ""\n`;
       }
@@ -1443,49 +1620,133 @@ interface SummaryReportProps {
 
 const PieChart: React.FC<{ data: Record<string, number>; title: string }> = ({ data, title }) => {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const total = entries.reduce((sum, [_, val]) => sum + val, 0);
-  const colors = ["#FF6B6B","#4ECDC4","#45B7D1","#FFA07A","#98D8C8","#F7DC6F","#BB8FCE","#85C1E2"];
-  let currentAngle = 0;
+  const total = entries.reduce((sum, [, val]) => sum + val, 0);
+  const colors = ["#FF4E50", "#FC913A", "#F9D62E", "#1DC8CD", "#7B68EE", "#EE4B9E", "#00C851", "#2196F3"];
+
+  const cx = 100, cy = 100, R = 95;
+
+  let angle = -90;
   const slices = entries.map(([label, value], i) => {
-    const percentage = (value / total) * 100;
-    const sliceAngle = (percentage / 100) * 360;
-    const startAngle = currentAngle;
-    const endAngle = currentAngle + sliceAngle;
-    const startRad = (startAngle - 90) * (Math.PI / 180);
-    const endRad = (endAngle - 90) * (Math.PI / 180);
-    const x1 = 100 + 80 * Math.cos(startRad); const y1 = 100 + 80 * Math.sin(startRad);
-    const x2 = 100 + 80 * Math.cos(endRad);   const y2 = 100 + 80 * Math.sin(endRad);
-    const largeArc = sliceAngle > 180 ? 1 : 0;
-    const pathData = [`M 100 100`, `L ${x1} ${y1}`, `A 80 80 0 ${largeArc} 1 ${x2} ${y2}`, `Z`].join(" ");
-    const labelAngle = (startAngle + endAngle) / 2;
-    const labelRad = (labelAngle - 90) * (Math.PI / 180);
-    const labelX = 100 + 50 * Math.cos(labelRad); const labelY = 100 + 50 * Math.sin(labelRad);
-    currentAngle = endAngle;
-    return { pathData, color: colors[i % colors.length], label, percentage, value, labelX, labelY };
+    const pct = value / total;
+    const sweep = pct * 360;
+    const startRad = (angle - 90) * Math.PI / 180;
+    const endRad = (angle + sweep - 90) * Math.PI / 180;
+    const x1 = cx + R * Math.cos(startRad), y1 = cy + R * Math.sin(startRad);
+    const x2 = cx + R * Math.cos(endRad), y2 = cy + R * Math.sin(endRad);
+    const largeArc = sweep > 180 ? 1 : 0;
+    const midRad = ((angle + sweep / 2) - 90) * Math.PI / 180;
+    const lx = cx + R * 0.62 * Math.cos(midRad);
+    const ly = cy + R * 0.62 * Math.sin(midRad);
+    const tipX = cx + (R + 38) * Math.cos(midRad);
+    const tipY = cy + (R + 38) * Math.sin(midRad);
+    const pathData = `M${cx} ${cy} L${x1} ${y1} A${R} ${R} 0 ${largeArc} 1 ${x2} ${y2}Z`;
+    angle += sweep;
+    return { pathData, label, value, pct, lx, ly, tipX, tipY, midRad, color: colors[i % colors.length], delay: i * 0.06 };
   });
+
   return (
     <div className="pie-chart-container">
+      <style>{`
+        @keyframes slicePop {
+          from { opacity: 0; transform: scale(0.5); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes pieFadeUp {
+          from { opacity: 0; transform: translateY(5px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .pie-slice-g {
+          cursor: pointer;
+          transform-origin: 100px 100px;
+          animation: slicePop 0.5s cubic-bezier(.34,1.56,.64,1) both;
+        }
+        .pie-slice-g path {
+          transition: opacity 0.18s;
+        }
+        .pie-slice-g:hover path { opacity: 0.82; }
+        .pie-callout-line {
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .pie-callout-tip {
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .pie-slice-g:hover .pie-callout-line { opacity: 1; }
+        .pie-slice-g:hover .pie-callout-tip  { opacity: 1; }
+        .pie-legend-animated {
+          animation: pieFadeUp 0.4s ease both;
+        }
+      `}</style>
+
       <div className="pie-chart-content">
         <div className="pie-chart-left">
           {title && <h4>{title}</h4>}
-          <svg viewBox="0 0 200 200" className="pie-svg">
+          <svg viewBox="0 0 200 200" className="pie-svg" style={{ overflow: "visible" }}>
             {slices.map((slice, i) => (
-              <g key={i}>
-                <path d={slice.pathData} fill={slice.color} stroke="white" strokeWidth="2" />
-                {slice.percentage > 8 && (
-                  <text x={slice.labelX} y={slice.labelY} textAnchor="middle" dominantBaseline="middle" className="pie-label">
-                    {slice.percentage.toFixed(0)}%
+              <g
+                key={i}
+                className="pie-slice-g"
+                style={{ animationDelay: `${slice.delay}s` } as React.CSSProperties}
+              >
+                <path
+                  d={slice.pathData}
+                  fill={slice.color}
+                  stroke="#fff"
+                  strokeWidth="2.5"
+                />
+                {/* percentage label inside slice */}
+                {slice.pct > 0.09 && (
+                  <text
+                    x={slice.lx} y={slice.ly}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="#fff"
+                    fontSize={11}
+                    fontWeight={700}
+                    fontFamily="sans-serif"
+                  >
+                    {(slice.pct * 100).toFixed(0)}%
                   </text>
                 )}
+                {/* hover callout line */}
+                {/* <line
+                  className="pie-callout-line"
+                  x1={slice.lx} y1={slice.ly}
+                  x2={slice.tipX} y2={slice.tipY}
+                  stroke={slice.color}
+                  strokeWidth="1.5"
+                /> */}
+                {/* hover callout tip label */}
+                {/* <text
+                  className="pie-callout-tip"
+                  x={slice.tipX + (Math.cos(slice.midRad) > 0 ? 5 : -5)}
+                  y={slice.tipY}
+                  textAnchor={Math.cos(slice.midRad) > 0 ? "start" : "end"}
+                  dominantBaseline="central"
+                  fill={slice.color}
+                  fontSize={10}
+                  fontWeight={600}
+                  fontFamily="sans-serif"
+                >
+                  {(slice.pct * 100).toFixed(1)}%
+                </text> */}
               </g>
             ))}
           </svg>
         </div>
+
         <div className="pie-legend">
           {slices.map((slice, i) => (
-            <div key={i} className="legend-item">
-              <span className="legend-color" style={{ backgroundColor: slice.color }}></span>
-              <span className="legend-text">{slice.label.substring(0, 20)}: {slice.percentage.toFixed(1)}%</span>
+            <div
+              key={i}
+              className="legend-item pie-legend-animated"
+              style={{ animationDelay: `${i * 0.07 + 0.3}s` } as React.CSSProperties}
+            >
+              <span className="legend-color" style={{ backgroundColor: slice.color }} />
+              <span className="legend-text">
+                {slice.label.substring(0, 20)}: {(slice.pct * 100).toFixed(1)}%
+              </span>
             </div>
           ))}
         </div>

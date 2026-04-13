@@ -5,6 +5,7 @@
 import websocket
 import json
 import ssl
+import socket
 import jwt
 import os
 import time
@@ -120,6 +121,7 @@ class QlikWebSocketClient:
     
     def connect_to_app(self, app_id: str) -> bool:
         """Connect to a specific app via WebSocket"""
+        last_error = None
         try:
             # Clean up tenant URL
             tenant_host = self.tenant_url.replace('https://', '').replace('http://', '')
@@ -141,16 +143,36 @@ class QlikWebSocketClient:
             
             if self.user_id:
                 headers["X-Qlik-User"] = f"UserDirectory={self.user_directory};UserId={self.user_id}"
-            
-            self.ws.connect(ws_url, header=headers)
-            self.connected = True
-            print("✓ WebSocket connected successfully")
+
+            for attempt in range(1, 4):
+                try:
+                    self.ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
+                    self.ws.settimeout(10)
+                    self.ws.connect(ws_url, header=headers, timeout=10)
+                    self.connected = True
+                    print("✓ WebSocket connected successfully")
+                    break
+                except (TimeoutError, socket.timeout, websocket.WebSocketTimeoutException, OSError) as exc:
+                    last_error = exc
+                    self.connected = False
+                    try:
+                        if self.ws:
+                            self.ws.close()
+                    except Exception:
+                        pass
+                    print(f"⚠️  WebSocket connect attempt {attempt}/3 failed: {exc}")
+                    if attempt == 3:
+                        raise
+                    time.sleep(attempt)
             
             # Open the app
             return self._open_app(app_id)
             
         except Exception as e:
-            print(f"✗ Connection error: {str(e)}")
+            if last_error is not None:
+                print(f"✗ Connection error after retries: {str(last_error)}")
+            else:
+                print(f"✗ Connection error: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
@@ -1137,6 +1159,49 @@ class QlikWebSocketClient:
             except:
                 pass
     
+    def get_data_model(self, app_id: str) -> Dict[str, Any]:
+        """
+        Public method called by LoadScriptFetcher.get_data_model_fields().
+
+        The fetcher expects:
+            { 'success': True, 'tables': [{'name': str, 'fields': [{'name': str}, ...]}, ...] }
+
+        Previously this method did not exist — fetcher caught AttributeError silently,
+        returned empty qlik_fields_map {}, and every LOAD * table published with zero columns.
+
+        This connects to the app, calls _get_tables_from_data_model() (GetTablesAndKeys),
+        normalises the result into the expected shape, then closes the connection.
+        """
+        try:
+            print(f"[get_data_model] Connecting to app {app_id[:8]}... for GetTablesAndKeys")
+
+            if not self.connect_to_app(app_id):
+                return {"success": False, "error": "Could not connect to app", "tables": []}
+
+            raw = self._get_tables_from_data_model()
+
+            if not raw.get("success"):
+                return {"success": False, "error": raw.get("error", "GetTablesAndKeys failed"), "tables": []}
+
+            # _get_tables_from_data_model() already builds:
+            #   { 'name': str, 'fields': [{'name': str, 'is_key': bool, ...}] }
+            # which is exactly what the fetcher reads — pass through unchanged.
+            tables = raw.get("tables", [])
+            print(f"[get_data_model] SUCCESS: {len(tables)} tables from GetTablesAndKeys")
+            for t in tables:
+                print(f"   {t['name']} -> {len(t.get('fields', []))} fields")
+
+            return {"success": True, "tables": tables}
+
+        except Exception as exc:
+            print(f"[get_data_model] ERROR: {exc}")
+            return {"success": False, "error": str(exc), "tables": []}
+        finally:
+            try:
+                self.close()
+            except Exception:
+                pass
+
     def close(self):
         """Close WebSocket connection"""
         if self.ws:

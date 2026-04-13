@@ -121,10 +121,7 @@ export default function ConnectPage() {
       sessionStorage.setItem("tenant_url", url);
       sessionStorage.setItem("connected", "true");
       sessionStorage.setItem("connection_method", connectionMethod);
-
-      if (apiKey.trim()) {
-        sessionStorage.setItem("qlik_api_key", apiKey.trim());
-      }
+      sessionStorage.setItem("qlik_api_key", apiKey.trim());
 
       if (cookie.trim()) {
         sessionStorage.setItem("qlik_session_cookie", cookie.trim());
@@ -135,8 +132,9 @@ export default function ConnectPage() {
       navigate("/apps");
     } catch (err: any) {
       setError(
+        err?.message ||
         err.response?.data?.detail ||
-          "Connection failed. Please check your credentials and try again."
+        "Connection failed. Please check your credentials and try again."
       );
     } finally {
       setLoading(false);
@@ -299,7 +297,7 @@ export default function ConnectPage() {
           <button
             onClick={handleConnect}
             disabled={!canConnect || loading}
-            style={ {
+            style={{
               opacity: canConnect ? 1 : 0.5,
               cursor: canConnect ? "pointer" : "not-allowed",
             }}
