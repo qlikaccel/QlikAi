@@ -73,7 +73,7 @@
   align-items: center;
   gap: 14px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #ffe4d5;
+  border-bottom: 1px solid #ece6e3;
   margin-bottom: 10px;
 }
 
@@ -115,7 +115,7 @@
 
 .card-header-text p {
   margin: 3px 0 0;
-  color: #1f2937;
+  color: #556174;
   font-size: 11px;
   line-height: 1.4;
 }

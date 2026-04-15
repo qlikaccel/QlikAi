@@ -108,7 +108,8 @@ export default function ConnectPage() {
         </div>
 
         <div className="field-group">
-          <label htmlFor="alteryx-url">Alteryx Cloud Base URL</label>
+          {/* <label htmlFor="alteryx-url">Alteryx Cloud Base URL</label> */}
+          <label htmlFor="alteryx-url">Workspace Name</label>
           <input
             id="alteryx-url"
             type="text"
