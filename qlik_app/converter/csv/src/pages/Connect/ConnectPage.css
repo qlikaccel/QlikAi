@@ -13,7 +13,7 @@
   padding: 14px 24px;
   width: 100%;
   max-width: 500px;
-  border: 1px solid #ffd8c4;
+  border: 1px solid #ece6e3;
   box-shadow: 0 16px 36px rgba(223, 101, 27, 0.12);
   animation: fadeIn 0.5s ease-out;
   margin-bottom: 16px;
@@ -110,12 +110,12 @@
   font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.3px;
-  color: #8f2d00;
+  color: #3730a3;
 }
 
 .card-header-text p {
   margin: 3px 0 0;
-  color: #7d4b32;
+  color: #1f2937;
   font-size: 11px;
   line-height: 1.4;
 }
@@ -210,19 +210,18 @@ input[type="text"].invalid { border-color: #fc8181; background: #fff5f5; }
 .field-group input[type="password"] {
   width: 100%;
   padding: 8px 12px;
-  border: 1.5px solid #ffd8c4;
+  border: 1.5px solid #3730a3;
   border-radius: 8px;
   font-size: 13px;
   transition: all 0.2s ease;
   box-sizing: border-box;
-  background: #fffaf7;
 }
+
 
 .field-group input[type="text"]:hover,
 .field-group input[type="password"]:hover {
-  border-color: #ff6d2d;
+  border-color: #3730a3;
   background: white;
-  box-shadow: 0 0 0 3px rgba(255, 109, 45, 0.14);
 }
 
 .field-group input[type="text"]::placeholder,
@@ -264,8 +263,8 @@ input[type="text"].invalid { border-color: #fc8181; background: #fff5f5; }
 }
 
 .checkbox input[type="checkbox"]:checked {
-  background: #ff6d2d;
-  border-color: #ff6d2d;
+  background: #3730a3;
+  border-color: #3730a3;
 }
 
 .checkbox input[type="checkbox"]:checked::after {
@@ -295,7 +294,7 @@ input[type="text"].invalid { border-color: #fc8181; background: #fff5f5; }
 
 .actions button {
   width: 100%;
-  background: linear-gradient(135deg, #ff7a3d 0%, #ff5f1f 100%) !important;
+  background: #3730a3;
   color: white !important;
   border: none !important;
   padding: 10px 0;
@@ -309,14 +308,12 @@ input[type="text"].invalid { border-color: #fc8181; background: #fff5f5; }
   justify-content: center;
   gap: 8px;
   letter-spacing: 0.3px;
-  box-shadow: 0 6px 18px rgba(255, 109, 45, 0.28);
   -webkit-appearance: none;
   appearance: none;
 }
 
 .actions button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(255, 109, 45, 0.38);
 }
 
 .actions button:active:not(:disabled) { transform: translateY(0); }
