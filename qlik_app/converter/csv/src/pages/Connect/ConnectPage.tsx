@@ -6,6 +6,7 @@ import { useWizard } from "../../context/WizardContext";
 export default function ConnectPage() {
   // ── Alteryx state ────────────────────────────────────────────────────────
   const [alteryxWorkspaceName, setAlteryxWorkspaceName] = useState("");
+  const [workspaceTouched, setWorkspaceTouched] = useState(false);
 
   // ── Shared state ─────────────────────────────────────────────────────────
   const [error, setError] = useState("");
@@ -20,7 +21,9 @@ export default function ConnectPage() {
     if (savedAlteryxWorkspace) setAlteryxWorkspaceName(savedAlteryxWorkspace);
   }, []);
 
-  const canConnectAlteryx = alteryxWorkspaceName.trim().length > 0;
+  const trimmedWorkspaceName = alteryxWorkspaceName.trim();
+  const isWorkspaceNameValid = /^[^-]+-[^-]+-[^-]+-(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{4}$/.test(trimmedWorkspaceName);
+  const canConnectAlteryx = isWorkspaceNameValid;
 
   const handleConnect = async () => {
     if (!canConnectAlteryx) return;
@@ -78,12 +81,19 @@ export default function ConnectPage() {
             type="text"
             placeholder="e.g. sorim-alteryx-trial-2hcg"
             value={alteryxWorkspaceName}
-            onChange={(e) => { setAlteryxWorkspaceName(e.target.value); setError(""); }}
+            onChange={(e) => {
+              setAlteryxWorkspaceName(e.target.value);
+              setError("");
+            }}
+            onBlur={() => setWorkspaceTouched(true)}
             disabled={loading}
           />
-          <p className="field-hint">
+          {/* <p className="field-hint">
             Visible in the top-right corner of Alteryx One
-          </p>
+          </p> */}
+          {workspaceTouched && trimmedWorkspaceName && !isWorkspaceNameValid && (
+            <p className="field-error">Enter a valid workspace name. The last segment must be exactly 4 alphanumeric characters with both letters and numbers.</p>
+          )}
         </div>
 
         {error && (

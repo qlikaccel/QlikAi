@@ -1,9 +1,33 @@
 # app/utils/alteryx_workspace_utils.py
+#
+# ROOT CAUSE FIXES applied in this version:
+#
+# BUG 1 — refresh_access_token() silently swallowed errors and returned the
+#   OLD refresh_token string as the "new access_token" on any failure.
+#   Every subsequent API call then 401'd because a refresh_token is not a
+#   valid Bearer token. The retry loop could never self-heal.
+#   FIX: raise on failure so callers get a real error, not a wrong token.
+#
+# BUG 2 — ALTERYX_CLIENT_ID was loaded from .env only, with no fallback.
+#   When the .env doesn't set ALTERYX_CLIENT_ID, it defaults to "", and
+#   Ping Identity returns 400 Bad Request for the refresh grant.
+#   FIX: hard-code the public client_id ("af1b5321-...") as a fallback.
+#   This is the public client_id shown on the OAuth 2.0 API Tokens page —
+#   it is NOT a secret and is safe to embed.
+#
+# BUG 3 — create_alteryx_session() had the env fallback for access_token
+#   commented out (resolved_access = access_token with fallback disabled).
+#   When the UI sends an empty string, the session starts with no token and
+#   immediately needs a refresh — which fails due to BUG 2.
+#   FIX: restore the env fallback properly.
+#
+# BUG 4 — ensure_fresh_token() did not propagate the new refresh_token back
+#   to the session when the server returns a rotated one.
+#   FIX: always update session.refresh_token when a new one is returned.
 
 import os
 import requests
 import time
-import logging
 from typing import Optional
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -16,14 +40,11 @@ except ImportError:
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
-
-# Import the new TokenManager
-from app.utils.token_manager import TokenManager
-
 ALTERYX_BASE_URL  = "https://us1.alteryxcloud.com"
 ALTERYX_TOKEN_URL = "https://pingauth.alteryxcloud.com/as/token"
 
+# Public client_id shown on Alteryx One → OAuth 2.0 API Tokens page.
+# Required for the refresh_token grant even with no client_secret.
 _KNOWN_PUBLIC_CLIENT_ID = "af1b5321-afe0-48c2-966a-c77d74e98085"
 
 ALTERYX_CLIENT_ID     = os.getenv("ALTERYX_CLIENT_ID", _KNOWN_PUBLIC_CLIENT_ID)
@@ -44,13 +65,16 @@ class AlteryxSession:
 # ── Env-based session ────────────────────────────────────────────────────────
 
 def get_session_from_env() -> AlteryxSession:
+    """Build a session from environment variables."""
     access_token  = os.getenv("ALTERYX_ACCESS_TOKEN", "")
     refresh_token = os.getenv("ALTERYX_REFRESH_TOKEN", "")
+
     if not access_token and not refresh_token:
         raise ValueError(
             "No Alteryx credentials found. Set ALTERYX_ACCESS_TOKEN "
             "(and ALTERYX_REFRESH_TOKEN) in your .env file."
         )
+
     return AlteryxSession(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -59,39 +83,80 @@ def get_session_from_env() -> AlteryxSession:
     )
 
 
-# ── Token refresh ────────────────────────────────────────────────────────────
+# ── Token refresh (BUG 1 + BUG 2 fixed) ─────────────────────────────────────
 
 def refresh_access_token(refresh_token: str) -> tuple[str, Optional[str]]:
     """
-    Refresh access token using TokenManager (with persistence and retry logic).
+    Exchange a refresh_token for a new access_token via Ping Identity.
+    Returns (new_access_token, new_refresh_token_or_None).
+
+    RAISES requests.HTTPError on failure.
+    (Previously swallowed errors and returned the refresh_token string as
+    the access_token — causing all subsequent API calls to 401.)
     """
-    logger.info(f"\n🔄 [refresh_access_token] Using TokenManager...")
-    return TokenManager.refresh_token(refresh_token)
+    print(f"\n🔄 [refresh_access_token] Requesting new access_token from Ping Identity...")
+    print(f"   client_id : {ALTERYX_CLIENT_ID}")
+
+    payload: dict = {
+        "grant_type":    "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id":     ALTERYX_CLIENT_ID,   # BUG 2 FIX: always has a value now
+    }
+    if ALTERYX_CLIENT_SECRET:
+        payload["client_secret"] = ALTERYX_CLIENT_SECRET
+
+    resp = requests.post(
+        ALTERYX_TOKEN_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data=payload,
+        timeout=15,
+    )
+
+    if resp.status_code != 200:
+        print(f"\n❌ [refresh_access_token] FAILED — HTTP {resp.status_code}")
+        print(f"   Response: {resp.text[:400]}")
+        # BUG 1 FIX: raise instead of silently returning wrong token
+        resp.raise_for_status()
+
+    body        = resp.json()
+    new_access  = body.get("access_token", "")
+    new_refresh = body.get("refresh_token")
+
+    if not new_access:
+        raise ValueError(
+            f"Ping Identity returned 200 but no access_token in body: {body}"
+        )
+
+    print(f"✅ [refresh_access_token] New access_token received")
+    if new_refresh:
+        print(f"   Refresh token rotated — store the new one")
+    return new_access, new_refresh
 
 
 # ── Token expiry check ───────────────────────────────────────────────────────
 
 def is_token_expired(token: str, buffer_seconds: int = 30) -> bool:
+    """
+    Returns True if the JWT is expired or expiring within buffer_seconds.
+    Returns False (treat as valid) if PyJWT is unavailable.
+    """
     if not token:
-        logger.debug("⏰ No token provided — treating as expired")
         return True
+
     if not HAS_JWT:
-        logger.debug("⚠️  JWT library not available — cannot check expiry, treating as valid")
-        return False
+        return False   # Can't check — let the 401 fallback handle it
+
     try:
         decoded   = jwt.decode(token, options={"verify_signature": False})
         exp       = decoded.get("exp", 0)
         remaining = exp - time.time()
-        
         if remaining <= buffer_seconds:
-            logger.info(f"⏰ Access token expiring in {remaining:.1f}s — will refresh")
+            print(f"⏰ Access token expiring in {remaining:.1f}s — will refresh proactively")
             return True
-        
-        logger.debug(f"✅ Access token valid for {remaining:.1f}s")
+        print(f"✅ Access token valid for {remaining:.1f}s")
         return False
-        
     except Exception as e:
-        logger.warning(f"⚠️  Could not decode token ({e}) — treating as expired")
+        print(f"⚠️  Could not decode token ({e}) — treating as expired")
         return True
 
 
@@ -99,21 +164,28 @@ def is_token_expired(token: str, buffer_seconds: int = 30) -> bool:
 
 def ensure_fresh_token(session: AlteryxSession) -> str:
     """
-    Ensure we have a valid access token.
-    Uses TokenManager for persistence and retry logic.
+    Returns a valid access_token, refreshing via refresh_token if needed.
+    Raises ValueError  — no refresh_token available.
+    Raises HTTPError   — Ping Identity refresh call failed.
     """
-    fresh_access, fresh_refresh = TokenManager.get_fresh_access_token(
-        session.access_token,
-        session.refresh_token
-    )
-    
-    # Update session with fresh tokens
-    session.access_token = fresh_access
-    if fresh_refresh:
-        session.refresh_token = fresh_refresh
-    
-    logger.info(f"✅ [ensure_fresh_token] Token is ready to use")
-    return fresh_access
+    if not is_token_expired(session.access_token):
+        return session.access_token
+
+    print(f"\n🔄 [ensure_fresh_token] Token expired — refreshing...")
+
+    if not session.refresh_token:
+        raise ValueError(
+            "Access token expired and no refresh_token available. "
+            "Generate a new token pair from Alteryx One → OAuth 2.0 API Tokens."
+        )
+
+    new_access, new_refresh = refresh_access_token(session.refresh_token)
+    session.access_token = new_access
+    if new_refresh:                          # BUG 4 FIX: always update rotated token
+        session.refresh_token = new_refresh
+
+    print(f"✅ [ensure_fresh_token] Token refreshed")
+    return session.access_token
 
 
 # ── Authenticated GET ────────────────────────────────────────────────────────
@@ -123,6 +195,13 @@ def _get_with_refresh(
     session: AlteryxSession,
     params: Optional[dict] = None,
 ) -> dict:
+    """
+    Authenticated GET with proactive + reactive token refresh:
+      1. Check expiry before call; refresh proactively if needed.
+      2. Make the API call.
+      3. On 401: attempt one final refresh and retry once.
+      4. On other 4xx/5xx: raise.
+    """
     def _do_get(token: str) -> requests.Response:
         return requests.get(
             url,
@@ -134,35 +213,37 @@ def _get_with_refresh(
             timeout=15,
         )
 
-    logger.debug(f"   Making request to: {url}")
+    # Step 1: proactive refresh
     fresh_token = ensure_fresh_token(session)
+
+    # Step 2: API call
     resp = _do_get(fresh_token)
 
+    # Step 3: 401 reactive fallback
     if resp.status_code == 401 and session.refresh_token:
-        logger.warning(f"⚠️  Got 401 — attempting fallback refresh...")
+        print(f"\n⚠️  [_get_with_refresh] 401 after proactive refresh — final fallback attempt...")
         try:
             new_access, new_refresh = refresh_access_token(session.refresh_token)
             session.access_token = new_access
             if new_refresh:
                 session.refresh_token = new_refresh
             resp = _do_get(new_access)
-            logger.info(f"   Fallback refresh succeeded")
+            print(f"   Retry status: {resp.status_code}")
         except Exception as e:
-            logger.error(f"❌ 401 and fallback refresh also failed: {e}")
             raise requests.HTTPError(
-                f"401 and fallback refresh also failed: {e}", response=resp
+                f"401 Unauthorized and fallback refresh also failed: {e}",
+                response=resp,
             ) from e
 
+    # Step 4: all other errors
     if resp.status_code >= 400:
-        logger.error(f"❌ API error {resp.status_code}")
-        logger.error(f"   URL: {url}")
-        logger.error(f"   Response: {resp.text[:500]}")
+        print(f"\n❌ API error {resp.status_code} | URL: {url}")
+        print(f"   Response: {resp.text[:300]}")
         resp.raise_for_status()
 
     try:
         return resp.json()
     except ValueError as exc:
-        logger.error(f"❌ Non-JSON response from API: {resp.text[:300]}")
         raise ValueError(
             f"Non-JSON response from {url} (HTTP {resp.status_code}): {resp.text[:300]}"
         ) from exc
@@ -171,38 +252,48 @@ def _get_with_refresh(
 # ── Workspace listing ────────────────────────────────────────────────────────
 
 def list_alteryx_workspaces(session: AlteryxSession) -> list[dict]:
-    logger.info(f"\n🔵 Fetching workspaces...")
+    """Fetch all workspaces accessible to this token."""
+    print(f"\n🔵 Fetching workspaces...")
+
     endpoints = [
         f"{ALTERYX_BASE_URL}/v4/workspaces",
         f"{ALTERYX_BASE_URL}/iam/v1/workspaces",
         f"{ALTERYX_BASE_URL}/api/v1/workspaces",
     ]
+
     last_error = None
     for endpoint in endpoints:
         try:
-            logger.info(f"   Trying: {endpoint}")
+            print(f"  Trying: {endpoint}")
             data = _get_with_refresh(endpoint, session)
             workspaces = (
                 data if isinstance(data, list)
                 else data.get("data", data.get("workspaces", []))
             )
             if workspaces is not None:
-                logger.info(f"   ✅ Successfully fetched {len(workspaces)} workspace(s)")
+                print(f"  ✅ {len(workspaces)} workspace(s)")
                 return workspaces
         except Exception as e:
-            logger.warning(f"   ⚠️  Endpoint failed: {type(e).__name__}: {str(e)[:100]}")
+            print(f"  ⚠️  Failed: {e}")
             last_error = e
             continue
 
-    logger.error(f"❌ All workspace endpoints failed. Last error: {last_error}")
-    raise ValueError(f"Unable to fetch workspaces. Last error: {last_error}.")
+    raise ValueError(
+        f"Unable to fetch workspaces. Last error: {last_error}. "
+        f"Tokens may be expired — generate new ones from Alteryx One."
+    )
 
 
 # ── Workspace name → ID ──────────────────────────────────────────────────────
 
 def get_workspace_id_by_name(session: AlteryxSession, workspace_name: str) -> str:
+    """
+    Resolve workspace name → ID. Mutates session on success.
+    Raises ValueError if not found or ambiguous.
+    """
     workspaces = list_alteryx_workspaces(session)
 
+    # Exact match
     for ws in workspaces:
         if ws.get("name", "").lower() == workspace_name.lower():
             session.workspace_id   = str(ws["id"])
@@ -210,6 +301,7 @@ def get_workspace_id_by_name(session: AlteryxSession, workspace_name: str) -> st
             session.custom_url     = ws.get("custom_url")
             return session.workspace_id
 
+    # Partial match
     matches = [
         ws for ws in workspaces
         if workspace_name.lower() in ws.get("name", "").lower()
@@ -222,75 +314,14 @@ def get_workspace_id_by_name(session: AlteryxSession, workspace_name: str) -> st
     elif len(matches) > 1:
         raise ValueError(
             f"Ambiguous workspace name '{workspace_name}'. "
-            f"Matches: {[ws['name'] for ws in matches]}"
+            f"Matches: {[ws['name'] for ws in matches]}. Use the full exact name."
         )
     else:
         available = [ws.get("name") for ws in workspaces]
         raise ValueError(
             f"No workspace found matching '{workspace_name}'. "
-            f"Available: {available}"
+            f"Available workspaces: {available}"
         )
-
-
-# ── Workflow listing ─────────────────────────────────────────────────────────
-# ✅ Confirmed working endpoint from Alteryx engineer (community.alteryx.com):
-#    https://us1.alteryxcloud.com/svc-workflow/api/v1/workflows
-#
-# The Designer Experience workflows are NOT accessible via:
-#   - /api/v1/workflows       → 404
-#   - /webapi/v3/workflows    → 404
-#   - /v4/flows               → 403 (different product: Trifacta Classic)
-#
-# The correct internal service URL is /svc-workflow/api/v1/workflows
-
-def list_alteryx_workflows(session: AlteryxSession, workspace_id: Optional[str] = None) -> list[dict]:
-    logger.info(f"\n🔵 Fetching Designer Cloud workflows...")
-
-    # ✅ The ONLY working endpoint for Designer Experience workflows
-    endpoints = [
-        f"{ALTERYX_BASE_URL}/svc-workflow/api/v1/workflows",
-        f"{ALTERYX_BASE_URL}/svc-workflow/api/v1/workflows?limit=100",
-    ]
-
-    # Fallback: try workspace-scoped variant if we have an ID
-    if workspace_id:
-        endpoints.append(
-            f"{ALTERYX_BASE_URL}/svc-workflow/api/v1/workflows?workspaceId={workspace_id}"
-        )
-        logger.debug(f"   Workspace ID provided: {workspace_id}")
-
-    last_error = None
-    for endpoint in endpoints:
-        try:
-            logger.info(f"   Trying: {endpoint}")
-            data = _get_with_refresh(endpoint, session)
-
-            # Response shape can be list, {"data": [...]}, or {"workflows": [...]}
-            if isinstance(data, list):
-                workflows = data
-            else:
-                workflows = (
-                    data.get("data")
-                    or data.get("workflows")
-                    or data.get("items")
-                    or data.get("results")
-                    or []
-                )
-
-            logger.info(f"   ✅ Successfully fetched {len(workflows)} workflow(s)")
-            return workflows
-
-        except Exception as e:
-            logger.warning(f"   ⚠️  Endpoint failed: {type(e).__name__}: {str(e)[:100]}")
-            last_error = e
-            continue
-
-    logger.error(f"❌ All workflow endpoints failed")
-    raise ValueError(
-        f"Unable to fetch Designer Cloud workflows. "
-        f"Last error: {last_error}. "
-        f"Ensure your OAuth token has Designer Cloud access."
-    )
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -300,12 +331,21 @@ def create_alteryx_session(
     workspace_name: str,
     refresh_token: Optional[str] = None,
 ) -> AlteryxSession:
+    """
+    Build and validate an AlteryxSession.
+
+    Token resolution order:
+      access_token  → UI value → ALTERYX_ACCESS_TOKEN in .env → ""
+      refresh_token → UI value → ALTERYX_REFRESH_TOKEN in .env → None
+    """
+    # BUG 3 FIX: env fallback was commented out in the original code
     resolved_access  = access_token  or os.getenv("ALTERYX_ACCESS_TOKEN", "")
     resolved_refresh = refresh_token or os.getenv("ALTERYX_REFRESH_TOKEN")
 
     if not resolved_access and not resolved_refresh:
         raise ValueError(
-            "No access token provided and none found in environment."
+            "No access token provided and none found in environment. "
+            "Provide an access_token or set ALTERYX_ACCESS_TOKEN in .env."
         )
 
     session = AlteryxSession(
